@@ -81,40 +81,40 @@ spec 描述愿景，不列全它会遇到的输入。以下五类最可能咬到
 - Consumes: 参照源码 `C:\Users\reader\Downloads\Compressed\wsl-dashboard-0.12.0\wsl-dashboard-0.12.0`
 - Produces: git 仓库；`docs/reference/` 内可 diff 的只读参照；`MAPPING.md` 的标识符映射约定
 
-- [ ] **Step 1: 建目录并 `git init`**
+- [x] **Step 1: 建目录并 `git init`**
 
 Run: `git -C <repo> init`
 Expected: `Initialized empty Git repository`
 
-- [ ] **Step 2: 复制精简参照到 `docs/reference/`**
+- [x] **Step 2: 复制精简参照到 `docs/reference/`**
 
 只取参照的 `src/ui/`、`assets/`、`Cargo.toml`、`Cargo.lock`、`build.rs`。不复制 `src/wsl/`、`src/app/` 等领域代码——那是我们要重写的部分。
 
 Run: `robocopy <参照根>\src\ui docs\reference\src\ui /E`（同理 `assets`、单文件 `Cargo.toml`/`Cargo.lock`/`build.rs`）
 Expected: `docs/reference/` 存在且 `docs/reference/Cargo.toml` 含 `name = "wsldashboard"`
 
-- [ ] **Step 3: 写 `docs/MAPPING.md`**
+- [x] **Step 3: 写 `docs/MAPPING.md`**
 
 内容：标识符保留表，逐行列出 `distro → app`、`wsl → wsa`、`Distro → AppInfo`、`usb → device`、`terminal_distro → （隐藏）`、`vscode_distro → （隐藏）` 等映射，并注明"标识符保留原名，只改 i18n 值"（spec Q12）。首页搜索框标注为"本项目新增"（spec Q24）。
 
-- [ ] **Step 4: 写 `.gitignore`**
+- [x] **Step 4: 写 `.gitignore`**
 
 必须包含：`/target`、`*.pdb`、`/.vs`、`*.user`。**不包含** `docs/reference/`——它是被固化的验收基线。
 
-- [ ] **Step 5: 写 `LICENSE`**
+- [x] **Step 5: 写 `LICENSE`**
 
 从参照复制 `LICENSE` 原文（GPL-3.0）。同时写 `REUSE.toml` 头格式约定进 `MAPPING.md`，供后续所有源文件照用。
 
-- [ ] **Step 6: 写 `Cargo.toml`**
+- [x] **Step 6: 写 `Cargo.toml`**
 
 照搬参照的 `[dependencies]` 全部条目与版本，但：`name = "wsadashboard"`、`version = "0.1.0"`、`description` 换 WSA 语义、`license = "GPL-3.0"`、删掉 `repository`/`homepage`/`documentation`（Q2=A 未建远程）、`[package.metadata] expire = 0`（Q40）。加 `[[bin]] name = "wsadash", path = "src/wsadash.rs"`。删掉参照的 `dhat` 相关（Q9）。
 
-- [ ] **Step 7: 复制 `Cargo.lock` 并重解析**
+- [x] **Step 7: 复制 `Cargo.lock` 并重解析**
 
 Run: `copy <参照>\Cargo.lock .` 然后 `cargo metadata --format-version 1 > $null`
 Expected: lock 文件里出现 `wsadashboard`，其余依赖版本与参照一致
 
-- [ ] **Step 8: 首次提交**
+- [x] **Step 8: 首次提交**
 
 ```bash
 git add -A
@@ -134,39 +134,39 @@ git commit -m "chore(P0): init repo, vendor reference, map identifiers"
 - Consumes: Task 1 的 `Cargo.toml`
 - Produces: `cargo build --release` 通过；`wsadashboard.exe` 启动出窗口；`build.ps1` 是后续所有构建的唯一入口
 
-- [ ] **Step 1: 写 `build.ps1`**
+- [x] **Step 1: 写 `build.ps1`**
 
 必须做三件事：① 校验 `C:\Users\reader\AppData\Local\Temp\opencode\skia-cache\0.99.0\` 下是否存在 `skia-binaries-*.tar.gz`，缺失则用 `Invoke-WebRequest` 手工下载并报错退出（官方 curl 通道在本机 300s 超时）；② 对每个依赖的 key 计算 `SKIA_BINARIES_URL = "file://C:/Users/reader/AppData/Local/Temp/opencode/skia-cache/0.99.0/skia-binaries-$key.tar.gz"`——**必须是两个斜杠**；③ `cargo build --release @args`。
 
-- [ ] **Step 2: 写 `src/app/constants.rs`**（**必须先于 build.rs**）
+- [x] **Step 2: 写 `src/app/constants.rs`**（**必须先于 build.rs**）
 
 照搬参照的 `src/app/constants.rs` 的符号，只改值：`APP_NAME = "WSA Dashboard"`、`APP_ID = "wsadashboard"`、`COMPANY_NAME` / `LEGAL_COPYRIGHT` / `PROJECT_REPOSITORY` 按本项目填（无远程仓库时 `PROJECT_REPOSITORY` 留空串）。`build.rs` 通过 `#[path]` 直接 `mod` 引入该文件，符号名不得改动。
 
-- [ ] **Step 3: 写 `build.rs`**
+- [x] **Step 3: 写 `build.rs`**
 
 本阶段只做三件事（与参照 `build.rs` 同序，逐块后续补回）：① `slint_build::compile("src/ui/app.slint").expect("Slint compilation failed");`；② 读 `Cargo.toml` 的 `[package.metadata] expire`，**`expire = 0` 时按参照 `build.rs:31-40` 转成"现在 + 365 天"**，`cargo:rustc-env=APP_EXPIRE_TIME=…`（Q40）；③ `cargo:rerun-if-changed` 三项。
 
 **本阶段省略**参照的 icon/rc 生成（Task 1 的占位图标与 `embed-resource` 留 P6/P8）、i18n 校验（`verify_translations`，P5 引入 i18n 时整块搬回）。
 
-- [ ] **Step 4: 写 `src/ui/app.slint` 最小窗口**
+- [x] **Step 4: 写 `src/ui/app.slint` 最小窗口**
 
 `export component AppWindow inherits Window { title: "WSA_DASHBOARD_WINDOW_UI"; preferred-width: 1000px; preferred-height: 700px; }`。标题字符串照搬参照的命名约定（Q38），后续单实例 `FindWindowW` 靠它。
 
-- [ ] **Step 5: 写 `src/main.rs` 起窗口**
+- [x] **Step 5: 写 `src/main.rs` 起窗口**
 
 `fn main() -> Result<(), slint::PlatformError> { AppWindow::new()?.run() }`。`wsadash.rs` 暂时 `fn main(){}`。
 
-- [ ] **Step 6: 构建并验证窗口**
+- [x] **Step 6: 构建并验证窗口**
 
 Run: `powershell -File build.ps1`
 Expected: `Finished release [optimized] target(s)`，无 `os error 123`、无 `Unable to locate LLVM installation`
 
-- [ ] **Step 7: 验证 exe 依赖集（Q14 的判定依据）**
+- [x] **Step 7: 验证 exe 依赖集（Q14 的判定依据）**
 
 Run: `dumpbin /dependents target\release\wsadashboard.exe`
 Expected: 记录非系统 DLL 清单进 `MAPPING.md`。若存在系统外 DLL → 交付形态从"单 exe"改为 zip（Q14=A，不回来等用户）。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add -A

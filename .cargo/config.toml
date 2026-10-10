@@ -1,0 +1,45 @@
+# Build configuration.
+#
+# Deliberately contains NO settings. Read the notes below before adding any.
+#
+# ---------------------------------------------------------------------------
+# Why `-C target-feature=+crt-static` is NOT used here
+# ---------------------------------------------------------------------------
+#
+# It was tried and reverted. The chain of evidence:
+#
+#   1. Without it, `dumpbin /dependents target/release/wsadashboard.exe`
+#      reports 39 DLLs, of which exactly two are NOT Windows inbox:
+#
+#          MSVCP140.dll      <- C++ runtime, pulled in by Skia's C++ static libs
+#          VCRUNTIME140.dll  <- MSVC runtime
+#
+#      Everything else (dwrite, dxgi, d3d12, D3DCOMPILER_47, OPENGL32,
+#      bcryptprimitives, the api-ms-win-crt-* set, ...) ships with Windows 10+.
+#
+#   2. Adding `+crt-static` changes skia-bindings' cache key by appending
+#      `-static`. The build then asks for:
+#
+#          skia-binaries-a25a0fdb7d90429aa2d1-x86_64-pc-windows-msvc
+#              -d3d-gl-jpegd-jpege-pdf-textlayout-static.tar.gz
+#
+#      rust-skia/skia-binaries tag 0.99.0 publishes 13 x86_64-pc-windows-msvc
+#      assets and NONE of them ends in `-static`. The download 404s, the build
+#      falls back to compiling Skia from source, and that fails here with
+#      "Unable to locate LLVM installation".
+#
+#   3. The reference project has the identical situation (slint 1.17.1 +
+#      renderer-skia) and resolves it by DECLARING THE DEPENDENCY instead of
+#      bundling or static-linking:
+#
+#          build/portable/build.ps1:119-128  zips the exe alone, no DLLs
+#          build/winget/build.ps1            Microsoft.VCRedist.2015+.x64
+#          manual/README_uz.md               "Visual C++ Redistributable - 2015-2022"
+#
+# So the single-exe delivery in spec Q3 stands, and the spec Q14 zip fallback
+# is NOT triggered: the two DLLs are a documented prerequisite, not a packaging
+# problem. The installer/winget manifests pick this up in P8.
+#
+# If someone really wants a self-contained exe, they must first obtain the
+# `-static` skia archive (which means building it from source with LLVM) --
+# it cannot be downloaded.

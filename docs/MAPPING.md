@@ -154,3 +154,36 @@ usb  usb.detail  main  toast  task  debug  mail  scheduler  mount_disk
 - `Cargo.toml` / `Cargo.lock` / `build.rs` / `rust-toolchain.toml`（**stable**，非 nightly）
 
 参照本体**不编译**（缺 `src/` 其余部分），它是只读对照基线。
+
+---
+
+## 7. 运行时依赖与交付形态（spec Q3 / Q14，2026-10-10 实测定论）
+
+`dumpbin /dependents target/release/wsadashboard.exe` → **35 个 DLL**，其中**只有 2 个不是 Windows 内置**：
+
+| DLL | 来源 | 处理 |
+|---|---|---|
+| `MSVCP140.dll` | Skia 的 C++ 静态库 → C++ 运行库 | **声明为前置依赖，不打包** |
+| `VCRUNTIME140.dll` | MSVC 运行库 | 同上 |
+| 其余 33 个 | `dwrite` `dxgi` `d3d12` `D3DCOMPILER_47` `OPENGL32` `bcryptprimitives` `api-ms-win-crt-*` … | Windows 10+ 内置 |
+
+### 7.1 为什么不静态链接 CRT
+
+试过 `-C target-feature=+crt-static`，**已回退**，原因链记录在 `.cargo/config.toml`：
+
+1. `+crt-static` 会让 skia-bindings 的缓存 key 追加 `-static`；
+2. `rust-skia/skia-binaries` tag `0.99.0` 发布 13 个 `x86_64-pc-windows-msvc` 资产，**没有任何一个以 `-static` 结尾** → 404；
+3. 回落到源码编译 → 死在 `Unable to locate LLVM installation`。
+
+### 7.2 参照自己的答案（1:1 照抄这条）
+
+参照面临**完全相同**的处境（slint 1.17.1 + renderer-skia），它的处理是**声明依赖**而不是打包或静态化：
+
+| 出处 | 内容 |
+|---|---|
+| `build/portable/build.ps1:119-128` | zip 里**只放一个 exe**，不带任何 DLL |
+| `build/winget/build.ps1` | `PackageIdentifier: Microsoft.VCRedist.2015+.x64` |
+| `manual/README_uz.md` | 系统要求列 "Visual C++ Redistributable - 2015-2022" |
+
+**结论**：Q3 的"只要 release exe"成立；Q14 的"发现 DLL 就破例做 zip"**不触发**——
+那两个 DLL 是文档化的前置依赖，不是打包问题。P8 做 winget / 安装器清单时把这条依赖写进去。

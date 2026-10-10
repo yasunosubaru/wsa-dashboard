@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// P0 skeleton window.
+//
+// Intentionally NOT a copy of the reference's app.slint yet: the reference root
+// component sets `no-frame: true` + `background: transparent` and paints its own
+// TitleBar (docs/reference/src/ui/components/title_bar.slint). Reproducing that
+// in P0 would give an invisible, un-screenshotable window.
+//
+// P2 replaces this file with the real root component, ported from
+// docs/reference/src/ui/app.slint (9 tabs, sidebar, modal manager, 127 callbacks).
+//
+// The window TITLE is kept in the reference's exact form because the single-
+// instance handshake matches on it -- see docs/MAPPING.md section 2.1.
+
+export component AppWindow inherits Window {
+    title: "WSA_DASHBOARD_WINDOW_UI";
+
+    width: 800px;
+    height: 600px;
+    background: #1e1e2e;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 8px;
+
+        Text {
+            text: "WSA Dashboard";
+            color: #cdd6f4;
+            font-size: 26px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "P0 skeleton - the nine-tab UI lands in P2";
+            color: #a6adc8;
+            font-size: 13px;
+            horizontal-alignment: center;
+        }
+    }
+}

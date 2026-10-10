@@ -1,0 +1,263 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme, AppI18n, LayoutConstants } from "../../theme.slint";
+import { CustomButton, CustomCheckBox } from "../form_widgets.slint";
+
+export component CompressDialog inherits Rectangle {
+    in property <string> distro_name;
+    in-out property <bool> cleanup: true;
+    in-out property <bool> backup: true;
+    in property <bool> is_wsl2: true;
+    in property <bool> is_sparse: false;
+    in-out property <bool> enable_sparse: false;
+    in property <string> vhdx_size: "---";
+    in property <string> free_space: "---";
+    in property <bool> space_sufficient: false;
+    in property <string> backup_path: "";
+    in property <string> script_url: "";
+    in property <string> source_url: "";
+    
+    callback confirm(string, bool, bool, bool, string);
+    callback cancel();
+    callback open_url(string);
+
+    // Background mask
+    background: #00000080;
+    TouchArea { }
+
+    // Dialog Box
+    Rectangle {
+        width: 480px;
+        height: layout.preferred-height;
+        background: Theme.card_bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border_color;
+        clip: true;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000040;
+
+        layout := VerticalLayout {
+            padding: 24px;
+            padding-bottom: 24px;
+            spacing: 8px; // matches information_dialog
+            
+            // Header
+            Rectangle {
+                height: 24px;
+                Text {
+                    x: AppI18n.is-rtl ? 32px : 0;
+                    width: parent.width - 32px;
+                    text: root.distro_name + " " + AppI18n.t("dialog.compress_title", [AppI18n.version]);
+                    font-size: 18px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    x: AppI18n.is-rtl ? 0 : parent.width - self.width;
+                    width: 24px;
+                    height: 24px;
+                    clicked => {
+                        root.cancel();
+                    }
+                    Rectangle {
+                        background: parent.has-hover ? Theme.hover_bg : transparent;
+                        border-radius: 4px;
+                        Text {
+                            text: "\u{E8BB}";
+                            font-family: Theme.icon_font;
+                            font-size: 14px;
+                            color: Theme.text_primary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 1px;
+                background: Theme.border_color;
+            }
+
+            // Content
+            VerticalLayout {
+                spacing: 16px;
+                
+                // 1. Footer Reminder (Warning about shutdown)
+                HorizontalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "\u{E946}";
+                        font-family: "Segoe Fluent Icons";
+                        font-size: 14px;
+                        color: Theme.icon_color_warning;
+                        vertical-alignment: top;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: AppI18n.t("dialog.compress_footer_reminder", [AppI18n.version]);
+                        font-family: Theme.default_font;
+                        font-size: 12px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                        wrap: word-wrap;
+                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    }
+                }
+
+                // 2. Cleanup Checkbox
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    CustomCheckBox {
+                        horizontal-stretch: 1;
+                        text: AppI18n.t("dialog.compress_cleanup", [AppI18n.version]);
+                        checked <=> root.cleanup;
+                    }
+                    // Blue question mark - visible after async load
+                    if (root.source_url != ""): Rectangle {
+                        width: 18px;
+                        height: 18px;
+                        y: (parent.height - self.height) / 2;
+                        background: qmark-area.has-hover ? #0078D420 : transparent;
+                        border-radius: 9px;
+                        Text {
+                            text: "?";
+                            font-size: 12px;
+                            font-weight: 500;
+                            font-family: Theme.default_font;
+                            color: #0078D4;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        qmark-area := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.open_url(root.source_url);
+                            }
+                        }
+                    }
+                }
+
+                // 3. Backup and Mutually Exclusive Info Box
+                VerticalLayout {
+                    spacing: 8px;
+                    
+                    CustomCheckBox {
+                        text: AppI18n.t("dialog.compress_backup", [AppI18n.version]);
+                        checked <=> root.backup;
+                    }
+                    
+                    Rectangle {
+                        height: 84px;
+                        background: root.backup ? (Theme.dark_mode ? #162419 : #F6FFF8) : (Theme.dark_mode ? #241616 : #FFF6F6);
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: root.backup ? (Theme.dark_mode ? #2D4A34 : #C3E6CB) : (Theme.dark_mode ? #4A2D2D : #F8D7DA);
+                        clip: true;
+
+                        HorizontalLayout {
+                            // Accent bar
+                            Rectangle {
+                                width: 4px;
+                                background: root.backup ? Theme.icon_color_success : Theme.icon_color_danger;
+                            }
+                            
+                            if (root.backup): VerticalLayout {
+                                padding: 12px;
+                                padding-left: AppI18n.is-rtl ? 12px : 8px;
+                                padding-right: AppI18n.is-rtl ? 8px : 12px;
+                                spacing: 8px;
+                                alignment: center;
+                                
+                                Text {
+                                    text: AppI18n.t("dialog.compress_backup_path", [AppI18n.version]) + ": " + root.backup_path;
+                                    font-size: 11px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_secondary;
+                                    overflow: elide;
+                                }
+                                
+                                Text {
+                                    text: AppI18n.t("dialog.compress_vhdx_size", [AppI18n.version]) + ": " + root.vhdx_size;
+                                    font-size: 11px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_secondary;
+                                    overflow: elide;
+                                }
+                                
+                                HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 4px;
+                                    Text {
+                                        text: AppI18n.t("dialog.compress_free_space", [AppI18n.version]) + ": " + root.free_space;
+                                        font-size: 11px * LayoutConstants.font-scale;
+                                        font-family: Theme.default_font;
+                                        color: root.space_sufficient ? Theme.text_secondary : #E81123;
+                                        overflow: elide;
+                                    }
+                                    if (!root.space_sufficient): Text {
+                                        text: "( " + AppI18n.t("dialog.compress_space_insufficient", [AppI18n.version]) + " )";
+                                        font-family: Theme.default_font;
+                                        font-size: 11px * LayoutConstants.font-scale;
+                                        color: #E81123;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            if (!root.backup): VerticalLayout {
+                                padding: 12px;
+                                padding-left: AppI18n.is-rtl ? 12px : 8px;
+                                padding-right: AppI18n.is-rtl ? 8px : 12px;
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: AppI18n.t("dialog.compress_risk_desc_1", [AppI18n.version]);
+                                    font-size: 11px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_primary;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: AppI18n.t("dialog.compress_risk_desc_2", [AppI18n.version]);
+                                    font-size: 11px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_primary;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. Sparse VHD Checkbox
+                CustomCheckBox {
+                    text: AppI18n.t("dialog.enable_sparse", [AppI18n.version]);
+                    checked <=> root.enable_sparse;
+                    enabled: root.is_wsl2 && !root.is_sparse;
+                }
+            } // end content VerticalLayout
+
+            // Footer
+            HorizontalLayout {
+                alignment: AppI18n.is-rtl ? start : end;
+                CustomButton {
+                    text: AppI18n.t("dialog.compress_confirm", [AppI18n.version]);
+                    primary: true;
+                    enabled: root.backup && root.space_sufficient;
+                    show_shield: true;
+                    clicked => {
+                        root.confirm(root.distro_name, root.cleanup, root.backup, root.enable_sparse, root.script_url);
+                    }
+                }
+            }
+
+        }
+    }
+}

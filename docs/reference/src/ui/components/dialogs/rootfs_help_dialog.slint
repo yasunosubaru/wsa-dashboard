@@ -1,0 +1,176 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import {
+    Theme,
+    RootFSHelpItem,
+    AppI18n,
+    LayoutConstants,
+} from "../../theme.slint";
+import { CustomButton } from "../form_widgets.slint";
+
+export component RootFSHelpDialog inherits Rectangle {
+    callback close;
+    callback open_url(string);
+    in property <[RootFSHelpItem]> help_list;
+
+    // Background mask
+    background: #00000080;
+    
+    // Trap clicks
+    TouchArea { }
+
+    Rectangle {
+        width: 450px;
+        height: layout.preferred-height;
+        background: Theme.card_bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border_color;
+        layout := VerticalLayout {
+            padding: 24px;
+            spacing: 8px; // matches information_dialog
+            
+            // Header: title + close button
+            Rectangle {
+                height: 24px;
+                Text {
+                    x: AppI18n.is-rtl ? 32px : 0;
+                    width: parent.width - 32px;
+                    text: AppI18n.t("dialog.rootfs_help_title", [AppI18n.version]);
+                    font-size: 18px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    x: AppI18n.is-rtl ? 0 : parent.width - self.width;
+                    width: 24px;
+                    height: 24px;
+                    clicked => { root.close(); }
+                    Rectangle {
+                        background: parent.has-hover ? Theme.hover_bg : transparent;
+                        border-radius: 4px;
+                        Text {
+                            text: "\u{E8BB}";
+                            font-family: Theme.icon_font;
+                            font-size: 14px;
+                            color: Theme.text_primary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Divider
+            Rectangle {
+                height: 1px;
+                background: Theme.border_color;
+            }
+
+            VerticalLayout {
+                spacing: 12px;
+
+            // Table Header
+            HorizontalLayout {
+                height: 24px;
+                padding-left: 4px;
+                padding-right: 4px;
+                spacing: 12px;
+                if (AppI18n.is-rtl): Text {
+                    text: AppI18n.t("dialog.link", [AppI18n.version]);
+                    horizontal-stretch: 1;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    color: Theme.text_secondary;
+                    font-size: 13px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                }
+                Text {
+                    text: AppI18n.t("dialog.distributor", [AppI18n.version]);
+                    width: 100px;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    color: Theme.text_secondary;
+                    font-size: 13px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                }
+
+                if (!AppI18n.is-rtl): Text {
+                    text: AppI18n.t("dialog.link", [AppI18n.version]);
+                    horizontal-stretch: 1;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    color: Theme.text_secondary;
+                    font-size: 13px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                }
+            }
+
+            // Table Content
+            Flickable {
+                height: table-rows.preferred-height;
+                table-rows := VerticalLayout {
+                    spacing: 2px;
+                    alignment: start;
+                    for item[i] in root.help_list: HorizontalLayout {
+                        height: 28px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        spacing: 12px;
+                        if (AppI18n.is-rtl): Text {
+                            text: item.url;
+                            color: ta-link-rtl.has-hover ? Theme.accent : #0078d4;
+                            vertical-alignment: center;
+                            horizontal-alignment: left;
+                            font-size: 13px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                            ta-link-rtl := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.open_url(item.url);
+                                }
+                            }
+                        }
+                        Text {
+                            text: item.name;
+                            width: 100px;
+                            vertical-alignment: center;
+                            horizontal-alignment: AppI18n.is-rtl ? right : left;
+                            color: Theme.text_primary;
+                            font-size: 13px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                        }
+
+                        if (!AppI18n.is-rtl): Text {
+                            text: item.url;
+                            color: ta-link.has-hover ? Theme.accent : #0078d4;
+                            vertical-alignment: center;
+                            horizontal-alignment: left;
+                            font-size: 13px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                            ta-link := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.open_url(item.url);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        }
+        }
+    }
+}

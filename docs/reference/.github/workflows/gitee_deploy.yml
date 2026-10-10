@@ -1,0 +1,108 @@
+name: 2. Gitee Deploy
+run-name: Gitee:${{ github.event.inputs.tag_name || github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to deploy (leave empty to use selected tag/branch)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-to-gitee:
+    name: Deploy to Gitee
+    runs-on: windows-latest
+    env:
+      # Read from GitHub Secrets (Settings -> Secrets and variables -> Actions -> Secrets)
+      GITEE_REPO_OWNER: ${{ secrets.GITEE_REPO_OWNER }}
+      GITEE_REPO_NAME: ${{ secrets.GITEE_REPO_NAME }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Version
+        id: get_version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ github.event.inputs.tag_name }}"
+            if ([string]::IsNullOrWhiteSpace($tag)) {
+              $tag = "${{ github.ref_name }}"
+              Write-Host "No tag_name provided, falling back to ref_name: $tag"
+            }
+          } else {
+            $tag = "${{ github.event.release.tag_name }}"
+          }
+          
+          if ($tag -notlike "v*") {
+             Write-Error "Invalid tag name: $tag. Must start with 'v'."
+             exit 1
+          }
+          
+          $version = $tag -replace "^v", ""
+          echo "TAG=$tag" >> $env:GITHUB_OUTPUT
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Tag: $tag"
+          Write-Host "Version: $version"
+
+      - name: Download Release Assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.get_version.outputs.TAG }}"
+          $version = "${{ steps.get_version.outputs.VERSION }}"
+          $downloadDir = "temp_downloads"
+          New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
+          
+          Write-Host "[INFO] Downloading assets for release $tag..."
+          
+          # Define the file patterns to download
+          $files = @(
+            "WSLDashboard.$version.Portable.x64.zip",
+            "WSLDashboard.$version.Setup.x64.exe",
+            "WSLDashboard.$version.Portable.arm64.zip",
+            "WSLDashboard.$version.Setup.arm64.exe"
+          )
+          
+          foreach ($f in $files) {
+            Write-Host "[INFO] Downloading $f..."
+            gh release download $tag -p "$f" -D $downloadDir --clobber
+            if (-not (Test-Path "$downloadDir/$f")) {
+              Write-Error "[ERROR] Failed to download $f. Please check if the file exists in the release."
+              exit 1
+            }
+            Write-Host "[OK] Downloaded $f"
+          }
+          
+          Write-Host "[SUCCESS] All assets downloaded to $downloadDir"
+
+      - name: Deploy to Gitee
+        shell: pwsh
+        env:
+          GITEE_API_TOKEN: ${{ secrets.GITEE_API_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GITEE_API_TOKEN)) {
+            Write-Error "GITEE_API_TOKEN is not set in repository secrets!"
+            exit 1
+          }
+          if ([string]::IsNullOrWhiteSpace($env:GITEE_REPO_OWNER) -or [string]::IsNullOrWhiteSpace($env:GITEE_REPO_NAME)) {
+            Write-Error "GITEE_REPO_OWNER or GITEE_REPO_NAME is not set in repository secrets!"
+            exit 1
+          }
+          
+          $version = "${{ steps.get_version.outputs.VERSION }}"
+          $downloadDir = "temp_downloads"
+          
+          # The script now uses the environment variables defined at the job level
+          .\build\actions\gitee_release_deploy.ps1 `
+            -Version "$version" `
+            -DownloadDir "$downloadDir" `
+            -GiteeToken "$env:GITEE_API_TOKEN" `
+            -RepoOwner "$env:GITEE_REPO_OWNER" `
+            -RepoName "$env:GITEE_REPO_NAME"

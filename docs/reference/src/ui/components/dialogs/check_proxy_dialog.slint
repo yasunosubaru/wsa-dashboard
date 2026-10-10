@@ -1,0 +1,126 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { AppConstants } from "../../constants.slint";
+import { Theme, AppI18n, LayoutConstants } from "../../theme.slint";
+import { CustomButton, CustomLineEdit } from "../form_widgets.slint";
+
+export component CheckProxyDialog inherits Rectangle {
+    in property <string> title: AppI18n.t("dialog.check_proxy_title", [AppI18n.version]);
+    in-out property <string> test_url: AppConstants.proxy_test_default;
+
+    callback check_connection(string);
+    callback close();
+
+    width: 450px;
+    height: content.preferred-height;
+    background: Theme.content_bg;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border_color;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: Theme.dark_mode ? #00000088 : #00000044;
+
+    content := VerticalLayout {
+        padding: 24px;
+        spacing: 8px; // matches information_dialog
+        alignment: start;
+
+        // Header: title + close button
+        Rectangle {
+            height: 24px;
+            Text {
+                x: AppI18n.is-rtl ? 32px : 0;
+                width: parent.width - 32px;
+                text: root.title;
+                font-size: 18px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                font-weight: 500;
+                color: Theme.text_primary;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                x: AppI18n.is-rtl ? 0 : parent.width - self.width;
+                width: 24px;
+                height: 24px;
+                clicked => { root.close(); }
+                Rectangle {
+                    background: parent.has-hover ? Theme.hover_bg : transparent;
+                    border-radius: 4px;
+                    Text {
+                        text: "\u{E8BB}";
+                        font-family: Theme.icon_font;
+                        font-size: 14px;
+                        color: Theme.text_primary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Divider
+        Rectangle {
+            height: 1px;
+            background: Theme.border_color;
+        }
+
+        VerticalLayout {
+            spacing: 16px;
+
+            // Warning and instruction
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: AppI18n.is-rtl ? end : start;
+
+            VerticalLayout {
+                alignment: start;
+                spacing: 4px;
+                Text {
+                    text: AppI18n.t("dialog.check_proxy_desc1", [AppI18n.version]);
+                    font-size: 14px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    color: Theme.text_secondary;
+                    wrap: word-wrap;
+                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                }
+
+                Text {
+                    text: AppI18n.t("dialog.check_proxy_desc2", [AppI18n.version]);
+                    font-size: 14px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    color: Theme.text_secondary;
+                    wrap: word-wrap;
+                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                }
+            }
+        }
+
+        // URL Input
+        CustomLineEdit {
+            text: root.test_url;
+            edited(t) => {
+                root.test_url = t;
+            }
+        }
+
+
+
+        // Buttons
+        HorizontalLayout {
+            alignment: AppI18n.is-rtl ? start : end;
+
+            CustomButton {
+                text: AppI18n.t("dialog.confirm", [AppI18n.version]);
+                primary: true;
+                width: 100px;
+                height: 32px;
+                clicked => {
+                    root.check_connection(root.test_url);
+                }
+            }
+        }
+        }
+    }
+}

@@ -1,0 +1,280 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import {
+    Theme,
+    PortProxyRuleUI,
+    AppI18n,
+    LayoutConstants,
+} from "../theme.slint";
+import { CustomButton } from "form_widgets.slint";
+import { ActionIcon } from "common.slint";
+
+export component NetworkRuleCard inherits Rectangle {
+    in property <PortProxyRuleUI> rule;
+    callback delete_clicked();
+    callback process_clicked();
+    callback cancel_clicked();
+    height: 48px;
+    background: Theme.card_bg;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border_color;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+ 
+        // --- 1. Right Side Content in RTL or Main Content in LTR ---
+        if (AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+            
+            // Delete
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: "\u{E74D}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "danger";
+                    tooltip: AppI18n.t("distro.delete", [AppI18n.version]);
+                    clicked => {
+                        root.delete_clicked();
+                    }
+                }
+            }
+            
+            // Process / Cancel
+            VerticalLayout {
+                alignment: center;
+                if (!rule.is_active): ActionIcon {
+                    icon: "\u{E9F3}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "success";
+                    tooltip: AppI18n.t("network.rule_apply_tooltip", [AppI18n.version]);
+                    clicked => {
+                        root.process_clicked();
+                    }
+                }
+                if (rule.is_active): ActionIcon {
+                    icon: "\u{E711}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "warning";
+                    tooltip: AppI18n.t("network.rule_cancel_tooltip", [AppI18n.version]);
+                    clicked => {
+                        root.cancel_clicked();
+                    }
+                }
+            }
+
+            // FW Badge
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: fw_text_rtl.preferred-width + 12px;
+                    height: 20px;
+                    background: rule.enable_firewall ? (Theme.dark_mode ? #1a3a1a : #e6f7e6) : (Theme.dark_mode ? #2d1a1a : #fdeaea);
+                    border-radius: 4px;
+                    fw_text_rtl := Text {
+                        text: rule.enable_firewall ? AppI18n.t("network.rule_fw_on", [AppI18n.version]) : AppI18n.t("network.rule_fw_off", [AppI18n.version]);
+                        font-family: Theme.default_font;
+                        font-size: 10px * LayoutConstants.font-scale;
+                        color: rule.enable_firewall ? (Theme.dark_mode ? #66cc66 : #2d8a2d) : (Theme.dark_mode ? #ff6666 : #c62828);
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Main Content (Status + Info) when LTR
+        if (!AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+
+            // Indicator
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "\u{EA81}";
+                    font-family: Theme.icon_font;
+                    font-size: 12px * LayoutConstants.font-scale;
+                    color: rule.is_active ? #4CAF50 : #9E9E9E;
+                }
+            }
+
+            // Info
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: rule.distro_name;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: left;
+                    overflow: elide;
+                }
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: start;
+                    Text {
+                        text: rule.listen_address + ":" + rule.listen_port;
+                        font-family: Theme.default_font;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                    }
+
+                    Text {
+                        text: "\u{E72A}"; // Right arrow
+                        font-family: Theme.icon_font;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: rule.target_port;
+                        font-family: Theme.default_font;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                    }
+                }
+            }
+        }
+
+        // --- 2. Middle Spacer ---
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+
+        // --- 3. Main Content (RTL) or Actions (LTR) ---
+        
+        // Main Content (Status + Info) when RTL
+        if (AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+
+            // Info then Status
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: rule.distro_name;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: right;
+                    overflow: elide;
+                }
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: end;
+                    Text {
+                        text: rule.target_port;
+                        font-family: Theme.default_font;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                    }
+
+                    Text {
+                        text: "\u{E72B}"; // Left arrow
+                        font-family: Theme.icon_font;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: rule.listen_address + ":" + rule.listen_port;
+                        font-family: Theme.default_font;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                    }
+                }
+            }
+
+            // Indicator
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "\u{EA81}";
+                    font-family: Theme.icon_font;
+                    font-size: 12px * LayoutConstants.font-scale;
+                    color: rule.is_active ? #4CAF50 : #9E9E9E;
+                }
+            }
+        }
+
+        // Actions when LTR
+        if (!AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+            
+            // FW Badge
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: fw_text_ltr_new.preferred-width + 12px;
+                    height: 20px;
+                    background: rule.enable_firewall ? (Theme.dark_mode ? #1a3a1a : #e6f7e6) : (Theme.dark_mode ? #2d1a1a : #fdeaea);
+                    border-radius: 4px;
+                    fw_text_ltr_new := Text {
+                        text: rule.enable_firewall ? AppI18n.t("network.rule_fw_on", [AppI18n.version]) : AppI18n.t("network.rule_fw_off", [AppI18n.version]);
+                        font-family: Theme.default_font;
+                        font-size: 10px * LayoutConstants.font-scale;
+                        color: rule.enable_firewall ? (Theme.dark_mode ? #66cc66 : #2d8a2d) : (Theme.dark_mode ? #ff6666 : #c62828);
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Process / Cancel
+            VerticalLayout {
+                alignment: center;
+                if (!rule.is_active): ActionIcon {
+                    icon: "\u{E9F3}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "success";
+                    tooltip: AppI18n.t("network.rule_apply_tooltip", [AppI18n.version]);
+                    clicked => {
+                        root.process_clicked();
+                    }
+                }
+                if (rule.is_active): ActionIcon {
+                    icon: "\u{E711}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "warning";
+                    tooltip: AppI18n.t("network.rule_cancel_tooltip", [AppI18n.version]);
+                    clicked => {
+                        root.cancel_clicked();
+                    }
+                }
+            }
+
+            // Delete
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: "\u{E74D}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "danger";
+                    tooltip: AppI18n.t("distro.delete", [AppI18n.version]);
+                    clicked => {
+                        root.delete_clicked();
+                    }
+                }
+            }
+        }
+    }
+}

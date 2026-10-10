@@ -1,0 +1,106 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme, AppI18n, LayoutConstants } from "../theme.slint";
+
+export component TaskStatusToast inherits Rectangle {
+    in property <string> text;
+    in property <bool> is_shown: false;
+    in property <length> max_container_width: 800px;
+    callback close;
+    height: 52px;
+    width: min(root.max_container_width, max(460px, layout.preferred-width + 40px));
+    background: Theme.card_bg;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border_color;
+    drop-shadow-blur: 12px;
+    drop-shadow-color: #00000030;
+    animate y {
+        duration: 250ms;
+        easing: ease-out;
+    }
+    animate opacity { duration: 250ms; }
+    opacity: is_shown ? 1 : 0;
+    layout := HorizontalLayout {
+        padding-left: AppI18n.is-rtl ? 12px : 20px;
+        padding-right: AppI18n.is-rtl ? 20px : 12px;
+        spacing: 16px;
+        
+        // RTL: Close Button first
+        if (AppI18n.is-rtl): VerticalLayout {
+            alignment: center;
+            TouchArea {
+                width: 32px;
+                height: 32px;
+                clicked => {
+                    root.close();
+                }
+                Text {
+                    text: "\u{E10A}"; // Close icon
+                    font-family: Theme.icon_font;
+                    font-size: 14px;
+                    color: parent.has-hover ? Theme.accent : Theme.icon_color_slate;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        if (AppI18n.is-rtl): Rectangle { } // Spacer for RTL
+
+        // Icon (Progress Spinner / Speaker)
+        if (!AppI18n.is-rtl): VerticalLayout {
+            alignment: center;
+            Text {
+                text: "\u{E995}"; // Volume/Speaker icon
+                font-family: Theme.icon_font;
+                font-size: 20px;
+                color: Theme.icon_color_info;
+            }
+        }
+        Text {
+            text: text;
+            font-size: 14px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_primary;
+            vertical-alignment: center;
+            horizontal-alignment: AppI18n.is-rtl ? right : left;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        // Icon for RTL (at the end)
+        if (AppI18n.is-rtl): VerticalLayout {
+            alignment: center;
+            Text {
+                text: "\u{E995}"; // Volume/Speaker icon
+                font-family: Theme.icon_font;
+                font-size: 20px;
+                color: Theme.icon_color_info;
+            }
+        }
+
+        // Spacer for LTR
+        if (!AppI18n.is-rtl): Rectangle { }
+
+        // LTR: Close Button at the end
+        if (!AppI18n.is-rtl): VerticalLayout {
+            alignment: center;
+            TouchArea {
+                width: 32px;
+                height: 32px;
+                clicked => {
+                    root.close();
+                }
+                Text {
+                    text: "\u{E10A}"; // Close icon
+                    font-family: Theme.icon_font;
+                    font-size: 14px;
+                    color: parent.has-hover ? Theme.accent : Theme.icon_color_slate;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

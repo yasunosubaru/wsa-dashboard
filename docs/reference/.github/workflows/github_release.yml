@@ -1,0 +1,90 @@
+name: 1. GitHub Release
+run-name: GitHub:${{ github.ref_name }}
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v[0-9].[0-9].[0-9]*'
+      - 'v[0-9].[0-9].[0-9][0-9]*'
+      - 'v[0-9].[0-9][0-9].[0-9]*'
+      - 'v[0-9].[0-9][0-9].[0-9][0-9]*'
+      - 'v[0-9][0-9].[0-9].[0-9]*'
+      - 'v[0-9][0-9].[0-9].[0-9][0-9]*'
+      - 'v[0-9][0-9].[0-9][0-9].[0-9]*'
+      - 'v[0-9][0-9].[0-9][0-9].[0-9][0-9]*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    name: Build & Release
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+          targets: x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $ISCC = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (Test-Path $ISCC) {
+            Write-Host "Inno Setup already installed: $ISCC"
+          } else {
+            Write-Host "Downloading Inno Setup 6.7.3..."
+            Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" -OutFile "$env:TEMP\innosetup.exe"
+            Write-Host "Installing Inno Setup..."
+            & "$env:TEMP\innosetup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+            Start-Sleep -Seconds 5
+          }
+
+      - name: Build Release
+        run: cargo build --release
+
+      - name: Build Release (arm64)
+        shell: pwsh
+        run: |
+          rustup target add aarch64-pc-windows-msvc
+          .\build\portable\build.ps1 -Arch arm64
+
+      - name: Get Version
+        id: get_version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref }}" -like "refs/tags/*") {
+            $version = $env:GITHUB_REF -replace "refs/tags/v", ""
+          } else {
+            # If manually triggered without a tag, fallback to Cargo.toml version (simplified handling)
+            $version = (Get-Content Cargo.toml | Select-String "^version =" | ForEach-Object { $_.ToString().Split('"')[1] })
+          }
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $version"
+
+      - name: Prepare Assets
+        shell: pwsh
+        run: |
+          .\build\actions\github_release_prepare.ps1 -Version "${{ steps.get_version.outputs.VERSION }}" -Arch x64
+          .\build\actions\github_release_prepare.ps1 -Version "${{ steps.get_version.outputs.VERSION }}" -Arch arm64
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            target/release/WSLDashboard.${{ steps.get_version.outputs.VERSION }}.Portable.x64.zip
+            build/releases/WSLDashboard.${{ steps.get_version.outputs.VERSION }}.Setup.x64.exe
+            target/aarch64-pc-windows-msvc/release/WSLDashboard.${{ steps.get_version.outputs.VERSION }}.Portable.arm64.zip
+            build/releases/WSLDashboard.${{ steps.get_version.outputs.VERSION }}.Setup.arm64.exe
+          generate_release_notes: true
+

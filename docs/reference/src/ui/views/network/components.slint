@@ -1,0 +1,46 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme, LayoutConstants } from "../../theme.slint";
+
+export component NetworkTab inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+    callback clicked;
+
+    width: tab-label.preferred-width + 24px;
+    height: 32px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
+    background: active ? Theme.accent.with-alpha(0.12) : (touch.has-hover ? Theme.hover_bg : Theme.background);
+    animate background { duration: 150ms; }
+
+    tab-label := Text {
+        text: root.text;
+        color: active ? Theme.accent : Theme.text_secondary;
+        font-size: 13px * LayoutConstants.font-scale;
+        font-weight: 400;
+        font-family: Theme.default_font;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color { duration: 150ms; }
+    }
+
+    // Bottom active indicator
+    if active: Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        width: parent.width * 0.6;
+        x: (parent.width - self.width) / 2;
+        background: Theme.accent;
+        border-radius: 1px;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}

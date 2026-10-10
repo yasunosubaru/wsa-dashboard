@@ -1,0 +1,398 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme, AppI18n, LayoutConstants } from "../theme.slint";
+import { CustomScrollbar } from "./scrollbar.slint";
+
+export component CustomLineEdit inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder-text;
+    in property <bool> enabled: true;
+    in property <InputType> input-type: InputType.text;
+    callback edited(string);
+    height: 32px;
+    background: Theme.input_bg;
+    border-width: 1px;
+    border-color: input-focus.has-focus ? Theme.accent : Theme.input_border;
+    border-radius: 4px;
+    clip: true;
+    input-focus := TextInput {
+        x: 15px;
+        width: parent.width - 30px;
+        text <=> root.text;
+        color: Theme.text_primary;
+        font-family: Theme.default_font;
+        font-size: 13px * LayoutConstants.font-scale;
+        vertical-alignment: center;
+        horizontal-alignment: AppI18n.is-rtl ? right : left;
+        single-line: true;
+        input-type: root.input-type;
+        enabled: root.enabled;
+        accepted => {
+            root.edited(self.text);
+        }
+        edited => {
+            root.edited(self.text);
+        }
+    }
+
+    Text {
+        text: root.placeholder-text;
+        color: (root.text == "" && root.placeholder-text != "") ? Theme.text_secondary : transparent;
+        font-family: Theme.default_font;
+        vertical-alignment: center;
+        horizontal-alignment: AppI18n.is-rtl ? right : left;
+        x: 15px;
+        width: parent.width - 30px;
+    }
+}
+
+export component CustomComboBox inherits Rectangle {
+    in property <[string]> model;
+    in-out property <int> current-index;
+    in-out property <bool> open-dropdown: false;
+    in property <length> dropdown-height: 160px;
+    in property <bool> enabled: true;
+    callback selected(int);
+    height: 32px;
+    opacity: root.enabled ? 1.0 : 0.6;
+    
+    // Main Box
+    Rectangle {
+        background: root.enabled ? Theme.input_bg : Theme.hover_bg;
+        border-width: 1px;
+        border-color: root.enabled ? Theme.input_border : Theme.border_color;
+        border-radius: 4px;
+        width: 100%;
+        height: 100%;
+        HorizontalLayout {
+            padding-left: 15px;
+            padding-right: 15px;
+            alignment: space-between;
+            
+            // RTL: Arrow left, Text right
+            if (AppI18n.is-rtl): Text {
+                text: "▼";
+                color: Theme.text_secondary;
+                vertical-alignment: center;
+                font-size: 10px * LayoutConstants.font-scale;
+            }
+            Text {
+                text: root.model[root.current-index];
+                color: Theme.text_primary;
+                font-family: Theme.default_font;
+                font-size: 13px * LayoutConstants.font-scale;
+                vertical-alignment: center;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+                horizontal-stretch: 1;
+                overflow: elide;
+                min-width: 0;
+            }
+
+            // LTR: Text left, Arrow right
+            if (!AppI18n.is-rtl): Text {
+                text: "▼";
+                color: Theme.text_secondary;
+                vertical-alignment: center;
+                font-size: 10px * LayoutConstants.font-scale;
+            }
+        }
+
+        TouchArea {
+            enabled: root.enabled;
+            clicked => {
+                root.open-dropdown = true;
+                popup.show();
+            }
+        }
+    }
+
+    // Dropdown overlay - positioned relative to root
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: root.width;
+        height: root.open-dropdown ? Math.min(root.model.length * 32px + 2px, root.dropdown-height) : 0px;
+        if (root.open-dropdown): Rectangle {
+            width: 100%;
+            height: 100%;
+            background: Theme.input_bg;
+            border-width: 1px;
+            border-color: Theme.input_border;
+            border-radius: 4px;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: Theme.dark_mode ? #00000066 : #00000033;
+            z: 1000;
+            flick := Flickable {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+                viewport-height: root.model.length * 32px;
+                interactive: true;
+                VerticalLayout {
+                    padding: 0;
+                    spacing: 0;
+                    alignment: start;
+                    for item[i] in root.model: Rectangle {
+                        height: 32px;
+                        background: area.pressed ? Theme.selected_bg : area.has-hover ? Theme.hover_bg : transparent;
+                        border-radius: 2px;
+                        area := TouchArea {
+                            clicked => {
+                                root.current-index = i;
+                                root.selected(i);
+                                root.open-dropdown = false;
+                            }
+                        }
+
+                        Text {
+                            text: item;
+                            color: Theme.text_primary;
+                            font-family: Theme.default_font;
+                            font-size: 13px * LayoutConstants.font-scale;
+                            vertical-alignment: center;
+                            horizontal-alignment: AppI18n.is-rtl ? right : left;
+                            x: AppI18n.is-rtl ? 0 : 15px;
+                            width: AppI18n.is-rtl ? parent.width - 15px : parent.width - 30px;
+                        }
+                    }
+                }
+            }
+
+            // Scrollbar - connected to flick
+            if (flick.viewport-height > self.height - 2px): CustomScrollbar {
+                x: AppI18n.is-rtl ? 2px : parent.width - 8px;
+                y: 1px;
+                width: 6px;
+                height: parent.height - 2px;
+                maximum: flick.viewport-height - flick.height;
+                page_size: flick.height;
+                value: -flick.viewport-y;
+                scroll_to(v) => {
+                    flick.viewport-y = -v;
+                }
+            }
+        }
+    }
+}
+
+export component CustomCheckBox inherits Rectangle {
+    in-out property <bool> checked;
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback toggled;
+    // height: 20px; // Removed fixed height to allow wrapping
+    background: transparent;
+    opacity: root.enabled ? 1.0 : 0.5;
+    HorizontalLayout {
+        spacing: 6px;
+        alignment: AppI18n.is-rtl ? end : start;
+
+        // Check Box Container
+        if (!AppI18n.is-rtl): Rectangle {
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-width: 1px;
+            border-color: root.checked ? Theme.accent : Theme.input_border;
+            background: root.checked ? Theme.accent : Theme.input_bg;
+            border-radius: 3px;
+
+            // Checkmark
+            // Checkmark using Path for better performance and check without font issues
+            Path {
+                width: 100%;
+                height: 100%;
+                // Simple checkmark path centered in 18x18 box
+                commands: "M 4 9 L 7 12 L 14 5";
+                stroke: #FFFFFF;
+                stroke-width: 1.5px;
+                opacity: root.checked ? 1 : 0;
+            }
+        }
+        if (AppI18n.is-rtl): Text {
+            text: root.text;
+            font-size: 13px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_primary;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+
+        // Label
+        if (!AppI18n.is-rtl): Text {
+            text: root.text;
+            font-size: 13px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_primary;
+            vertical-alignment: center;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+        if (AppI18n.is-rtl): Rectangle {
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-width: 1px;
+            border-color: root.checked ? Theme.accent : Theme.input_border;
+            background: root.checked ? Theme.accent : Theme.input_bg;
+            border-radius: 3px;
+
+            // Checkmark
+            // Checkmark using Path for better performance and check without font issues
+            Path {
+                width: 100%;
+                height: 100%;
+                // Simple checkmark path centered in 18x18 box
+                commands: "M 4 9 L 7 12 L 14 5";
+                stroke: #FFFFFF;
+                stroke-width: 1.5px;
+                opacity: root.checked ? 1 : 0;
+            }
+        }
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+}
+
+export component CustomRadioButton inherits Rectangle {
+    in property <bool> checked;
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: 32px;
+    background: transparent;
+    opacity: root.enabled ? 1.0 : 0.5;
+
+    HorizontalLayout {
+        spacing: 6px;
+        alignment: AppI18n.is-rtl ? end : start;
+
+        if (!AppI18n.is-rtl): Rectangle {
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-width: 1px;
+            border-color: root.checked ? Theme.accent : Theme.input_border;
+            border-radius: 9px;
+            background: Theme.input_bg;
+
+            Rectangle {
+                width: 10px;
+                height: 10px;
+                x: 4px;
+                y: 4px;
+                border-radius: 5px;
+                background: Theme.accent;
+                opacity: root.checked ? 1 : 0;
+            }
+        }
+
+        if (AppI18n.is-rtl): Text {
+            text: root.text;
+            font-size: 13px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_primary;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            wrap: word-wrap;
+        }
+
+        if (!AppI18n.is-rtl): Text {
+            text: root.text;
+            font-size: 13px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_primary;
+            vertical-alignment: center;
+            horizontal-alignment: left;
+            wrap: word-wrap;
+        }
+
+        if (AppI18n.is-rtl): Rectangle {
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-width: 1px;
+            border-color: root.checked ? Theme.accent : Theme.input_border;
+            border-radius: 9px;
+            background: Theme.input_bg;
+
+            Rectangle {
+                width: 10px;
+                height: 10px;
+                x: 4px;
+                y: 4px;
+                border-radius: 5px;
+                background: Theme.accent;
+                opacity: root.checked ? 1 : 0;
+            }
+        }
+    }
+    
+    TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            if (root.enabled) {
+                root.clicked();
+            }
+        }
+    }
+}
+
+
+export component CustomButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    in property <bool> show_shield: false;
+    callback clicked;
+    height: 32px;
+    border-radius: 4px;
+    background: root.primary ? Theme.accent : (root.danger ? (Theme.dark_mode ? #2d1a1a : #fdeaea) : (touch.pressed ? Theme.selected_bg : (touch.has-hover ? Theme.hover_bg : Theme.input_bg)));
+    border-width: root.primary ? 0 : 1px;
+    border-color: root.danger ? (Theme.dark_mode ? #ff6666 : #c62828) : Theme.input_border;
+    opacity: root.enabled ? 1.0 : 0.6;
+    HorizontalLayout {
+        padding-left: 15px;
+        padding-right: 15px;
+        Text {
+            text: root.text;
+            color: root.primary ? #FFFFFF : (root.danger ? (Theme.dark_mode ? #ff6666 : #c62828) : Theme.text_primary);
+            font-family: Theme.default_font;
+            font-size: 13px * LayoutConstants.font-scale;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+
+        if (show_shield): Rectangle {
+            width: 14px;
+            height: 14px;
+            y: (parent.height - self.height) / 2;
+            Image {
+                source: @image-url("../../../assets/feat/microsoft-shield.svg");
+                width: 12px;
+                height: 12px;
+                image-fit: contain;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}

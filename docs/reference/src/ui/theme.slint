@@ -1,0 +1,308 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { AppConstants } from "constants.slint";
+
+export global AppApi {
+    in-out property <bool> show_drag: true;
+    pure callback make-transfer(int) -> data-transfer;
+    pure callback read-transfer(data-transfer) -> int;
+}
+
+export struct Information {
+    distro_name: string,
+    wsl_version: string,
+    status: string,
+    install_location: string,
+    vhdx_path: string,
+    vhdx_size: string,
+    actual_used: string,
+    ip: string,
+    is_sparse: bool,
+}
+
+export struct Distro {
+    name: string,
+    status: string,
+    version: string,
+    is_default: bool,
+    icon: image,
+    has_icon: bool,
+    initial: string,
+    distro_display_name: string,
+    boot_run: bool,
+    notes: string,
+}
+
+export struct InstallableDistro {
+    name: string,
+    friendly_name: string,
+}
+
+export struct RootFSHelpItem {
+    name: string,
+    url: string,
+}
+
+export struct UsbDevice {
+    bus_id: string,
+    description: string,
+    instance_id: string,
+    sn: string,
+    is_real_sn: bool,
+    persisted_id: string,
+    client_ip: string,
+    stub_id: string,
+    is_forced: bool,
+    vid_pid: string,
+    status: string,      // "NotShared", "Shared", "Attached"
+    is_attached: bool,
+    boot_attach: bool,
+    auto_attach: bool,
+    attached_distro: string,
+    force_bind: bool,
+}
+
+export struct UsbDeviceDetailInfo {
+    bus_id: string,
+    vid_pid: string,
+    serial_number: string,
+    manufacturer: string,
+    product_name: string,
+    class_guid: string,
+    hardware_ids: string,
+    instance_id: string,
+}
+
+export struct PortProxyRuleUI {
+    id: string,
+    distro_name: string,
+    listen_address: string,
+    listen_port: string,
+    target_port: string,
+    enable_firewall: bool,
+    is_active: bool,
+}
+
+export struct MessageData {
+    id: string,
+    title: string,
+    url: string,
+    msg_type: string,
+    is_read: bool,
+    create_time_text: string,
+}
+
+export struct SchedulerTaskUI {
+    task_id: string,
+    display_name: string,
+    command: string,
+    command_short: string,
+    arguments: string,
+    cron_expr: string,
+    enabled: bool,
+    status: string,
+    last_run: string,
+    next_run: string,
+    trigger_summary: string,
+    admin_mode: bool,
+
+}
+
+export struct PhysicalDiskInfo {
+    device_id: string,
+    model: string,
+    size: string,
+    index: int,
+    interface_type: string,
+    is_usb: bool,
+    display_text: string,
+}
+
+export struct MountedDiskInfo {
+    mount_id: string,
+    disk_path: string,
+    disk_type: string,
+    mount_point: string,
+    mount_time: string,
+    name: string,
+    is_bare: bool,
+    is_mounted: bool,
+}
+
+export struct SettingsStrings {
+    language: string,
+    auto_update: string,
+    log_level: string,
+    log_retention: string,
+    log_path: string,
+    select_folder: string,
+    install_dir: string,
+    backup_dir: string,
+    auto_close: string,
+    system_color: string,
+    auto_start: string,
+    minimize_tray: string,
+    close_to_tray: string,
+    save: string,
+    wsl_settings: string,
+    sidebar_features: string,
+    tab_general: string,
+    tab_advanced: string,
+    tab_interface: string,
+    sparse_vhd: string,
+    sparse_vhd_desc: string,
+    mount_auto_probe: string,
+    mount_auto_probe_desc: string,
+    colorful_icons: string,
+    mail_icon_always: string,
+    hide_pin_icon: string,
+    show_drag_icon: string,
+    stop_wsl: string,
+}
+
+export struct AboutStrings {
+    title: string,
+    description: string,
+    version: string,
+    updates: string,
+    check_update: string,
+    website: string,
+    repository: string,
+    group: string,
+    issues: string,
+    announcements: string,
+    talk: string,
+    documents: string,
+    star: string,
+    love: string,
+    github: string,
+    license: string,
+    copyright: string,
+    privacy_policy: string,
+    terms_of_service: string,
+}
+
+export struct DonateStrings {
+    donate_link_label: string,
+    payment_methods_title: string,
+    donation_note: string,
+    donation_record: string,
+    copied: string,
+    copy_wallet: string,
+    copy_email: string,
+    scan_qr: string,
+    visit_link: string,
+}
+
+
+export global Theme {
+    in property <bool> dark_mode: false;
+    in property <bool> system_color: false;
+    out property <color> background: dark_mode ? #2d2d30 : #F3F3F3;
+    out property <color> content_bg: dark_mode ? #1E1E1E : #FFFFFF;
+    out property <color> sidebar_bg: transparent;
+    out property <color> card_bg: dark_mode ? #2D2D30 : #FFFFFF;
+    out property <color> card_bg_muted: dark_mode ? #2D2D30 : #fdfcfc;
+    out property <color> text_primary: dark_mode ? #EEEEEE : #1A1A1A;
+    out property <color> text_secondary: dark_mode ? #BBBBBB : #666666;
+    out property <color> border_color: dark_mode ? #3E3E42 : #E6E8EB;
+    out property <color> main_color: dark_mode ? #888888 : #BBBBBB;
+    out property <color> hover_bg: dark_mode ? #2A2D2E : #EAEAEA;
+    out property <color> selected_bg: dark_mode ? #37373D : #E6E6E6;
+    out property <color> accent: #0067C0;
+    out property <color> switch_track_border: dark_mode ? #666666 : #888888;
+    out property <color> switch_thumb: dark_mode ? #BBBBBB : #555555;
+    out property <color> scrollbar_bg: dark_mode ? #2A2D2E : #F0F0F0;
+    out property <color> scrollbar_thumb: dark_mode ? #5D5D5D : #C1C1C1;
+    out property <color> scrollbar_thumb_hover: dark_mode ? #6D6D6D : #A8A8A8;
+    
+    // Input component style
+    out property <color> input_bg: dark_mode ? #252526 : #FFFFFF;
+    out property <color> input_border: dark_mode ? #3E3E42 : #D9D9D9;
+
+    // Icon style
+    out property <color> icon_color_pin: dark_mode ? #60a5fa : #0067C0;
+    in property <bool> colorful_icons: true;
+    out property <color> icon_color_navigation: colorful_icons ? (dark_mode ? #38bdf8 : #0284c7) : text_secondary;
+    out property <color> icon_color_action: colorful_icons ? (dark_mode ? #94a3b8 : #475569) : text_secondary;
+    out property <color> icon_color_success: colorful_icons ? (dark_mode ? #4ade80 : #16a34a) : text_secondary;
+    out property <color> icon_color_danger: colorful_icons ? (dark_mode ? #f87171 : #dc2626) : text_secondary;
+    out property <color> icon_color_warning: colorful_icons ? (dark_mode ? #fb923c : #ea580c) : text_secondary;
+    out property <color> icon_color_info: colorful_icons ? (dark_mode ? #60a5fa : #2563eb) : text_secondary;
+    out property <color> icon_color_purple: colorful_icons ? (dark_mode ? #a78bfa : #7c3aed) : text_secondary;
+    out property <color> icon_color_gold: colorful_icons ? (dark_mode ? #facc15 : #f3c409ff) : text_secondary;
+    out property <color> icon_color_cyan: colorful_icons ? (dark_mode ? #22d3ee : #0891b2) : text_secondary;
+    out property <color> icon_color_pink: colorful_icons ? (dark_mode ? #f472b6 : #db2777) : text_secondary;
+    out property <color> icon_color_teal: colorful_icons ? (dark_mode ? #2dd4bf : #0d9488) : text_secondary;
+    out property <color> icon_color_indigo: colorful_icons ? (dark_mode ? #818cf8 : #4f46e5) : text_secondary;
+    out property <color> icon_color_lime: colorful_icons ? (dark_mode ? #a3e635 : #65a30d) : text_secondary;
+    out property <color> icon_color_orange: colorful_icons ? (dark_mode ? #fb923c : #f97316) : text_secondary;
+    out property <color> icon_color_rose: colorful_icons ? (dark_mode ? #fb7185 : #e11d48) : text_secondary;
+    out property <color> icon_color_heart: colorful_icons ? #C72335 : text_secondary;
+    out property <color> icon_color_violet: colorful_icons ? (dark_mode ? #a78bfa : #7c3aed) : text_secondary;
+    out property <color> icon_color_emerald: colorful_icons ? (dark_mode ? #34d399 : #059669) : text_secondary;
+    out property <color> icon_color_amber: colorful_icons ? (dark_mode ? #fbbf24 : #d97706) : text_secondary;
+    out property <color> icon_color_sky: colorful_icons ? (dark_mode ? #38bdf8 : #0284c7) : text_secondary;
+    out property <color> icon_color_fuchsia: colorful_icons ? (dark_mode ? #f0abfc : #c026d3) : text_secondary;
+    out property <color> icon_color_cobalt: colorful_icons ? (dark_mode ? #60a5fa : #1d4ed8) : text_secondary;
+    out property <color> icon_color_mint: colorful_icons ? (dark_mode ? #5eead4 : #0d9488) : text_secondary;
+    out property <color> icon_color_slate: colorful_icons ? (dark_mode ? #94a3b8 : #475569) : text_secondary;
+    out property <color> icon_color_system: text_secondary;
+
+    // Compatibility of Chinese and Japanese character display on Western language operating systems
+    // Font style
+    in-out property <string> default_font: "Microsoft YaHei UI";
+    out property <string> icon_font: "Segoe Fluent Icons";
+}
+
+export global AppInfo {
+    in property <string> version: "0.0.0";
+    // Display suffix for the runtime architecture, e.g. ".x64" or ".arm64"
+    in property <string> arch_suffix: "";
+    in property <bool> checking_update: false;
+    in property <bool> has_update: false;
+    in-out property <string> latest_version: "";
+    in-out property <string> latest_release_date: "";
+    in-out property <string> update_download_url: "";
+    in property <string> project_repository: AppConstants.project_repository;
+    in property <string> project_website: AppConstants.project_website;
+    in property <string> license_url: project_repository + AppConstants.license_url;
+    in property <string> issues_url: project_repository + "/issues";
+    in property <string> release_url: project_repository + "/releases";
+    in property <string> announcements_url: project_repository + "/discussions";
+    in property <string> talk_url: "";
+    in property <string> documents_url: "";
+    in property <string> donate_url: "";
+}
+
+export global AppI18n {
+    in-out property <int> version: 0;
+    in-out property <bool> is-rtl: false;
+    in-out property <string> locale-code: "en";
+    pure callback t(string, [string]) -> string;
+
+    // Language options (set from Rust, consumed by LanguageData global)
+    in-out property <[string]> language-options;
+    pure callback get-language-index(string) -> int;
+}
+
+export global LayoutConstants {
+    out property <length> padding-start: AppI18n.is-rtl ? 0 : 10px;
+    out property <length> padding-end: AppI18n.is-rtl ? 10px : 0;
+    out property <LayoutAlignment> row-alignment: AppI18n.is-rtl ? LayoutAlignment.end : LayoutAlignment.start;
+    // Enhanced font scaling for complex scripts:
+    // - Arabic (ar), Urdu (ur), Persian (fa), Hebrew (he), Sindhi (sd): RTL, highly complex connecting scripts -> 1.35x
+    // - Hindi (hi), Bengali (bn), Telugu (te), Tamil (ta), Kannada (kn), Marathi (mr), Malayalam (ml): LTR, complex conjuncts/matras -> 1.20x
+    // - Thai (th), Burmese (my), Amharic (am): complex scripts -> 1.20x
+    // - Others (en, zh, ja, ko, etc.): 1.0x
+    out property <float> font-scale: 
+        (AppI18n.locale-code == "ar" || AppI18n.locale-code == "ur" || 
+         AppI18n.locale-code == "fa" || AppI18n.locale-code == "he" ||
+         AppI18n.locale-code == "sd") ? 1.35 : 
+        (AppI18n.locale-code == "hi" || AppI18n.locale-code == "bn" ||
+         AppI18n.locale-code == "te" || AppI18n.locale-code == "ta" ||
+         AppI18n.locale-code == "kn" || AppI18n.locale-code == "mr" ||
+         AppI18n.locale-code == "ml" || AppI18n.locale-code == "my" ||
+         AppI18n.locale-code == "am" || AppI18n.locale-code == "th") ? 1.20 : 1.0;
+}

@@ -1,0 +1,258 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { CustomScrollbar } from "../components/scrollbar.slint";
+import { AppConstants } from "../constants.slint";
+import { Theme, UsbDevice, AppI18n, LayoutConstants } from "../theme.slint";
+import { ActionIcon } from "../components/common.slint";
+import { UsbDeviceCard } from "../components/usb_card.slint";
+
+// USB device list
+component UsbDeviceList inherits VerticalLayout {
+    in property <[UsbDevice]> devices;
+    in-out property <string> expanded_bus_id: "";
+    in property <bool> is_task_exists: true;
+    callback bind_clicked(string, string);
+    callback unbind_clicked(string);
+    callback attach_clicked(string, string);
+    callback detach_clicked(string);
+    callback copy_info_clicked(UsbDevice);
+    callback info_clicked(UsbDevice);
+    callback device_settings_clicked(UsbDevice);
+    padding-top: 0px;
+    padding-bottom: 0px;
+    padding-left: AppI18n.is-rtl ? 16px : 4px;
+    padding-right: AppI18n.is-rtl ? 4px : 16px;
+    spacing: 12px;
+    alignment: start;
+    for d in devices: UsbDeviceCard {
+        device: d;
+        expanded: root.expanded_bus_id == d.bus_id;
+        expand_clicked => {
+            if (root.expanded_bus_id == d.bus_id) {
+                root.expanded_bus_id = "";
+            } else {
+                root.expanded_bus_id = d.bus_id;
+            }
+        }
+        bind_clicked(id, vp) => {
+            root.bind_clicked(id, vp);
+        }
+        unbind_clicked(id) => {
+            root.unbind_clicked(id);
+        }
+        attach_clicked(id, vp) => {
+            root.attach_clicked(id, vp);
+        }
+        detach_clicked(id) => {
+            root.detach_clicked(id);
+        }
+        copy_info_clicked(d) => {
+            root.copy_info_clicked(d);
+        }
+        info_clicked(d) => {
+            root.info_clicked(d);
+        }
+        device_settings_clicked(d) => {
+            root.device_settings_clicked(d);
+        }
+        is_task_exists: root.is_task_exists;
+    }
+}
+
+export component UsbView inherits VerticalLayout {
+    in property <[UsbDevice]> devices;
+    in property <bool> usb_loading: false;
+    in property <string> usb_error: "";
+    in property <string> usbipd_version: "";
+    in property <bool> is_usbipd_outdated: false;
+    in property <bool> is_task_exists: true;
+    callback refresh_usb(bool);
+    callback bind_clicked(string, string);
+    callback unbind_clicked(string);
+    callback attach_clicked(string, string);
+    callback detach_clicked(string);
+    callback copy_info_clicked(UsbDevice);
+    callback info_clicked(UsbDevice);
+    callback device_settings_clicked(UsbDevice);
+    callback open_url(string);
+    private property <string> expanded_bus_id: "";
+    private property <bool> is_missing_usbipd: usb_error == "not_found" || is_usbipd_outdated;
+    vertical-stretch: 1;
+    spacing: 2px;
+    padding-top: 8px;
+
+    // Content area
+    Rectangle {
+        vertical-stretch: 1;
+        clip: true;
+
+        // Error screen (Only if list is empty)
+        if (usb_error != "" && devices.length == 0): Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+                Text {
+                    text: "\u{EA39}";
+                    font-family: Theme.icon_font;
+                    font-size: 48px;
+                    color: Theme.icon_color_danger;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: root.is_missing_usbipd ? AppI18n.t("usb.not_found_error", [AppI18n.version]) : root.usb_error;
+                    color: Theme.text_secondary;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+
+                // Download link for usbipd-win
+                if (root.is_missing_usbipd): HorizontalLayout {
+                    alignment: center;
+                    spacing: 8px;
+                    Rectangle {
+                        height: 32px;
+                        min-width: 140px;
+                        background: download_touch.has-hover ? Theme.hover_bg : Theme.card_bg;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: Theme.accent;
+                        download_touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.open_url(AppConstants.usbipd_releases);
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 6px;
+                            alignment: center;
+                            Text {
+                                text: "\u{E896}"; // Download icon
+                                font-family: Theme.icon_font;
+                                font-size: 14px;
+                                color: Theme.accent;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: AppI18n.t("usb.download_usbipd", [AppI18n.version]);
+                                color: Theme.accent;
+                                font-family: Theme.default_font;
+                                font-size: 13px * LayoutConstants.font-scale;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Empty state
+        if (usb_error == "" && devices.length == 0 && !usb_loading): Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: "\u{E88E}";
+                    font-family: Theme.icon_font;
+                    font-size: 48px;
+                    color: Theme.icon_color_amber;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: AppI18n.t("usb.empty", [AppI18n.version]);
+                    color: Theme.text_secondary;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // Initial Loading (Only if list is empty)
+        if (usb_loading && devices.length == 0): Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+                Text {
+                    text: "...";
+                    font-size: 24px * LayoutConstants.font-scale;
+                    color: Theme.accent;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: AppI18n.t("usb.loading", [AppI18n.version]); // Make sure this key exists or fallback
+                    color: Theme.text_secondary;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // Device list (Keep visible during subsequent loads)
+        if (devices.length > 0): Rectangle {
+            flick := Flickable {
+                viewport-height: usb_list.preferred-height;
+                width: parent.width;
+                height: 100%;
+                usb_list := UsbDeviceList {
+                    devices: root.devices;
+                    expanded_bus_id <=> root.expanded_bus_id;
+                    bind_clicked(id, vp) => {
+                        root.bind_clicked(id, vp);
+                    }
+                    unbind_clicked(id) => {
+                        root.unbind_clicked(id);
+                    }
+                    attach_clicked(id, vp) => {
+                        root.attach_clicked(id, vp);
+                    }
+                    detach_clicked(id) => {
+                        root.detach_clicked(id);
+                    }
+                    copy_info_clicked(d) => {
+                        root.copy_info_clicked(d);
+                    }
+                    info_clicked(d) => {
+                        root.info_clicked(d);
+                    }
+                    device_settings_clicked(d) => {
+                        root.device_settings_clicked(d);
+                    }
+                    is_task_exists: root.is_task_exists;
+                }
+            }
+
+            CustomScrollbar {
+                opacity: (flick.viewport-height > flick.height) ? 1 : 0;
+                visible: flick.viewport-height > flick.height;
+                x: AppI18n.is-rtl ? 2px : parent.width - 8px;
+                y: 0;
+                width: 8px;
+                height: 100%;
+                maximum: flick.viewport-height - flick.height;
+                page_size: flick.height;
+                value: -flick.viewport-y;
+                scroll_to(v) => {
+                    flick.viewport-y = -v;
+                }
+            }
+
+            // Subtle loading overlay for background refreshes
+            if (usb_loading): Rectangle {
+                background: Theme.dark_mode ? #00000033 : #FFFFFF33;
+                border-radius: 4px;
+                // Optional: show a small spinner in the corner or center
+            }
+        }
+    }
+}

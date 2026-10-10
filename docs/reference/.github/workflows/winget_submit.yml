@@ -1,0 +1,99 @@
+name: 6. WinGet Submit
+run-name: WinGet:${{ github.event.inputs.tag_name || github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to submit (leave empty to use selected tag/branch)'
+        required: false
+        default: ''
+      version:
+        description: 'Version to submit (e.g. 0.9.1, overrides tag parsing)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  submit-to-winget:
+    name: Submit to winget-pkgs
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Version
+        id: get_version
+        shell: pwsh
+        run: |
+          $inputVersion = "${{ github.event.inputs.version }}"
+
+          if (-not [string]::IsNullOrWhiteSpace($inputVersion)) {
+            # Explicit version provided, use it directly
+            $version = $inputVersion
+            Write-Host "Using explicitly provided version: $version"
+          } else {
+            # Parse version from tag
+            $tag = "${{ github.event.inputs.tag_name }}"
+            if ([string]::IsNullOrWhiteSpace($tag)) {
+              $tag = "${{ github.ref_name }}"
+              Write-Host "No tag_name provided, falling back to ref_name: $tag"
+            }
+
+            if ($tag -notlike "v*") {
+               Write-Error "Invalid tag name: $tag. Must start with 'v'."
+               exit 1
+            }
+
+            $version = $tag -replace "^v", ""
+            echo "TAG=$tag" >> $env:GITHUB_OUTPUT
+            Write-Host "Tag: $tag"
+          }
+
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $version"
+
+      - name: Download installers
+        shell: pwsh
+        run: |
+          $version = "${{ steps.get_version.outputs.VERSION }}"
+          $files = @(
+            "WSLDashboard.$version.Setup.x64.exe",
+            "WSLDashboard.$version.Setup.arm64.exe"
+          )
+          foreach ($file in $files) {
+            $url = "https://github.com/owu/wsl-dashboard/releases/download/v$version/$file"
+            $dest = "build\releases\$file"
+            New-Item -ItemType Directory -Path (Split-Path $dest) -Force | Out-Null
+            Write-Host "Downloading installer from: $url"
+            Invoke-WebRequest -Uri $url -OutFile $dest
+            Write-Host "Downloaded to: $dest"
+          }
+
+      - name: Generate winget manifests
+        shell: pwsh
+        run: |
+          .\build\winget\build.ps1 -Version "${{ steps.get_version.outputs.VERSION }}"
+
+      - name: Submit to winget-pkgs
+        shell: pwsh
+        run: |
+          $version = "${{ steps.get_version.outputs.VERSION }}"
+          $manifestDir = "build\winget\Owu.WSLDashboard"
+
+          Write-Host "Downloading wingetcreate..."
+          $wingetcreatePath = Join-Path $env:TEMP "wingetcreate.exe"
+          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile $wingetcreatePath
+
+          Write-Host "Submitting manifests from: $manifestDir"
+          & $wingetcreatePath submit $manifestDir --token "${{ secrets.WINGET_GITHUB_TOKEN }}" --prtitle "New version: Owu.WSLDashboard version $version"
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "wingetcreate submission failed!"
+            exit 1
+          }
+
+          Write-Host "Successfully submitted WSL Dashboard v$version to winget-pkgs!"

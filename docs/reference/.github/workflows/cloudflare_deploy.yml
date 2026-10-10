@@ -1,0 +1,100 @@
+name: 3. Cloudflare Deploy
+run-name: Cloudflare:${{ github.event.inputs.tag_name || github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to deploy (leave empty to use selected tag/branch)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-to-pages:
+    name: Deploy to Pages
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Version
+        id: get_version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ github.event.inputs.tag_name }}"
+            if ([string]::IsNullOrWhiteSpace($tag)) {
+              $tag = "${{ github.ref_name }}"
+              Write-Host "No tag_name provided, falling back to ref_name: $tag"
+            }
+          } else {
+            $tag = "${{ github.event.release.tag_name }}"
+          }
+          
+          if ($tag -notlike "v*") {
+             Write-Error "Invalid tag name: $tag. Must start with 'v'."
+             exit 1
+          }
+          
+          $version = $tag -replace "^v", ""
+          echo "TAG=$tag" >> $env:GITHUB_OUTPUT
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Tag: $tag"
+          Write-Host "Version: $version"
+
+      - name: Download Release Assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.get_version.outputs.TAG }}"
+          $version = "${{ steps.get_version.outputs.VERSION }}"
+          $downloadDir = "temp_downloads"
+          New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
+          
+          Write-Host "[INFO] Downloading assets for release $tag..."
+          
+          # Define the file patterns to download
+          $files = @(
+            "WSLDashboard.$version.Portable.x64.zip",
+            "WSLDashboard.$version.Setup.x64.exe",
+            "WSLDashboard.$version.Portable.arm64.zip",
+            "WSLDashboard.$version.Setup.arm64.exe"
+          )
+          
+          foreach ($f in $files) {
+            Write-Host "[INFO] Downloading $f..."
+            gh release download $tag -p "$f" -D $downloadDir --clobber
+            if (-not (Test-Path "$downloadDir/$f")) {
+              Write-Error "[ERROR] Failed to download $f. Please check if the file exists in the release."
+              exit 1
+            }
+            Write-Host "[OK] Downloaded $f"
+          }
+          
+          Write-Host "[SUCCESS] All assets downloaded to $downloadDir"
+
+      - name: Prepare Cloudflare Pages Assets
+        shell: pwsh
+        run: |
+          $version = "${{ steps.get_version.outputs.VERSION }}"
+          $downloadDir = "temp_downloads"
+          
+          .\build\actions\cloudflare_pages_prepare.ps1 `
+            -Version "$version" `
+            -OutputDir "pages/releases/download/v$version" `
+            -PortableX64Zip "$downloadDir/WSLDashboard.$version.Portable.x64.zip" `
+            -SetupX64Exe "$downloadDir/WSLDashboard.$version.Setup.x64.exe" `
+            -PortableArm64Zip "$downloadDir/WSLDashboard.$version.Portable.arm64.zip" `
+            -SetupArm64Exe "$downloadDir/WSLDashboard.$version.Setup.arm64.exe"
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy pages --project-name ${{ secrets.CLOUDFLARE_DOWNLOAD_NAME }} --branch main

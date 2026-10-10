@@ -1,0 +1,12 @@
+version = 1
+SPDX-PackageName = "wsldashboard"
+SPDX-PackageDownloadLocation = "https://github.com/owu/wsl-dashboard"
+SPDX-PackageInformationUrl = "https://github.com/owu/wsl-dashboard"
+SPDX-PackageComment = "On the license of this package, see the LICENSE file."
+
+[[annotations]]
+path = [".github/**", ".gitignore", "assets/**", "build/**", "manual/**", "Cargo.lock", "rust-toolchain.toml", "README.md", "Cargo.toml", "LICENSE"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Copyright (c) 2026 owu <wqh@live.com>"
+SPDX-License-Identifier = "GPL-3.0-only"
+SPDX-FileComment = "Build artifacts, documentation, GitHub workflows, and third-party assets do not require individual copyright headers."

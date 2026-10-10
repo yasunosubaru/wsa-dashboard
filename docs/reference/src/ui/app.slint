@@ -1,0 +1,1570 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import {
+    Theme,
+    Distro,
+    InstallableDistro,
+    AppInfo,
+    Information,
+    RootFSHelpItem,
+    UsbDevice,
+    PortProxyRuleUI,
+    SchedulerTaskUI,
+    MessageData,
+    SettingsStrings,
+    AboutStrings,
+    DonateStrings,
+    AppApi,
+    AppI18n,
+    UsbDeviceDetailInfo,
+    PhysicalDiskInfo,
+    MountedDiskInfo,
+} from "theme.slint";
+import { AppConstants } from "constants.slint";
+import { TitleBar } from "components/title_bar.slint";
+import { Sidebar } from "components/sidebar.slint";
+import { ModalManager } from "components/modal_manager.slint";
+import { LanguageData } from "components/language_data.slint";
+import { MainView } from "views/main_view.slint";
+import { AddInstanceView } from "views/add_view.slint";
+import { UsbView } from "views/usb_view.slint";
+import { NetworkView } from "views/network/mod.slint";
+import { SchedulerView } from "views/scheduler_view.slint";
+import { SchedulerDialog } from "components/dialogs/scheduler_dialog.slint";
+import { MountDiskView } from "views/mount_disk_view.slint";
+import { MountDiskDialog } from "components/dialogs/mount_disk_dialog.slint";
+import { SettingsView } from "views/settings/mod.slint";
+import { AboutView } from "views/about_view.slint";
+import { DonateView } from "views/donate_view.slint";
+import { TaskStatusToast } from "components/task_status_toast.slint";
+
+
+export { Theme, Distro, InstallableDistro, AppInfo, RootFSHelpItem, UsbDevice, PortProxyRuleUI, AppI18n, AppApi, PhysicalDiskInfo, MountedDiskInfo }
+
+export component AppWindow inherits Window {
+    title: "WSL_DASHBOARD_WINDOW_UI";
+
+    width: 800px;
+    height: 600px;
+    background: transparent;
+    no-frame: true;
+
+    // --- Backend API State (Keep these here for Rust integration) ---
+    in property <[Distro]> distros: [];
+    in property <[InstallableDistro]> installable_distros: [];
+    in property <int> selected_tab: 0;
+    in-out property <bool> auto_shutdown: false;
+    in-out property <bool> tray_autostart: false;
+    in-out property <bool> tray_start_minimized: false;
+    in-out property <bool> tray_close_to_tray: true;
+    in property <bool> is_maximized: false;
+    in-out property <bool> is_pinned: false;
+    callback window_pin_toggle();
+    in-out property <bool> sidebar_collapsed: false;
+    in-out property <string> new_instance_name: "";
+    in-out property <string> new_instance_path: "";
+    in-out property <string> selected_install_distro: "";
+    in property <[string]> installable_distro_names: [];
+    in property <bool> is_installing: false;
+    in property <bool> is_exporting: false;
+    in property <bool> is_cloning: false;
+    in property <bool> is_moving: false;
+    in property <bool> is_compressing: false;
+    in-out property <bool> is_window_visible: true;
+    in property <string> install_status: "";
+    in property <bool> install_success: false;
+    in property <string> terminal_output: "";
+    in property <string> name_error: "";
+    in property <string> path_error: "";
+    in-out property <[string]> install_sources: [];
+    in-out property <int> selected_source_idx: 0;
+    in-out property <string> install_file_path: "";
+    in property <bool> is_mirror_loading: false;
+    in property <bool> is_store_loading: false;
+    in property <bool> mirror_list_available: false;
+    in property <[string]> mirror_distro_names: [];
+    in-out property <string> selected_mirror_distro: "";
+    in property <string> mirror_source_url: "";
+    in-out property <bool> show_delete_confirmation: false;
+    in-out property <bool> show_stop_wsl_confirm: false;
+    in-out property <string> distro_to_delete: "";
+    in-out property <bool> show_export_dialog: false;
+    in-out property <bool> export_compress: true;
+    in-out property <string> export_distro_name: "";
+    in-out property <string> export_target_path: "";
+    in property <string> export_error: "";
+    in-out property <bool> show_clone_dialog: false;
+    in-out property <string> clone_source_name: "";
+    in-out property <string> clone_target_name: "";
+    in-out property <string> clone_target_path: "";
+    in property <string> clone_error: "";
+    in-out property <string> clone_base_path: "";
+    in-out property <bool> show_move_dialog: false;
+    in-out property <string> move_source_name: "";
+    in-out property <string> move_target_name: "";
+    in-out property <string> move_target_path: "";
+    in property <string> move_error: "";
+    in-out property <string> move_original_path: "";
+    in-out property <bool> show_move_confirm: false;
+    in-out property <string> move_confirm_message: "";
+    in-out property <bool> show_message_dialog: false;
+    in-out property <string> current_message: "";
+    in-out property <string> current_message_link: "";
+    in-out property <string> current_message_url: "";
+    in-out property <string> current_message_action: "";
+    in-out property <string> copy_script_content: "";
+    in-out property <bool> show_update_dialog: false;
+    in-out property <bool> show_install_warn_dialog: false;
+    in-out property <bool> show_expire_dialog: false;
+    in-out property <bool> show_rootfs_help: false;
+    in-out property <bool> show_vscode_startup: false;
+    in-out property <string> ui_language: "auto";
+    in property <string> system_language: "en"; // Injected by backend at startup
+    in-out property <string> distro_location: "";
+    in-out property <string> backup_location: "";
+    in-out property <string> logs_location: "";
+    in-out property <int> log_level: 4;
+    in-out property <int> log_days: 7;
+    in-out property <int> check_update_interval: 7;
+    in-out property <bool> sidebar_add: true;
+    in-out property <bool> sidebar_toggle: true;
+    in-out property <bool> sidebar_usb: true;
+    in-out property <bool> sidebar_network: true;
+    in-out property <bool> sidebar_donate: true;
+    in-out property <bool> sidebar_about: true;
+    in-out property <bool> sparse_vhd: false;
+    in-out property <bool> mount_auto_probe: false;
+    in-out property <bool> system_color <=> Theme.system_color;
+    in-out property <bool> colorful_icons <=> Theme.colorful_icons;
+    in property <string> task_status_text: "";
+    in property <bool> task_status_visible: false;
+    in property <Information> information;
+    in property <[RootFSHelpItem]> rootfs_help_list: [{ name: "Ubuntu", url: AppConstants.ubuntu_wsl_images }];
+    in property <SettingsStrings> settings_strings;
+    in property <AboutStrings> about_strings;
+    in property <DonateStrings> donate_strings;
+    in property <bool> donate_methods_ready: false;
+    in property <[image]> donate_method_icons: [];
+    in property <[string]> donate_method_names: [];
+    in property <[int]> donate_method_formats: [];
+    in property <[string]> donate_method_urls: [];
+    in property <[string]> donate_method_exts: [];
+    in property <[image]> donate_method_regions: [];
+    in property <string> donate_donation_record_url: "";
+    in-out property <bool> show_donate_popup: false;
+    in-out property <bool> donate_popup_loading: false;
+    in-out property <image> donate_popup_image;
+
+    in property <image> about_group_pic;
+    in property <bool> about_group_pic_ready: false;
+    in-out property <bool> show_group_popup: false;
+    in-out property <bool> show_information: false;
+    in-out property <bool> show_settings: false;
+    in-out property <bool> show_language_dialog: false;
+    property <int> selected_language_index: LanguageData.get_language_index(ui_language);
+    in-out property <string> settings_distro_name: "";
+    in-out property <string> settings_terminal_dir: "~";
+    in-out property <string> settings_vscode_dir: "/home";
+    in-out property <string> settings_distro_notes: "";
+    in-out property <bool> settings_is_default: false;
+    in-out property <bool> settings_lock_default: false;
+    in-out property <bool> settings_autostart: false;
+    in-out property <string> settings_startup_script: "";
+    in-out property <string> settings_startup_script_url: "";
+    in-out property <string> settings_terminal_dir_error: "";
+    in-out property <string> settings_vscode_dir_error: "";
+    in-out property <string> settings_distro_notes_error: "";
+    in-out property <string> settings_startup_script_error: "";
+    in-out property <string> settings_default_error: "";
+    in-out property <bool> settings_is_task_exists: true;
+    in-out property <bool> settings_terminal_proxy: true;
+    in-out property <bool> settings_enable_sparse: false;
+    in-out property <bool> settings_sparse_fixed: false;
+
+    // WSL Config properties
+    in-out property <bool> show_wsl_config: false;
+    in-out property <string> wsl_config_distro_name: "";
+    in-out property <bool> wsl_config_automount_enabled: true;
+    in-out property <bool> wsl_config_automount_mount_fs_tab: true;
+    in-out property <string> wsl_config_automount_root: "/mnt/";
+    in-out property <string> wsl_config_automount_options: "";
+    in-out property <bool> wsl_config_network_generate_hosts: true;
+    in-out property <bool> wsl_config_network_generate_resolv_conf: true;
+    in-out property <string> wsl_config_network_hostname: "";
+    in-out property <bool> wsl_config_interop_enabled: true;
+    in-out property <bool> wsl_config_interop_append_windows_path: true;
+    in-out property <string> wsl_config_user_default: "";
+    in-out property <bool> wsl_config_boot_systemd: false;
+    in-out property <string> wsl_config_boot_command: "";
+    in-out property <bool> wsl_config_boot_protect_binfmt: true;
+    in-out property <bool> wsl_config_gpu_enabled: true;
+    in-out property <bool> wsl_config_time_use_windows_timezone: true;
+    in property <bool> wsl_config_boot_supported: true;
+    in property <bool> wsl_config_gpu_supported: true;
+    in property <bool> wsl_config_time_supported: true;
+    in property <bool> wsl_config_version_detection_failed: false;
+    in property <string> wsl_config_version_string: "";
+    in property <string> wsl_config_user_error: "";
+    in property <string> wsl_config_command_error: "";
+    in property <string> wsl_config_preview_content: "";
+
+    // --- Network Management Properties ---
+    in-out property <bool> network_is_admin: false;
+    in-out property <bool> network_is_helper_installed: false;
+    in-out property <string> network_networking_mode: "NAT";
+    in-out property <[string]> network_distro_names: [];
+    in-out property <[string]> network_local_ips: [];
+    in-out property <[PortProxyRuleUI]> network_rules: [];
+    in-out property <bool> network_proxy_is_enabled: false;
+    in-out property <string> network_proxy_host: "";
+    in-out property <string> network_proxy_port: "";
+    in-out property <bool> network_proxy_auth_enabled: false;
+    in-out property <string> network_proxy_username: "";
+    in-out property <string> network_proxy_password: "";
+    in-out property <string> network_proxy_no_proxy: "";
+    in property <string> network_proxy_default_host: "";
+    in property <string> network_proxy_default_port: "";
+    in property <string> network_proxy_default_no_proxy: "";
+    in-out property <bool> show_check_proxy: false;
+    in-out property <bool> show_network_proxy_help: false;
+    in-out property <bool> network_show_add_dialog: false;
+    in-out property <int> network_add_distro_idx: 0;
+    in-out property <int> network_add_ip_idx: 0;
+    in-out property <string> network_add_listen_port: "";
+    in-out property <string> network_add_target_port: "";
+    in-out property <bool> network_add_enable_fw: true;
+    in property <string> network_add_error: "";
+
+    // --- Compress properties ---
+    in-out property <bool> show_compress_dialog: false;
+    in-out property <string> compress_distro_name: "";
+
+    // --- Crontab Properties ---
+    in property <[SchedulerTaskUI]> scheduler_tasks: [];
+    in property <bool> scheduler_loading: false;
+    in property <string> scheduler_error: "";
+    in-out property <bool> show_scheduler_dialog: false;
+    in-out property <bool> scheduler_dialog_is_edit: false;
+    in-out property <string> scheduler_dialog_task_id: "";
+    in-out property <string> scheduler_dialog_task_name: "";
+    in-out property <string> scheduler_dialog_command: "";
+    in-out property <string> scheduler_dialog_arguments: "";
+    in-out property <string> scheduler_dialog_cron_expr: "";
+    in-out property <string> scheduler_dialog_cron_help_url: "";
+    in-out property <string> scheduler_dialog_command_help_url: "";
+    in-out property <string> scheduler_dialog_name_error: "";
+    in-out property <string> scheduler_dialog_command_error: "";
+    in-out property <string> scheduler_dialog_cron_error: "";
+    in-out property <bool> scheduler_dialog_admin_mode: false;
+    in-out property <bool> scheduler_dialog_submitting: false;
+
+    in-out property <string> scheduler_busy_task_id: "";
+    in-out property <bool> sidebar_scheduler: true;
+
+    // --- Mount Disk Properties ---
+    in property <[PhysicalDiskInfo]> mount_disk_physical_disks: [];
+    in property <[string]> mount_disk_physical_disk_texts: [];
+    in property <[MountedDiskInfo]> mount_disk_mounted_list: [];
+    in property <string> mount_disk_error: "";
+    in-out property <bool> show_mount_disk_dialog: false;
+    in-out property <int> mount_disk_dialog_tab: 0;
+    in-out property <string> mount_disk_dialog_vhd_path: "";
+    in-out property <bool> mount_disk_dialog_bare: false;
+    in-out property <string> mount_disk_dialog_name: "";
+    in-out property <string> mount_disk_dialog_partition: "";
+    in-out property <string> mount_disk_dialog_filesystem: "";
+    in-out property <string> mount_disk_dialog_options: "";
+    in-out property <int> mount_disk_dialog_selected_disk_idx: 0;
+    in property <string> mount_disk_help_url: "";
+    in-out property <bool> sidebar_mount: true;
+    in-out property <bool> show_mount_disk_delete_confirmation: false;
+    in-out property <string> mount_disk_to_delete: "";
+    in-out property <bool> show_mount_restart_confirm: false;
+
+    // WSL Compat Dialog properties
+    in-out property <bool> show_wsl_compat_dialog: false;
+    in-out property <string> wsl_compat_msg1: "";
+    in-out property <string> wsl_compat_msg2: "";
+    in-out property <string> wsl_compat_msg3: "";
+    in-out property <string> wsl_compat_hint: "";
+    in-out property <string> wsl_compat_link: "";
+    in-out property <string> wsl_compat_issues_url: "";
+    in-out property <bool> wsl_compat_show_confirm: true;
+
+    // Popup Notice Dialog properties
+    in-out property <bool> show_popup_notice_dialog: false;
+    in-out property <string> popup_notice_title: "";
+    in-out property <string> popup_notice_msg1: "";
+    in-out property <string> popup_notice_msg2: "";
+    in-out property <string> popup_notice_msg3: "";
+    in-out property <string> popup_notice_hint: "";
+    in-out property <string> popup_notice_link: "";
+    in-out property <string> popup_notice_url: "";
+    in-out property <string> popup_notice_highlight: "";
+    in-out property <int> popup_notice_confirm: 0;
+
+    // Popup Image Dialog properties
+    in-out property <bool> show_popup_image_dialog: false;
+    in-out property <image> popup_image_source;
+    in-out property <string> popup_image_title: "";
+    in-out property <string> popup_image_url: "";
+    in-out property <int> popup_image_width: 400;
+    in-out property <int> popup_image_height: 300;
+
+    // System messages
+    in-out property <[MessageData]> mail_messages: [];
+    in-out property <int> mail_unread_count: 0;
+    in-out property <bool> show_mail_popup: false;
+    in-out property <bool> mail_icon_always: true;
+    in-out property <bool> hide_pin_icon: false;
+
+    in-out property <string> compress_vhdx_size: "---";
+    in-out property <string> compress_free_space: "---";
+    in-out property <bool> compress_space_sufficient: false;
+    in-out property <string> compress_backup_path: "";
+    in-out property <string> compress_script_url: "";
+    in-out property <string> compress_source_url: "";
+    in property <bool> compress_is_wsl2: true;
+    in property <bool> compress_is_sparse: false;
+    in-out property <bool> compress_enable_sparse: false;
+    in-out property <bool> compress_cleanup: true;
+    in-out property <bool> compress_backup: true;
+    
+    // --- USB Properties ---
+    in property <[UsbDevice]> usb_devices: [];
+    in property <bool> usb_loading: false;
+    in property <string> usb_error: "";
+    in property <string> usbipd_version: "";
+    in property <bool> is_usbipd_outdated: false;
+
+    // --- WSL Error State ---
+    in property <bool> wsl_loading: false;
+    in property <string> distro_not_found: "";
+    in property <string> wsl_guide_url: "";
+
+    // --- Callbacks ---
+    callback select_tab(int);
+    callback start_distro(string);
+    callback stop_distro(string);
+    callback restart_distro(string);
+    callback terminal_distro(string);
+    callback folder_distro(string);
+    callback vscode_distro(string);
+    callback export_distro(string);
+    callback delete_distro(string);
+    callback install_distro(int, string, string, string, string);
+    callback select_folder();
+    callback source_selected(int);
+    callback check_install_path(string);
+    callback select_install_file(int);
+    callback edit_bashrc_distro(string);
+    callback information_clicked(string);
+    callback settings_clicked(string);
+    callback confirm_distro_settings(string, string, string, string, bool, bool, string, bool);
+    callback delete_clicked(string);
+    callback clone_distro(string);
+    callback open_url(string);
+    callback window_close();
+    callback copy_terminal_output(string);
+    callback window_minimize();
+    callback window_maximize();
+    callback window_drag_delta(float, float);
+    callback open_export_dialog(string);
+    callback select_export_folder();
+    callback confirm_export(string, string);
+    callback open_clone_dialog(string);
+    callback select_clone_folder();
+    callback confirm_clone(string, string, string);
+    callback open_move_dialog(string);
+    callback select_move_folder();
+    callback confirm_move(string, string, string);
+    callback confirm_move_action();
+    callback cancel_move_confirm();
+    callback close_message_dialog();
+    callback message_link_clicked();
+    callback message_action_clicked(string);
+    callback check_update();
+    callback download_update();
+    callback close_expire_dialog();
+    callback group_clicked();
+    callback reinit_tray();
+    callback save_general_settings();
+    callback save_advanced_settings();
+    callback save_interface_settings();
+    callback save_sidebar_state();
+    callback select_distro_folder();
+    callback select_logs_folder();
+    callback select_backup_folder();
+    callback toggle_theme();
+    callback open_wsl_settings();
+    callback confirm_stop_wsl();
+    callback clone_name_changed(string);
+    callback distro_selected(string);
+    callback show_rootfs_help_clicked();
+    callback close_vscode_startup();
+    callback close_task_status();
+    callback configs_clicked(string);
+    callback reorder_distros(int, int);
+    callback save_wsl_config();
+    callback save_wsl_config_and_restart();
+    callback request_wsl_config_preview();
+    callback home_clicked();
+    callback check_network_task_status();
+    callback initialize_task_clicked();
+    callback open_add_rule_dialog();
+    callback add_network_rule(string, string, string, string, bool);
+    callback delete_network_rule(string);
+    callback process_network_rule(string);
+    callback cancel_network_rule(string);
+    callback apply_all_network_rules();
+    callback cancel_all_network_rules();
+    callback load_proxy_settings();
+    callback save_proxy_settings(bool, string, string, string, bool, string, string);
+    callback check_proxy_connection(string);
+    // USB callbacks
+    callback refresh_usb(bool);
+    callback usb_bind(string, string);
+    callback usb_unbind(string);
+    callback usb_attach(string, string);
+    callback usb_detach(string);
+    callback usb_copy_info(UsbDevice);
+    callback usb_device_info(UsbDevice);
+    callback usb_save_device_settings(string, string, bool, bool, bool);
+
+    // USB Settings Dialog state
+    in-out property <bool> show_usb_settings: false;
+    in-out property <UsbDevice> usb_settings_device;
+    in-out property <bool> usb_settings_force_bind: false;
+    in-out property <bool> usb_settings_boot_attach: false;
+    in-out property <bool> usb_settings_auto_attach: false;
+
+    // USB Device Info Dialog state
+    in-out property <bool> show_usb_device_info: false;
+    in-out property <UsbDeviceDetailInfo> usb_device_info_data;
+    
+    // Donate callbacks
+    callback donate_qr_clicked(string);
+    callback donate_copy_clicked(string);
+
+    // Compress callbacks
+    callback open_compress_dialog(string);
+    callback confirm_compress(string, bool, bool, bool, string);
+
+    // Crontab callbacks
+    callback refresh_scheduler_tasks();
+    callback add_scheduler_task();
+    callback edit_scheduler_task(string);
+    callback delete_scheduler_task(string);
+    callback toggle_scheduler_task(string);
+    callback run_scheduler_task(string);
+    callback save_scheduler_task(string, string, string, string);
+    callback close_scheduler_dialog();
+    callback browse_scheduler_command();
+    callback open_scheduler_help(string);
+    callback scheduler_name_changed(string);
+    callback scheduler_command_changed(string);
+    callback scheduler_arguments_changed(string);
+    callback scheduler_cron_changed(string);
+
+    // Mount Disk callbacks
+    callback refresh_mount_disk_list();
+    callback open_mount_disk_dialog();
+    callback close_mount_disk_dialog();
+    callback mount_disk_select_vhd();
+    callback mount_disk_confirm_mount();
+    callback mount_disk_open_help_url();
+    callback mount_disk_unmount_from_list(string);
+    callback mount_disk_delete_from_list(string);
+    callback mount_disk_mount_from_list(string);
+    callback confirm_mount_restart();
+    callback cancel_mount_restart();
+
+    // Language Dialog callbacks
+    callback language_selected(int);
+    language_selected(idx) => {
+        ui_language = LanguageData.lang-codes[idx];
+    }
+
+    // WSL Compat Dialog callbacks
+    callback close_wsl_compat_dialog();
+    callback wsl_compat_link_clicked();
+
+    // Popup Notice Dialog callbacks
+    callback close_popup_notice_dialog();
+    callback popup_notice_link_clicked();
+
+    // Popup Image Dialog callbacks
+    callback close_popup_image_dialog();
+    callback popup_image_clicked();
+
+    // System message callbacks
+    callback mail_message_clicked(string, string);
+    callback mail_mark_all_read();
+    callback mail_close();
+    callback mail_clicked();
+
+    // Dynamic Font Selection to optimize memory usage
+    // Helper function to map language to font (No recursion here)
+    pure function resolve-font(lang: string) -> string {
+
+
+        // Compatibility of Chinese and Japanese character display on Western language operating systems
+        // Group 1: CJK (High Memory Impact)
+        if (lang == "zh-CN" || lang == "zh-Hans-CN" || lang == "zh-SG") {
+            return "Microsoft YaHei UI";
+        }
+        if (lang == "zh-TW" || lang == "zh-Hant-TW" || lang == "zh-HK" || lang == "zh-MO") {
+            return "Microsoft JhengHei UI";
+        }
+        if (lang == "ja") {
+            return "Yu Gothic UI";
+        }
+        
+        // Group 2: Indic Scripts (Medium Impact)
+        if (lang == "hi" || lang == "bn" || 
+            lang == "te" || lang == "ta" ||      // Telugu, Tamil
+            lang == "kn" || lang == "mr" ||      // Kannada, Marathi
+            lang == "ml") {                      // Malayalam
+            return "Nirmala UI";
+        }
+
+        // Group 3: Southeast Asian Scripts
+        if (lang == "th") {                      // Thai
+            return "Tahoma";
+        }
+        if (lang == "my") {                      // Burmese
+            return "Myanmar Text";
+        }
+
+        // Group 4: African Scripts
+        if (lang == "am") {                      // Amharic (Ge'ez)
+            return "Ebrima";
+        }
+
+        // Group 5: Default (Western/Cyrillic/Arabic - Low Memory Impact)
+        // Segoe UI covers all Latin and Cyrillic scripts efficiently.
+        return "Segoe UI";
+    }
+
+    // Main function with smart fallback logic
+    pure function get-font(lang: string) -> string {
+        // Optimization: On Chinese Windows, Windows DirectWrite font fallback
+        // handles CJK characters automatically. No need to specify explicit CJK
+        // fonts → saves ~16MB memory by avoiding CJK glyph atlas allocation.
+        let sys = root.system_language;
+        let sys_is_chinese = (sys == "zh" || sys == "zh-CN" || sys == "zh-TW" ||
+                              sys == "zh-Hans" || sys == "zh-Hant" || sys == "zh-SG" ||
+                              sys == "zh-HK" || sys == "zh-MO");
+        if (sys_is_chinese) {
+            return "Segoe UI";
+        }
+
+        // Non-Chinese Windows: need explicit CJK fonts for compatibility
+        if (lang == "auto") {
+            if (root.system_language == "auto") {
+                return "Microsoft YaHei UI";
+            }
+            return resolve-font(root.system_language);
+        }
+        return resolve-font(lang);
+    }
+    init => {
+        Theme.default_font = root.get-font(root.ui_language);
+    }
+
+
+    // --- Main Layout ---
+    Rectangle {
+        background: Theme.background;
+        border-radius: 8px;
+        clip: true;
+        border-width: 1px;
+        border-color: Theme.main_color;
+        VerticalLayout {
+            TitleBar {
+                title: AppI18n.t("common.app_name", [AppI18n.version]);
+                is_maximized: root.is_maximized;
+                is_pinned: root.is_pinned;
+                pin_toggle => {
+                    root.window_pin_toggle();
+                }
+                mail_unread_count: root.mail_unread_count;
+                mail_icon_always: root.mail_icon_always;
+                hide_pin_icon: root.hide_pin_icon;
+                close => {
+                    root.window_close();
+                }
+                minimize => {
+                    root.window_minimize();
+                }
+                toggle_theme => {
+                    Theme.dark_mode = !Theme.dark_mode;
+                    root.toggle_theme();
+                }
+                drag_delta(dx, dy) => {
+                    root.window_drag_delta(dx, dy);
+                }
+                mail_clicked => {
+                    root.mail_clicked();
+                }
+            }
+
+            Rectangle {
+                sidebar := Sidebar {
+                    x: AppI18n.is-rtl ? parent.width - self.width : 0;
+                    height: 100%;
+                    collapsed <=> root.sidebar_collapsed;
+                    selected_tab: root.selected_tab;
+                    home_text: AppI18n.t("sidebar.home", [AppI18n.version]);
+                    add_text: AppI18n.t("sidebar.add", [AppI18n.version]);
+                    usb_text: AppI18n.t("sidebar.usb", [AppI18n.version]);
+                    network_text: AppI18n.t("sidebar.network", [AppI18n.version]);
+                    scheduler_text: AppI18n.t("sidebar.scheduler", [AppI18n.version]);
+                    mount_text: AppI18n.t("sidebar.mount", [AppI18n.version]);
+                    settings_text: AppI18n.t("sidebar.settings", [AppI18n.version]);
+                    about_text: AppI18n.t("sidebar.about", [AppI18n.version]);
+                    donate_text: AppI18n.t("sidebar.donate", [AppI18n.version]);
+                    show_add: root.sidebar_add;
+                    show_toggle: root.sidebar_toggle;
+                    show_usb: root.sidebar_usb;
+                    show_network: root.sidebar_network;
+                    show_scheduler: root.sidebar_scheduler;
+                    show_mount: root.sidebar_mount;
+                    show_donate: root.sidebar_donate;
+                    show_about: root.sidebar_about;
+                    tab_selected(idx) => {
+                        root.select_tab(idx);
+                    }
+                    home_clicked => {
+                        root.home_clicked();
+                    }
+                    toggle_collapsed => {
+                        root.save_sidebar_state();
+                    }
+                }
+
+                Rectangle {
+                    x: AppI18n.is-rtl ? 0 : sidebar.width;
+                    width: parent.width - sidebar.width;
+                    height: 100%;
+                    background: Theme.content_bg;
+                    border-top-left-radius: AppI18n.is-rtl ? 0 : 8px;
+                    border-top-right-radius: AppI18n.is-rtl ? 8px : 0;
+                    clip: true;
+                    VerticalLayout {
+                        padding: 16px;
+                        padding-top: 8px;
+                        padding-right: AppI18n.is-rtl ? 16px : 6px;
+                        padding-left: AppI18n.is-rtl ? 6px : 16px;
+                        Rectangle {
+                            MainView {
+                                visible: true;
+                                z: 3;
+                                opacity: selected_tab == 0 ? 1 : 0;
+                                x: selected_tab == 0 ? 0px : 10000px;
+                                distros: root.distros; // Always bind to prevent Repeater churn
+                                distro_to_delete <=> root.distro_to_delete;
+                                show_delete_confirmation <=> root.show_delete_confirmation;
+                                wsl_loading: root.wsl_loading;
+                                distro_not_found: root.distro_not_found;
+                                wsl_guide_url: root.wsl_guide_url;
+                                open_url(url) => {
+                                    root.open_url(url);
+                                }
+                                // ... callbacks omitted for brevity ...
+                                start_distro(n) => {
+                                    root.start_distro(n);
+                                }
+                                stop_distro(n) => {
+                                    root.stop_distro(n);
+                                }
+                                restart_distro(n) => {
+                                    root.restart_distro(n);
+                                }
+                                terminal_distro(n) => {
+                                    root.terminal_distro(n);
+                                }
+                                folder_distro(n) => {
+                                    root.folder_distro(n);
+                                }
+                                vscode_distro(n) => {
+                                    root.vscode_distro(n);
+                                }
+                                edit_bashrc_distro(n) => {
+                                    root.edit_bashrc_distro(n);
+                                }
+                                open_export_dialog(n) => {
+                                    root.open_export_dialog(n);
+                                }
+                                open_clone_dialog(n) => {
+                                    root.open_clone_dialog(n);
+                                }
+                                open_move_dialog(n) => {
+                                    root.open_move_dialog(n);
+                                }
+                                information_clicked(n) => {
+                                    root.information_clicked(n);
+                                }
+                                settings_clicked(n) => {
+                                    root.settings_clicked(n);
+                                }
+                                configs_clicked(n) => {
+                                    root.configs_clicked(n);
+                                }
+                                delete_clicked(n) => {
+                                    root.delete_clicked(n);
+                                }
+                                compress_clicked(n) => {
+                                    root.open_compress_dialog(n);
+                                }
+                                reorder_distros(from, to) => {
+                                    root.reorder_distros(from, to);
+                                }
+                            }
+
+                            AddInstanceView {
+                                visible: true;
+                                opacity: selected_tab == 1 ? 1 : 0;
+                                z: 4;
+                                x: selected_tab == 1 ? 0px : 10000px;
+                                new_instance_name <=> root.new_instance_name;
+                                new_instance_path <=> root.new_instance_path;
+                                selected_install_distro <=> root.selected_install_distro;
+                                distro_location: root.distro_location;
+                                installable_distro_names: root.installable_distro_names; // Always bind
+                                is_installing: root.is_installing;
+                                install_status: root.install_status;
+                                install_success: root.install_success;
+                                terminal_output: root.terminal_output;
+                                name_error: root.name_error;
+                                path_error: root.path_error;
+                                install_sources: root.install_sources;
+                                selected_source_idx <=> root.selected_source_idx;
+                                install_file_path <=> root.install_file_path;
+                                show_install_warn_dialog <=> root.show_install_warn_dialog;
+                                show_rootfs_help <=> root.show_rootfs_help;
+                                is_mirror_loading: root.is_mirror_loading;
+                                is_store_loading: root.is_store_loading;
+                                mirror_list_available: root.mirror_list_available;
+                                mirror_distro_names: root.mirror_distro_names;
+                                selected_mirror_distro <=> root.selected_mirror_distro;
+                                mirror_source_url: root.mirror_source_url;
+                                source_selected(i) => {
+                                    root.source_selected(i);
+                                }
+                                open_mirror_source_url => {
+                                    root.open_url(root.mirror_source_url);
+                                }
+                                select_install_file(i) => {
+                                    root.select_install_file(i);
+                                }
+                                check_install_path(p) => {
+                                    root.check_install_path(p);
+                                }
+                                select_folder() => {
+                                    root.select_folder();
+                                }
+                                install_distro(si, n, fn, ip, fp) => {
+                                    root.install_distro(si, n, fn, ip, fp);
+                                }
+                                distro_selected(distro) => {
+                                    root.distro_selected(distro);
+                                }
+                                show_rootfs_help_clicked => {
+                                    root.show_rootfs_help_clicked();
+                                }
+                                copy_terminal_output => {
+                                    root.copy_terminal_output(root.terminal_output);
+                                }
+                            }
+
+                            UsbView {
+                                visible: true;
+                                opacity: selected_tab == 2 ? 1 : 0;
+                                z: 7;
+                                x: selected_tab == 2 ? 0px : 10000px;
+                                devices: root.usb_devices;
+                                usb_loading: root.usb_loading;
+                                usb_error: root.usb_error;
+                                usbipd_version: root.usbipd_version;
+                                is_usbipd_outdated: root.is_usbipd_outdated;
+                                is_task_exists: root.network_is_helper_installed;
+                                refresh_usb(m) => {
+                                    root.refresh_usb(m);
+                                }
+                                bind_clicked(id, vp) => {
+                                    root.usb_bind(id, vp);
+                                }
+                                unbind_clicked(id) => {
+                                    root.usb_unbind(id);
+                                }
+                                attach_clicked(id, vp) => {
+                                    root.usb_attach(id, vp);
+                                }
+                                detach_clicked(id) => {
+                                    root.usb_detach(id);
+                                }
+                                copy_info_clicked(d) => {
+                                    root.usb_copy_info(d);
+                                }
+                                info_clicked(d) => {
+                                    root.usb_device_info(d);
+                                }
+                                device_settings_clicked(d) => {
+                                    root.usb_settings_device = d;
+                                    root.usb_settings_force_bind = d.force-bind;
+                                    root.usb_settings_boot_attach = d.boot-attach;
+                                    root.usb_settings_auto_attach = d.auto-attach;
+                                    root.show_usb_settings = true;
+                                }
+                                open_url(url) => {
+                                    root.open_url(url);
+                                }
+                            }
+
+                            NetworkView {
+                                visible: true;
+                                opacity: selected_tab == 3 ? 1 : 0;
+                                z: 8;
+                                x: selected_tab == 3 ? 0px : 10000px;
+                                is_admin: root.network_is_admin;
+                                is_helper_installed: root.network_is_helper_installed;
+                                networking_mode: root.network_networking_mode;
+                                distro_names: root.network_distro_names;
+                                local_ips: root.network_local_ips;
+                                rules: root.network_rules;
+                                proxy_is_enabled <=> root.network_proxy_is_enabled;
+                                proxy_host <=> root.network_proxy_host;
+                                proxy_port <=> root.network_proxy_port;
+                                proxy_auth_enabled <=> root.network_proxy_auth_enabled;
+                                proxy_username <=> root.network_proxy_username;
+                                proxy_password <=> root.network_proxy_password;
+                                proxy_no_proxy <=> root.network_proxy_no_proxy;
+                                proxy_default_host: root.network_proxy_default_host;
+                                proxy_default_port: root.network_proxy_default_port;
+                                proxy_default_no_proxy: root.network_proxy_default_no_proxy;
+                                initialize_task_clicked => {
+                                    root.initialize_task_clicked();
+                                }
+                                open_add_rule_dialog => {
+                                    root.open_add_rule_dialog();
+                                }
+                                add_rule(distro, ip, lport, tport, fw) => {
+                                    root.add_network_rule(distro, ip, lport, tport, fw);
+                                }
+                                delete_rule(id) => {
+                                    root.delete_network_rule(id);
+                                }
+                                process_rule(id) => {
+                                    root.process_network_rule(id);
+                                }
+                                cancel_rule(id) => {
+                                    root.cancel_network_rule(id);
+                                }
+                                apply_all_rules => {
+                                    root.apply_all_network_rules();
+                                }
+                                cancel_all_rules => {
+                                    root.cancel_all_network_rules();
+                                }
+                                save_proxy_settings(enabled, host, port, no, auth, u, p) => {
+                                    root.save_proxy_settings(enabled, host, port, no, auth, u, p);
+                                }
+                                open_check_proxy_dialog => {
+                                    root.show_check_proxy = true;
+                                }
+                                show_proxy_help => {
+                                    root.show_network_proxy_help = true;
+                                }
+                            }
+
+                            SchedulerView {
+                                visible: true;
+                                opacity: selected_tab == 4 ? 1 : 0;
+                                z: 9;
+                                x: selected_tab == 4 ? 0px : 10000px;
+                                tasks: root.scheduler_tasks;
+                                is_loading: root.scheduler_loading;
+                                busy_task_id: root.scheduler_busy_task_id;
+                                add_task_clicked => {
+                                    root.add_scheduler_task();
+                                }
+                                edit_task(id) => {
+                                    root.edit_scheduler_task(id);
+                                }
+                                delete_task(id) => {
+                                    root.delete_scheduler_task(id);
+                                }
+                                toggle_task(id) => {
+                                    root.toggle_scheduler_task(id);
+                                }
+                                run_task(id) => {
+                                    root.run_scheduler_task(id);
+                                }
+                            }
+
+                            MountDiskView {
+                                visible: true;
+                                opacity: selected_tab == 5 ? 1 : 0;
+                                z: 9;
+                                x: selected_tab == 5 ? 0px : 10000px;
+                                mounted_disks: root.mount_disk_mounted_list;
+                                open_mount_dialog => {
+                                    root.open_mount_disk_dialog();
+                                }
+                                refresh_list => {
+                                    root.refresh_mount_disk_list();
+                                }
+                                unmount_disk(path) => {
+                                    root.mount_disk_unmount_from_list(path);
+                                }
+                                delete_disk(path) => {
+                                    root.mount_disk_to_delete = path;
+                                    root.show_mount_disk_delete_confirmation = true;
+                                }
+                                mount_disk(path) => {
+                                    root.mount_disk_mount_from_list(path);
+                                }
+                            }
+
+                            DonateView {
+                                visible: true;
+                                opacity: selected_tab == 6 ? 1 : 0;
+                                z: 5;
+                                x: selected_tab == 6 ? 0px : 10000px;
+                                title_text: AppI18n.t("donate.title", [AppI18n.version]);
+                                license_intro_text: AppI18n.t("donate.license_intro", [AppI18n.version]);
+                                maintain_note_text: AppI18n.t("donate.maintain_note", [AppI18n.version]);
+                                donation_purpose_text: AppI18n.t("donate.donation_purpose", [AppI18n.version]);
+                                thanks_ending_text: AppI18n.t("donate.thanks_ending", [AppI18n.version]);
+                                donate_link_label: root.donate_strings.donate_link_label;
+                                donate_url: AppInfo.donate_url;
+                                payment_methods_title: root.donate_strings.payment_methods_title;
+                                methods_ready: root.donate_methods_ready;
+                                method_icons: root.donate_method_icons;
+                                method_names: root.donate_method_names;
+                                method_formats: root.donate_method_formats;
+                                method_urls: root.donate_method_urls;
+                                method_exts: root.donate_method_exts;
+                                method_regions: root.donate_method_regions;
+                                donation_record_url: root.donate_donation_record_url;
+                                strings: root.donate_strings;
+                                open_url(url) => {
+                                    root.open_url(url);
+                                }
+                                qr_clicked(url) => {
+                                    root.donate_qr_clicked(url);
+                                }
+                                copy_clicked(text) => {
+                                    root.donate_copy_clicked(text);
+                                }
+                            }
+
+                            SettingsView {
+                                visible: true;
+                                opacity: selected_tab == 7 ? 1 : 0;
+                                z: 6;
+                                x: selected_tab == 7 ? 0px : 10000px;
+                                strings: root.settings_strings;
+                                show_language_dialog <=> root.show_language_dialog;
+                                language_selected(lang_code) => {
+                                    root.ui_language = lang_code;
+                                }
+                                language_options: LanguageData.options;
+                                selected_language_index: root.selected_language_index;
+                                auto_shutdown <=> root.auto_shutdown;
+                                system_color <=> root.system_color;
+                                colorful_icons <=> root.colorful_icons;
+                                mail_icon_always <=> root.mail_icon_always;
+                                hide_pin_icon <=> root.hide_pin_icon;
+                                show_drag <=> AppApi.show_drag;
+                                ui_language <=> root.ui_language;
+                                distro_location <=> root.distro_location;
+                                backup_location <=> root.backup_location;
+                                logs_location <=> root.logs_location;
+                                log_level <=> root.log_level;
+                                log_days <=> root.log_days;
+                                check_update_interval <=> root.check_update_interval;
+                                tray_autostart <=> root.tray_autostart;
+                                tray_start_minimized <=> root.tray_start_minimized;
+                                tray_close_to_tray <=> root.tray_close_to_tray;
+                                sidebar_add <=> root.sidebar_add;
+                                sidebar_toggle <=> root.sidebar_toggle;
+                                sidebar_usb <=> root.sidebar_usb;
+                                sidebar_network <=> root.sidebar_network;
+                                sidebar_scheduler <=> root.sidebar_scheduler;
+                                sidebar_mount <=> root.sidebar_mount;
+                                sidebar_donate <=> root.sidebar_donate;
+                                sidebar_about <=> root.sidebar_about;
+                                sparse_vhd <=> root.sparse_vhd;
+                                mount_auto_probe <=> root.mount_auto_probe;
+                                save_general_settings => {
+                                    root.save_general_settings();
+                                }
+                                save_advanced_settings => {
+                                    root.save_advanced_settings();
+                                }
+                                save_interface_settings => {
+                                    root.save_interface_settings();
+                                }
+                                select-distro-folder => {
+                                    root.select_distro_folder();
+                                }
+                                select-logs-folder => {
+                                    root.select_logs_folder();
+                                }
+                                select-backup-folder => {
+                                    root.select_backup_folder();
+                                }
+                                open-wsl-settings => {
+                                    root.open_wsl_settings();
+                                }
+                                stop-wsl => {
+                                    root.show_stop_wsl_confirm = true;
+                                }
+                            }
+
+                            AboutView {
+                                visible: true;
+                                opacity: selected_tab == 8 ? 1 : 0;
+                                z: 7;
+                                x: selected_tab == 8 ? 0px : 10000px;
+                                strings: root.about_strings;
+                                group_pic: root.about_group_pic;
+                                group_pic_ready: root.about_group_pic_ready;
+                                show_group_popup <=> root.show_group_popup;
+                                open_url(url) => {
+                                    root.open_url(url);
+                                }
+                                check_update_clicked => {
+                                    root.check_update();
+                                }
+                                group_clicked => {
+                                    root.group_clicked();
+                                }
+                                close_group_popup => {
+                                    root.show_group_popup = false;
+                                }
+                            }
+                        }
+                    }
+
+                    }
+            }
+        }
+    }
+
+        // --- Layers/Modals ---
+        ModalManager {
+        z: 200;
+        is_installing: root.is_installing;
+        show_delete: root.show_delete_confirmation;
+        delete_target_name: root.distro_to_delete;
+        confirm_delete => {
+            root.delete_distro(root.distro_to_delete);
+            root.show_delete_confirmation = false;
+        }
+        cancel_delete => {
+            root.show_delete_confirmation = false;
+        }
+        show_mount_disk_delete: root.show_mount_disk_delete_confirmation;
+        mount_disk_delete_target: root.mount_disk_to_delete;
+        confirm_mount_disk_delete => {
+            root.mount_disk_delete_from_list(root.mount_disk_to_delete);
+            root.show_mount_disk_delete_confirmation = false;
+        }
+        cancel_mount_disk_delete => {
+            root.show_mount_disk_delete_confirmation = false;
+        }
+        show_mount_restart_confirm: root.show_mount_restart_confirm;
+        confirm_mount_restart => {
+            root.show_mount_restart_confirm = false;
+            root.confirm_mount_restart();
+        }
+        cancel_mount_restart => {
+            root.show_mount_restart_confirm = false;
+        }
+        show_stop_wsl_confirm: root.show_stop_wsl_confirm;
+        confirm_stop_wsl => {
+            root.show_stop_wsl_confirm = false;
+            root.confirm_stop_wsl();
+        }
+        cancel_stop_wsl => {
+            root.show_stop_wsl_confirm = false;
+        }
+        show_export: root.show_export_dialog;
+        export_target_name: root.export_distro_name;
+        export_path <=> root.export_target_path;
+        export_compress <=> root.export_compress;
+        export_error: root.export_error;
+        cancel_export => {
+            root.show_export_dialog = false;
+        }
+        browse_export => {
+            root.select_export_folder();
+        }
+        confirm_export(p) => {
+            root.confirm_export(root.export_distro_name, p);
+        }
+        show_clone: root.show_clone_dialog;
+        clone_source_name: root.clone_source_name;
+        clone_target_name <=> root.clone_target_name;
+        clone_target_path <=> root.clone_target_path;
+        clone_error: root.clone_error;
+        cancel_clone => {
+            root.show_clone_dialog = false;
+        }
+        browse_clone => {
+            root.select_clone_folder();
+        }
+        clone_name_changed(text) => {
+            root.clone_name_changed(text);
+        }
+        confirm_clone(n, p) => {
+            root.confirm_clone(root.clone_source_name, n, p);
+        }
+        show_move: root.show_move_dialog;
+        move_source_name: root.move_source_name;
+        move_target_name <=> root.move_target_name;
+        move_target_path <=> root.move_target_path;
+        move_error: root.move_error;
+        cancel_move => {
+            root.show_move_dialog = false;
+        }
+        browse_move => {
+            root.select_move_folder();
+        }
+        confirm_move(p) => {
+            root.confirm_move(root.move_source_name, root.move_target_name, p);
+        }
+        show_move_confirm: root.show_move_confirm;
+        move_confirm_message: root.move_confirm_message;
+        confirm_move_action => {
+            root.confirm_move_action();
+        }
+        cancel_move_confirm => {
+            root.show_move_confirm = false;
+            root.cancel_move_confirm();
+        }
+        show_message: root.show_message_dialog;
+        message_text: root.current_message;
+        message_link_text: root.current_message_link;
+        message_action_text: root.current_message_action;
+        close_message => {
+            root.show_message_dialog = false;
+            root.close_message_dialog();
+            root.current_message_link = "";
+            root.current_message_action = "";
+        }
+        message_link_clicked => {
+            root.message_link_clicked();
+        }
+        message_action_clicked => {
+            root.message_action_clicked(root.copy_script_content);
+        }
+        show_update: root.show_update_dialog;
+        download_update => {
+            root.download_update();
+            root.show_update_dialog = false;
+        }
+        close_update => {
+            root.show_update_dialog = false;
+        }
+        show_install_warn: root.show_install_warn_dialog;
+        confirm_install_warn => {
+            root.show_install_warn_dialog = false;
+            // For Linux Mirrors (source 3), friendly_name slot carries selected_mirror_distro
+            // so that install_logic.rs / mirror_install.rs can look it up in MIRROR_LIST_CACHE.
+            root.install_distro(
+                root.selected_source_idx,
+                root.new_instance_name,
+                root.selected_source_idx == 3 ? root.selected_mirror_distro : root.selected_install_distro,
+                root.new_instance_path,
+                root.install_file_path
+            );
+        }
+        cancel_install_warn => {
+            root.show_install_warn_dialog = false;
+        }
+        show_expire: root.show_expire_dialog;
+        close_expire => {
+            root.close_expire_dialog();
+        }
+        show_information: root.show_information;
+        information: root.information;
+        close_information => {
+            root.show_information = false;
+        }
+        show_settings: root.show_settings;
+        settings_target_name: root.settings_distro_name;
+        settings_terminal_dir <=> root.settings_terminal_dir;
+        settings_vscode_dir <=> root.settings_vscode_dir;
+        settings_distro_notes <=> root.settings_distro_notes;
+        settings_is_default <=> root.settings_is_default;
+        settings_lock_default <=> root.settings_lock_default;
+        settings_autostart <=> root.settings_autostart;
+        settings_startup_script <=> root.settings_startup_script;
+        settings_startup_script_url: root.settings_startup_script_url;
+        settings_terminal_dir_error: root.settings_terminal_dir_error;
+        settings_vscode_dir_error: root.settings_vscode_dir_error;
+        settings_distro_notes_error: root.settings_distro_notes_error;
+        settings_startup_script_error: root.settings_startup_script_error;
+        settings_default_error: settings_default_error;
+        settings_is_task_exists: settings_is_task_exists;
+        settings_terminal_proxy <=> root.settings_terminal_proxy;
+        confirm_settings(n, td, vd, dn, id, as, ss, tp) => {
+            root.confirm_distro_settings(n, td, vd, dn, id, as, ss, tp);
+        }
+        close_settings => {
+            root.show_settings = false;
+        }
+        rootfs_help_list: root.rootfs_help_list;
+        show_rootfs_help: root.show_rootfs_help;
+        close_rootfs_help => {
+            root.show_rootfs_help = false;
+        }
+        show_vscode_startup: root.show_vscode_startup;
+        close_vscode_startup => {
+            root.show_vscode_startup = false;
+            root.close_vscode_startup();
+        }
+        open_url(url) => {
+            root.open_url(url);
+        }
+        show_wsl_config <=> root.show_wsl_config;
+        wsl_config_distro_name: root.wsl_config_distro_name;
+        wsl_config_automount_enabled <=> root.wsl_config_automount_enabled;
+        wsl_config_automount_mount_fs_tab <=> root.wsl_config_automount_mount_fs_tab;
+        wsl_config_automount_root <=> root.wsl_config_automount_root;
+        wsl_config_automount_options <=> root.wsl_config_automount_options;
+        wsl_config_network_generate_hosts <=> root.wsl_config_network_generate_hosts;
+        wsl_config_network_generate_resolv_conf <=> root.wsl_config_network_generate_resolv_conf;
+        wsl_config_network_hostname <=> root.wsl_config_network_hostname;
+        wsl_config_interop_enabled <=> root.wsl_config_interop_enabled;
+        wsl_config_interop_append_windows_path <=> root.wsl_config_interop_append_windows_path;
+        wsl_config_user_default <=> root.wsl_config_user_default;
+        wsl_config_boot_systemd <=> root.wsl_config_boot_systemd;
+        wsl_config_boot_command <=> root.wsl_config_boot_command;
+        wsl_config_boot_protect_binfmt <=> root.wsl_config_boot_protect_binfmt;
+        wsl_config_gpu_enabled <=> root.wsl_config_gpu_enabled;
+        wsl_config_time_use_windows_timezone <=> root.wsl_config_time_use_windows_timezone;
+        wsl_config_boot_supported: root.wsl_config_boot_supported;
+        wsl_config_gpu_supported: root.wsl_config_gpu_supported;
+        wsl_config_time_supported: root.wsl_config_time_supported;
+        wsl_config_version_detection_failed: root.wsl_config_version_detection_failed;
+        wsl_config_version_string: root.wsl_config_version_string;
+        wsl_config_user_error: root.wsl_config_user_error;
+        wsl_config_command_error: root.wsl_config_command_error;
+        wsl_config_preview_content: root.wsl_config_preview_content;
+        save_wsl_config => {
+            root.save_wsl_config();
+        }
+        save_wsl_config_and_restart => {
+            root.save_wsl_config_and_restart();
+        }
+        close_wsl_config => {
+            root.show_wsl_config = false;
+        }
+        request_wsl_config_preview => {
+            root.request_wsl_config_preview();
+        }
+        show_add_network_rule <=> root.network_show_add_dialog;
+        network_distro_names: root.network_distro_names;
+        network_local_ips: root.network_local_ips;
+        network_add_distro_idx <=> root.network_add_distro_idx;
+        network_add_ip_idx <=> root.network_add_ip_idx;
+        network_add_listen_port <=> root.network_add_listen_port;
+        network_add_target_port <=> root.network_add_target_port;
+        network_add_enable_fw <=> root.network_add_enable_fw;
+        network_add_error: root.network_add_error;
+        add_network_rule(distro, ip, lp, tp, fw) => {
+            root.add_network_rule(distro, ip, lp, tp, fw);
+        }
+        show_check_proxy <=> root.show_check_proxy;
+        show_network_proxy_help <=> root.show_network_proxy_help;
+        check_proxy_connection(url) => {
+            root.check_proxy_connection(url);
+        }
+
+        // Compress
+        show_compress: root.show_compress_dialog;
+        compress_target_name: root.compress_distro_name;
+        compress_vhdx_size: root.compress_vhdx_size;
+        compress_free_space: root.compress_free_space;
+        compress_space_sufficient: root.compress_space_sufficient;
+        compress_backup_path: root.compress_backup_path;
+        compress_script_url: root.compress_script_url;
+        compress_source_url: root.compress_source_url;
+        compress_is_wsl2: root.compress_is_wsl2;
+        compress_is_sparse: root.compress_is_sparse;
+        compress_enable_sparse <=> root.compress_enable_sparse;
+        compress_cleanup <=> root.compress_cleanup;
+        compress_backup <=> root.compress_backup;
+        confirm_compress(n, c, b, s, u) => {
+            root.confirm_compress(n, c, b, s, u);
+        }
+        cancel_compress => {
+            root.show_compress_dialog = false;
+        }
+
+        // Language Select Dialog
+        show_language_dialog <=> root.show_language_dialog;
+        language_current_index: root.selected_language_index;
+        language_options: LanguageData.options;
+        language_selected(idx) => {
+            root.language_selected(idx);
+        }
+
+        // WSL Compat Dialog
+        show_wsl_compat: root.show_wsl_compat_dialog;
+        wsl_compat_msg1: root.wsl_compat_msg1;
+        wsl_compat_msg2: root.wsl_compat_msg2;
+        wsl_compat_msg3: root.wsl_compat_msg3;
+        wsl_compat_hint: root.wsl_compat_hint;
+        wsl_compat_link: root.wsl_compat_link;
+        wsl_compat_issues_url: root.wsl_compat_issues_url;
+        wsl_compat_show_confirm: root.wsl_compat_show_confirm;
+        close_wsl_compat => {
+            root.show_wsl_compat_dialog = false;
+        }
+        wsl_compat_link_clicked => {
+            root.open_url(root.wsl_compat_issues_url);
+            root.show_wsl_compat_dialog = false;
+        }
+
+        // Popup Notice Dialog
+        show_popup_notice: root.show_popup_notice_dialog;
+        popup_notice_title: root.popup_notice_title;
+        popup_notice_msg1: root.popup_notice_msg1;
+        popup_notice_msg2: root.popup_notice_msg2;
+        popup_notice_msg3: root.popup_notice_msg3;
+        popup_notice_hint: root.popup_notice_hint;
+        popup_notice_link: root.popup_notice_link;
+        popup_notice_url: root.popup_notice_url;
+        popup_notice_highlight: root.popup_notice_highlight;
+        popup_notice_confirm: root.popup_notice_confirm;
+        close_popup_notice => {
+            root.show_popup_notice_dialog = false;
+        }
+        popup_notice_link_clicked => {
+            root.open_url(root.popup_notice_url);
+            root.show_popup_notice_dialog = false;
+        }
+
+        // Popup Image Dialog
+        show_popup_image: root.show_popup_image_dialog;
+        popup_image_source: root.popup_image_source;
+        popup_image_title: root.popup_image_title;
+        popup_image_url: root.popup_image_url;
+        popup_image_width: root.popup_image_width;
+        popup_image_height: root.popup_image_height;
+        close_popup_image => {
+            root.show_popup_image_dialog = false;
+        }
+        popup_image_clicked => {
+            root.open_url(root.popup_image_url);
+            root.show_popup_image_dialog = false;
+        }
+
+        // System message popup
+        show_mail_popup: root.show_mail_popup;
+        mail_messages: root.mail_messages;
+        mail_unread_count: root.mail_unread_count;
+        mail_message_clicked(id, url) => {
+            root.mail_message_clicked(id, url);
+        }
+        mail_mark_all_read => {
+            root.mail_mark_all_read();
+        }
+        mail_close => {
+            root.show_mail_popup = false;
+        }
+
+        // USB Settings Dialog
+        show_usb_settings: root.show_usb_settings;
+        usb_settings_device: root.usb_settings_device;
+        usb_settings_force_bind <=> root.usb_settings_force_bind;
+        usb_settings_boot_attach <=> root.usb_settings_boot_attach;
+        usb_settings_auto_attach <=> root.usb_settings_auto_attach;
+        usb_save_device_settings(bi, vp, fb, ba, aa) => {
+            root.usb_save_device_settings(bi, vp, fb, ba, aa);
+            root.show_usb_settings = false;
+        }
+        close_usb_settings => {
+            root.show_usb_settings = false;
+        }
+
+        // USB Device Info Dialog
+        show_usb_device_info: root.show_usb_device_info;
+        usb_device_info_data: root.usb_device_info_data;
+        close_usb_device_info => {
+            root.show_usb_device_info = false;
+        }
+    }
+
+    // Official communication group image popup layer (borderless, click anywhere to close)
+    if root.show_group_popup : Rectangle {
+        background: #00000080;
+        z: 100;
+        width: 100%;
+        height: 100%;
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => {
+                root.show_group_popup = false;
+            }
+        }
+        // Centered image card, 3:4 aspect ratio, borderless
+        Rectangle {
+            width: 225px;
+            height: 300px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 12px;
+            clip: true;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000040;
+            Image {
+                source: root.about_group_pic;
+                width: 100%;
+                height: 100%;
+                image-fit: cover;
+            }
+        }
+    }
+
+    // Donate QR code popup layer
+    if root.show_donate_popup : Rectangle {
+        background: #00000080;
+        z: 100;
+        width: 100%;
+        height: 100%;
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => {
+                root.show_donate_popup = false;
+            }
+        }
+        // Centered square image card
+        Rectangle {
+            width: 225px;
+            height: 225px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 12px;
+            clip: true;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000040;
+            background: Theme.card_bg;
+            if (root.donate_popup_loading) : Text {
+                text: AppI18n.t("donate.loading", [AppI18n.version]);
+                color: Theme.text_primary;
+                font-family: Theme.default_font;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            if (!root.donate_popup_loading) : Image {
+                source: root.donate_popup_image;
+                width: 100%;
+                height: 100%;
+                image-fit: contain;
+            }
+        }
+    }
+
+    // Crontab Dialog
+    if root.show_scheduler_dialog : SchedulerDialog {
+        z: 100;
+        width: 100%;
+        height: 100%;
+        is_edit: root.scheduler_dialog_is_edit;
+        task_id: root.scheduler_dialog_task_id;
+        task_name: root.scheduler_dialog_task_name;
+        command: root.scheduler_dialog_command;
+        arguments: root.scheduler_dialog_arguments;
+        cron_expr: root.scheduler_dialog_cron_expr;
+        cron_help_url: root.scheduler_dialog_cron_help_url;
+        command_help_url: root.scheduler_dialog_command_help_url;
+        name_error: root.scheduler_dialog_name_error;
+        command_error: root.scheduler_dialog_command_error;
+        cron_error: root.scheduler_dialog_cron_error;
+        admin_mode <=> root.scheduler_dialog_admin_mode;
+        submitting <=> root.scheduler_dialog_submitting;
+
+        close_clicked => {
+            root.close_scheduler_dialog();
+        }
+        save_clicked(name, cmd, args, cron) => {
+            root.save_scheduler_task(name, cmd, args, cron);
+        }
+        name_changed(name) => {
+            root.scheduler_name_changed(name);
+        }
+        command_changed(cmd) => {
+            root.scheduler_command_changed(cmd);
+        }
+        arguments_changed(args) => {
+            root.scheduler_arguments_changed(args);
+        }
+        cron_changed(cron) => {
+            root.scheduler_cron_changed(cron);
+        }
+        browse_clicked => {
+            root.browse_scheduler_command();
+        }
+        cron_help_clicked => {
+            root.open_scheduler_help(root.scheduler_dialog_cron_help_url);
+        }
+        command_help_clicked => {
+            root.open_scheduler_help(root.scheduler_dialog_command_help_url);
+        }
+    }
+
+    // Mount Disk Dialog
+    if root.show_mount_disk_dialog : MountDiskDialog {
+        z: 100;
+        open: root.show_mount_disk_dialog;
+        active_tab <=> root.mount_disk_dialog_tab;
+        physical_disks: root.mount_disk_physical_disks;
+        physical_disk_texts: root.mount_disk_physical_disk_texts;
+        selected_disk_index <=> root.mount_disk_dialog_selected_disk_idx;
+        vhd_path <=> root.mount_disk_dialog_vhd_path;
+        bare_mount <=> root.mount_disk_dialog_bare;
+        custom_name <=> root.mount_disk_dialog_name;
+        partition <=> root.mount_disk_dialog_partition;
+        filesystem <=> root.mount_disk_dialog_filesystem;
+        mount_options <=> root.mount_disk_dialog_options;
+        mount_help_url: root.mount_disk_help_url;
+
+        close => {
+            root.close_mount_disk_dialog();
+        }
+        browse_vhd => {
+            root.mount_disk_select_vhd();
+        }
+        confirm_mount => {
+            root.mount_disk_confirm_mount();
+        }
+        open_mount_help_url => {
+            root.mount_disk_open_help_url();
+        }
+    }
+
+    // Toast notification (on top of all dialogs)
+    TaskStatusToast {
+        z: 100;
+        opacity: root.task_status_visible ? 1 : 0;
+        visible: root.task_status_visible;
+        text: root.task_status_text;
+        is_shown: root.task_status_visible;
+        max_container_width: root.width - 40px;
+        x: (root.width - self.width) / 2;
+        y: root.height - self.height - 14px;
+        close => {
+            root.close_task_status();
+        }
+    }
+}

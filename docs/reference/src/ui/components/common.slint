@@ -1,0 +1,318 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme, AppI18n, LayoutConstants } from "../theme.slint";
+import "../../../assets/font/icons.ttf";
+
+export component SidebarItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <string> icon_type: "action"; 
+    in property <bool> selected: false;
+    in property <bool> collapsed: false;
+    callback clicked;
+    // width: 100%; // Ensure full width for alignment
+    height: 36px;
+    border-radius: 4px;
+    background: selected ? Theme.selected_bg : (touch.has-hover ? Theme.hover_bg : transparent);
+    
+    property <color> icon_color: selected ? Theme.accent : 
+                                 touch.has-hover ? Theme.accent :
+                                 !Theme.colorful_icons ? Theme.text_secondary :
+                                 icon_type == "navigation" ? Theme.icon_color_navigation :
+                                 icon_type == "success" ? Theme.icon_color_success :
+                                 icon_type == "danger" ? Theme.icon_color_danger :
+                                 icon_type == "warning" ? Theme.icon_color_warning :
+                                 icon_type == "info" ? Theme.icon_color_info :
+                                 icon_type == "purple" ? Theme.icon_color_purple :
+                                 icon_type == "gold" ? Theme.icon_color_gold :
+                                 icon_type == "cyan" ? Theme.icon_color_cyan :
+                                 icon_type == "pink" ? Theme.icon_color_pink :
+                                 icon_type == "teal" ? Theme.icon_color_teal :
+                                 icon_type == "indigo" ? Theme.icon_color_indigo :
+                                 icon_type == "lime" ? Theme.icon_color_lime :
+                                 icon_type == "orange" ? Theme.icon_color_orange :
+                                 icon_type == "rose" ? Theme.icon_color_rose :
+                                 icon_type == "heart" ? Theme.icon_color_heart :
+                                 icon_type == "violet" ? Theme.icon_color_violet :
+                                 icon_type == "emerald" ? Theme.icon_color_emerald :
+                                 icon_type == "amber" ? Theme.icon_color_amber :
+                                 icon_type == "sky" ? Theme.icon_color_sky :
+                                 icon_type == "fuchsia" ? Theme.icon_color_fuchsia :
+                                 icon_type == "cobalt" ? Theme.icon_color_cobalt :
+                                 icon_type == "mint" ? Theme.icon_color_mint :
+                                 icon_type == "slate" ? Theme.icon_color_slate :
+                                 Theme.icon_color_action;
+
+    // Tooltip
+    Rectangle {
+        visible: collapsed && touch.has-hover;
+        opacity: (collapsed && touch.has-hover) ? 1 : 0;
+        x: AppI18n.is-rtl ? -self.width - 8px : parent.width + 8px;
+        y: (parent.height - self.height) / 2;
+        width: label.width + 16px;
+        height: 28px;
+        background: #333333;
+        border-radius: 4px;
+        z: 100;
+        label := Text {
+            text: root.text;
+            color: white;
+            font-size: 12px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // Stable HorizontalLayout structure using alignment instead of branching
+    HorizontalLayout {
+        // Match Hamburger menu padding (13px) for perfect vertical alignment
+        padding-left: AppI18n.is-rtl ? 0 : 13px;
+        padding-right: AppI18n.is-rtl ? 13px : 0;
+        spacing: root.collapsed ? 0px : 12px;
+        alignment: AppI18n.is-rtl ? end : start;
+        width: 100%; // Explicitly fill parent
+
+        animate spacing {
+            duration: 200ms;
+            easing: ease-out-quad;
+        }
+
+        // Slot 1 (Icon in LTR, Text in RTL)
+        Rectangle {
+            // Fixed width for icon (20px) in LTR mode.
+            // In RTL mode (Text), width animates between 0 and pref.
+            width: (!AppI18n.is-rtl) ? 20px : (root.collapsed ? 0px : icon_text.preferred-width);
+            visible: !AppI18n.is-rtl || !root.collapsed || self.width > 0px;
+            clip: true;
+            animate width {
+                duration: 200ms;
+                easing: ease-out-quad;
+            }
+            icon_text := Text {
+                width: 100%; // Fill the container
+                text: (!AppI18n.is-rtl) ? icon : root.text;
+                font-size: (!AppI18n.is-rtl) ? 16px : (14px * LayoutConstants.font-scale);
+                font-family: (!AppI18n.is-rtl) ? Theme.icon_font : Theme.default_font;
+                font-weight: selected ? 500 : 400;
+                color: (!AppI18n.is-rtl) ? root.icon_color : ((selected || touch.has-hover) ? Theme.text_primary : Theme.text_secondary);
+                vertical-alignment: center;
+                horizontal-alignment: (!AppI18n.is-rtl) ? center : right; // Text aligns right in RTL
+                overflow: elide;
+                opacity: (AppI18n.is-rtl && root.collapsed && parent.width < 10px) ? 0 : 1;
+                animate opacity { duration: 150ms; }
+            }
+        }
+
+        // Slot 2 (Text in LTR, Icon in RTL)
+        Rectangle {
+            // Fixed width for icon (20px) in RTL mode.
+            // In LTR mode (Text), width animates between 0 and pref.
+            width: (AppI18n.is-rtl) ? 20px : (root.collapsed ? 0px : secondary_text.preferred-width);
+            visible: (AppI18n.is-rtl) || !root.collapsed || self.width > 0px;
+            clip: true;
+            animate width {
+                duration: 200ms;
+                easing: ease-out-quad;
+            }
+            secondary_text := Text {
+                width: 100%; // Fill the container
+                text: (AppI18n.is-rtl) ? icon : root.text;
+                font-size: (AppI18n.is-rtl) ? 16px : (14px * LayoutConstants.font-scale);
+                font-family: (AppI18n.is-rtl) ? Theme.icon_font : Theme.default_font;
+                font-weight: selected ? 500 : 400;
+                color: (AppI18n.is-rtl) ? root.icon_color : ((selected || touch.has-hover) ? Theme.text_primary : Theme.text_secondary);
+                vertical-alignment: center;
+                horizontal-alignment: (AppI18n.is-rtl) ? center : left; // Text aligns left in LTR
+                overflow: elide;
+                opacity: (!AppI18n.is-rtl && root.collapsed && parent.width < 10px) ? 0 : 1;
+                animate opacity { duration: 150ms; }
+            }
+        }
+    }
+
+    Rectangle {
+        visible: selected;
+        opacity: selected ? 1 : 0;
+        x: AppI18n.is-rtl ? parent.width - 3px : 0;
+        width: 3px;
+        height: 16px;
+        background: Theme.accent;
+        border-radius: 1.5px;
+        y: (parent.height - self.height) / 2;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ThemedIcon inherits Text {
+    in property <string> icon_code;
+    in property <string> icon_type: "action"; // "action", "navigation", "success", "danger", "warning", "info", "purple", "gold", "cyan", "pink", "teal", "indigo", "lime", "system"
+    font-family: Theme.icon_font;
+    color: !Theme.colorful_icons ? Theme.icon_color_action : 
+           icon_type == "navigation" ? Theme.icon_color_navigation :
+           icon_type == "success" ? Theme.icon_color_success :
+           icon_type == "danger" ? Theme.icon_color_danger :
+           icon_type == "warning" ? Theme.icon_color_warning :
+           icon_type == "info" ? Theme.icon_color_info :
+           icon_type == "purple" ? Theme.icon_color_purple :
+           icon_type == "gold" ? Theme.icon_color_gold :
+           icon_type == "cyan" ? Theme.icon_color_cyan :
+           icon_type == "pink" ? Theme.icon_color_pink :
+           icon_type == "teal" ? Theme.icon_color_teal :
+           icon_type == "indigo" ? Theme.icon_color_indigo :
+           icon_type == "lime" ? Theme.icon_color_lime :
+           icon_type == "orange" ? Theme.icon_color_orange :
+           icon_type == "rose" ? Theme.icon_color_rose :
+           icon_type == "heart" ? Theme.icon_color_heart :
+           icon_type == "violet" ? Theme.icon_color_violet :
+           icon_type == "emerald" ? Theme.icon_color_emerald :
+           icon_type == "amber" ? Theme.icon_color_amber :
+           icon_type == "sky" ? Theme.icon_color_sky :
+           icon_type == "fuchsia" ? Theme.icon_color_fuchsia :
+           icon_type == "cobalt" ? Theme.icon_color_cobalt :
+           icon_type == "mint" ? Theme.icon_color_mint :
+           icon_type == "slate" ? Theme.icon_color_slate :
+           icon_type == "system" ? Theme.icon_color_system :
+           Theme.icon_color_action;
+    text: icon_code;
+}
+
+export component ActionIcon inherits Rectangle {
+    in property <string> icon;
+    in property <string> icon_type: "action";
+    in property <bool> active: false;
+    in property <image> icon_image;
+    in property <bool> is_font_icon: true;
+    in property <bool> show_shield: false;
+    in property <string> tooltip: "";
+    in property <brush> icon_color: !Theme.colorful_icons ? Theme.icon_color_action :
+                                   active ? Theme.accent :
+                                   icon_type == "navigation" ? Theme.icon_color_navigation :
+                                   icon_type == "success" ? Theme.icon_color_success :
+                                   icon_type == "danger" ? Theme.icon_color_danger :
+                                   icon_type == "warning" ? Theme.icon_color_warning :
+                                   icon_type == "info" ? Theme.icon_color_info :
+                                   icon_type == "purple" ? Theme.icon_color_purple :
+                                   icon_type == "gold" ? Theme.icon_color_gold :
+                                   icon_type == "cyan" ? Theme.icon_color_cyan :
+                                   icon_type == "pink" ? Theme.icon_color_pink :
+                                   icon_type == "teal" ? Theme.icon_color_teal :
+                                   icon_type == "indigo" ? Theme.icon_color_indigo :
+                                   icon_type == "lime" ? Theme.icon_color_lime :
+                                   icon_type == "orange" ? Theme.icon_color_orange :
+                                   icon_type == "rose" ? Theme.icon_color_rose :
+                                   icon_type == "heart" ? Theme.icon_color_heart :
+                                   icon_type == "violet" ? Theme.icon_color_violet :
+                                   icon_type == "emerald" ? Theme.icon_color_emerald :
+                                   icon_type == "amber" ? Theme.icon_color_amber :
+                                   icon_type == "sky" ? Theme.icon_color_sky :
+                                   icon_type == "fuchsia" ? Theme.icon_color_fuchsia :
+                                   icon_type == "cobalt" ? Theme.icon_color_cobalt :
+                                   icon_type == "mint" ? Theme.icon_color_mint :
+                                   icon_type == "slate" ? Theme.icon_color_slate :
+                                   Theme.icon_color_action;
+    in property <length> icon_size: 14px;
+    callback clicked;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    background: touch.pressed ? Theme.selected_bg : (touch.has-hover ? Theme.hover_bg : transparent);
+    
+    // Tooltip - Use properties instead of conditional creation
+    Rectangle {
+        visible: touch.has-hover && tooltip != "";
+        opacity: (touch.has-hover && tooltip != "") ? 1 : 0;
+        background: Theme.dark_mode ? #2D2D30 : #FFFFFF;
+        border-color: Theme.border_color;
+        border-width: 1px;
+        border-radius: 4px;
+        z: 100;
+        
+        // Dynamic Positioning - Reverted to static history behavior
+        x: (parent.width - self.width) / 2;
+        y: -10px;
+        width: tt_text.width + 12px;
+        height: tt_text.height + 6px;
+        tt_text := Text {
+            text: root.tooltip;
+            color: Theme.text_primary;
+            font-size: 11px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    Text {
+        visible: is_font_icon;
+        text: icon;
+        font-size: root.icon_size;
+        font-family: Theme.icon_font;
+        color: root.icon_color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Image {
+        visible: !is_font_icon;
+        source: icon_image;
+        width: 16px;
+        height: 16px;
+        image-fit: contain;
+    }
+
+    // Admin Shield Overlay
+    if (show_shield): Rectangle {
+        width: 12px;
+        height: 12px;
+        // Positioned at bottom right (LTR) or bottom left (RTL)
+        x: AppI18n.is-rtl ? -2px : parent.width - self.width + 2px;
+        y: parent.height - self.height + 2px;
+        z: 10;
+        Image {
+            source: @image-url("../../../assets/feat/microsoft-shield.svg");
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 10px;
+            height: 10px;
+            image-fit: contain;
+        }
+    }
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component WindowControlButton inherits Rectangle {
+    in property <string> text;
+    in property <brush> hover-color: Theme.selected_bg;
+    in property <brush> icon_color: Theme.text_primary;
+    in-out property <bool> has-hover;
+    callback clicked;
+    width: 46px;
+    height: 100%;
+    background: touch.has-hover ? hover-color : transparent;
+    has-hover: touch.has-hover;
+    Text {
+        text: text;
+        font-size: 10px;
+        font-family: Theme.icon_font;
+        color: touch.has_hover ? (text == "\u{E8BB}" ? white : icon_color) : icon_color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}

@@ -1,0 +1,19 @@
+# Build output
+/target
+**/*.exe
+**/*.pdb
+**/*.zip
+
+# Visual Studio / IDE
+/.vs
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+
+# Local scratch
+*.log
+/tmp/
+
+# NOTE: docs/reference/ is a READ-ONLY vendored baseline (spec Q18).
+# Do NOT add patterns that would exclude it.

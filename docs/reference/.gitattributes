@@ -1,0 +1,16 @@
+# Override language detection for Inno Setup files
+*.iss linguist-language=Inno Setup linguist-vendored
+*.isl linguist-language=Inno Setup linguist-vendored
+
+# Mark build scripts as vendored to exclude from language statistics
+build/**/* linguist-vendored=true
+
+# Exclude font subset script from language statistics
+assets/font/*.js linguist-vendored=true
+
+# Ensure Rust files are properly detected
+*.rs linguist-language=Rust
+*.toml linguist-language=TOML
+
+# Ensure Slint files are properly detected
+*.slint linguist-language=Slint

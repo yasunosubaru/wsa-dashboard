@@ -1,0 +1,697 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme, AppI18n, LayoutConstants } from "../../theme.slint";
+import { CustomScrollbar } from "../scrollbar.slint";
+import { CustomLineEdit, CustomCheckBox } from "../form_widgets.slint";
+
+// Section header component
+component SectionHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> icon;
+    height: 32px;
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: AppI18n.is-rtl ? end : start;
+        if (AppI18n.is-rtl): Text {
+            text: root.title;
+            font-size: 14px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            font-weight: 500;
+            color: Theme.text_primary;
+            vertical-alignment: center;
+        }
+        if (!AppI18n.is-rtl): Text {
+            text: root.title;
+            font-size: 14px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            font-weight: 500;
+            color: Theme.text_primary;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Version hint badge
+component VersionHint inherits Rectangle {
+    in property <string> text;
+    in property <bool> visible_hint: true;
+    height: visible_hint ? 18px : 0px;
+    opacity: visible_hint ? 1 : 0;
+    HorizontalLayout {
+        alignment: AppI18n.is-rtl ? end : start;
+        padding-left: AppI18n.is-rtl ? 16px : 30px;
+        padding-right: AppI18n.is-rtl ? 30px : 16px;
+        Rectangle {
+            background: Theme.dark_mode ? #3d3415 : #fff8e1;
+            border-radius: 3px;
+            height: 16px;
+            width: hint-text.preferred-width + 12px;
+            hint-text := Text {
+                text: root.text;
+                font-size: 10px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                color: Theme.dark_mode ? #ffc107 : #f57f17;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+export component WslConfigDialog inherits Rectangle {
+    in property <string> distro_name;
+
+    // [automount]
+    in-out property <bool> automount_enabled: true;
+    in-out property <bool> automount_mount_fs_tab: true;
+    in-out property <string> automount_root: "/mnt/";
+    in-out property <string> automount_options: "";
+
+    // [network]
+    in-out property <bool> network_generate_hosts: true;
+    in-out property <bool> network_generate_resolv_conf: true;
+    in-out property <string> network_hostname: "";
+
+    // [interop]
+    in-out property <bool> interop_enabled: true;
+    in-out property <bool> interop_append_windows_path: true;
+
+    // [user]
+    in-out property <string> user_default: "";
+
+    // [boot]
+    in-out property <bool> boot_systemd: false;
+    in-out property <string> boot_command: "";
+    in-out property <bool> boot_protect_binfmt: true;
+
+    // [gpu]
+    in-out property <bool> gpu_enabled: true;
+
+    // [time]
+    in-out property <bool> time_use_windows_timezone: true;
+
+    // Version support flags
+    in property <bool> boot_supported: true;
+    in property <bool> gpu_supported: true;
+    in property <bool> time_supported: true;
+    in property <bool> version_detection_failed: false;
+    in property <string> wsl_version_string: "";
+
+    // Validation errors
+    in property <string> user_error: "";
+    in property <string> command_error: "";
+
+    // Preview
+    in-out property <bool> show_preview: false;
+    in property <string> preview_content: "";
+
+    // Callbacks
+    callback close;
+    callback save;
+    callback save_and_restart;
+    callback request_preview;
+
+    // Background mask
+    background: #00000080;
+
+    // Trap clicks
+    TouchArea { }
+
+    // Dialog Box
+    Rectangle {
+        width: 500px;
+        height: 440px;
+        background: Theme.card_bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border_color;
+        TouchArea { /* prevent click through */ }
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 8px; // matches information_dialog
+
+            // Header
+            Rectangle {
+                height: 24px;
+                
+                Text {
+                    x: AppI18n.is-rtl ? 64px : 0;
+                    width: parent.width - 64px;
+                    text: AppI18n.t("wsl_conf.dialog_title", [root.distro_name, AppI18n.version]);
+                    font-size: 18px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    vertical-alignment: center;
+                }
+
+                // Group Preview and Close icons
+                HorizontalLayout {
+                    x: AppI18n.is-rtl ? 0 : parent.width - self.width;
+                    width: 56px;
+                    height: 24px;
+                    spacing: 4px;
+                    alignment: AppI18n.is-rtl ? start : end;
+                    
+                    if (AppI18n.is-rtl): TouchArea {
+                        width: 24px;
+                        height: 24px;
+                        clicked => { root.close(); }
+                        Rectangle {
+                            background: parent.has-hover ? Theme.hover_bg : transparent;
+                            border-radius: 4px;
+                            Text {
+                                text: "\u{E8BB}";
+                                font-family: Theme.icon_font;
+                                font-size: 14px * LayoutConstants.font-scale;
+                                color: Theme.text_primary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    if (AppI18n.is-rtl): TouchArea {
+                        width: 28px;
+                        height: 24px;
+                        clicked => {
+                            if (!root.show_preview) { root.request_preview(); }
+                            root.show_preview = !root.show_preview;
+                        }
+                        Rectangle {
+                            background: parent.has-hover ? Theme.hover_bg : transparent;
+                            border-radius: 4px;
+                            Text {
+                                text: "\u{E8A1}";
+                                font-family: Theme.icon_font;
+                                font-size: 14px * LayoutConstants.font-scale;
+                                color: root.show_preview ? Theme.accent : Theme.text_primary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    if (!AppI18n.is-rtl): TouchArea {
+                        width: 28px;
+                        height: 24px;
+                        clicked => {
+                            if (!root.show_preview) { root.request_preview(); }
+                            root.show_preview = !root.show_preview;
+                        }
+                        Rectangle {
+                            background: parent.has-hover ? Theme.hover_bg : transparent;
+                            border-radius: 4px;
+                            Text {
+                                text: "\u{E8A1}";
+                                font-family: Theme.icon_font;
+                                font-size: 14px * LayoutConstants.font-scale;
+                                color: root.show_preview ? Theme.accent : Theme.text_primary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    if (!AppI18n.is-rtl): TouchArea {
+                        width: 24px;
+                        height: 24px;
+                        clicked => { root.close(); }
+                        Rectangle {
+                            background: parent.has-hover ? Theme.hover_bg : transparent;
+                            border-radius: 4px;
+                            Text {
+                                text: "\u{E8BB}";
+                                font-family: Theme.icon_font;
+                                font-size: 14px * LayoutConstants.font-scale;
+                                color: Theme.text_primary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Divider
+            Rectangle {
+                height: 1px;
+                background: Theme.border_color;
+            }
+
+            // Version warning bar
+            if (root.version_detection_failed || (root.wsl_version_string != "" && !root.boot_supported)): Rectangle {
+                height: 36px;
+                background: Theme.dark_mode ? #3d2415 : #fff3e0;
+                border-radius: 4px;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: start;
+                    Text {
+                        text: "\u{E7BA}"; // warning icon
+                        font-family: Theme.icon_font;
+                        font-size: 14px * LayoutConstants.font-scale;
+                        color: #ff9800;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: root.version_detection_failed ? AppI18n.t("wsl_conf.version_detection_failed", [AppI18n.version]) : AppI18n.t("wsl_conf.version_warning", [root.wsl_version_string, AppI18n.version]);
+                        font-size: 11px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: Theme.dark_mode ? #ffcc80 : #e65100;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            // Content area
+            Rectangle {
+                vertical-stretch: 1;
+                clip: true;
+
+                // === Settings Form ===
+                // === Settings Form ===
+                Rectangle {
+                    visible: !root.show_preview;
+                    width: 100%;
+                    height: 100%;
+                    flick := Flickable {
+                        viewport-height: content-layout.preferred-height;
+                        width: 100%;
+                        height: 100%;
+                        content-layout := VerticalLayout {
+                            padding-left: AppI18n.is-rtl ? 16px : 0px;
+                            padding-right: AppI18n.is-rtl ? 0px : 16px;
+                            spacing: 6px;
+                            alignment: start;
+                            // ... sections same as before but wrapped in visible block ...
+                            // ========== [automount] ==========
+                            SectionHeader {
+                                title: AppI18n.t("wsl_conf.section_automount", [AppI18n.version]);
+                                icon: "\u{E8B7}";
+                            }
+
+                            CustomCheckBox {
+                                text: AppI18n.t("wsl_conf.automount_enabled", [AppI18n.version]);
+                                checked <=> root.automount_enabled;
+                            }
+
+                            CustomCheckBox {
+                                text: AppI18n.t("wsl_conf.automount_mount_fs_tab", [AppI18n.version]);
+                                checked <=> root.automount_mount_fs_tab;
+                            }
+
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: AppI18n.t("wsl_conf.automount_root", [AppI18n.version]);
+                                    font-size: 12px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_secondary;
+                                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                }
+
+                                CustomLineEdit {
+                                    text <=> root.automount_root;
+                                    placeholder-text: AppI18n.t("wsl_conf.automount_root_placeholder", [AppI18n.version]);
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: AppI18n.t("wsl_conf.automount_options", [AppI18n.version]);
+                                    font-size: 12px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_secondary;
+                                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                }
+
+                                CustomLineEdit {
+                                    text <=> root.automount_options;
+                                    placeholder-text: AppI18n.t("wsl_conf.automount_options_placeholder", [AppI18n.version]);
+                                }
+                            }
+
+                            Rectangle {
+                                height: 8px;
+                            }
+
+                            // ========== [network] ==========
+                            SectionHeader {
+                                title: AppI18n.t("wsl_conf.section_network", [AppI18n.version]);
+                                icon: "\u{E839}";
+                            }
+
+                            CustomCheckBox {
+                                text: AppI18n.t("wsl_conf.network_generate_hosts", [AppI18n.version]);
+                                checked <=> root.network_generate_hosts;
+                            }
+
+                            CustomCheckBox {
+                                text: AppI18n.t("wsl_conf.network_generate_resolv_conf", [AppI18n.version]);
+                                checked <=> root.network_generate_resolv_conf;
+                            }
+
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: AppI18n.t("wsl_conf.network_hostname", [AppI18n.version]);
+                                    font-size: 12px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_secondary;
+                                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                }
+
+                                CustomLineEdit {
+                                    text <=> root.network_hostname;
+                                    placeholder-text: AppI18n.t("wsl_conf.network_hostname_placeholder", [AppI18n.version]);
+                                }
+                            }
+
+                            Rectangle {
+                                height: 8px;
+                            }
+
+                            // ========== [interop] ==========
+                            SectionHeader {
+                                title: AppI18n.t("wsl_conf.section_interop", [AppI18n.version]);
+                                icon: "\u{E703}";
+                            }
+
+                            CustomCheckBox {
+                                text: AppI18n.t("wsl_conf.interop_enabled", [AppI18n.version]);
+                                checked <=> root.interop_enabled;
+                            }
+
+                            CustomCheckBox {
+                                text: AppI18n.t("wsl_conf.interop_append_windows_path", [AppI18n.version]);
+                                checked <=> root.interop_append_windows_path;
+                            }
+
+                            Rectangle {
+                                height: 8px;
+                            }
+
+                            // ========== [user] ==========
+                            SectionHeader {
+                                title: AppI18n.t("wsl_conf.section_user", [AppI18n.version]);
+                                icon: "\u{E77B}";
+                            }
+
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: AppI18n.t("wsl_conf.user_default", [AppI18n.version]);
+                                    font-size: 12px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_secondary;
+                                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                }
+
+                                CustomLineEdit {
+                                    text <=> root.user_default;
+                                    placeholder-text: AppI18n.t("wsl_conf.user_default_placeholder", [AppI18n.version]);
+                                }
+
+                                if (root.user_error != ""): Text {
+                                    text: root.user_error;
+                                    font-size: 11px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: #ff3333;
+                                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                }
+                            }
+
+                            Rectangle {
+                                height: 8px;
+                            }
+
+                            // ========== [boot] ==========
+                            SectionHeader {
+                                title: AppI18n.t("wsl_conf.section_boot", [AppI18n.version]);
+                                icon: "\u{E7E8}";
+                            }
+
+                            if (!root.boot_supported): VersionHint {
+                                text: AppI18n.t("wsl_conf.requires_version", ["0.67.6", AppI18n.version]);
+                                visible_hint: true;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: AppI18n.is-rtl ? end : start;
+                                if (AppI18n.is-rtl): Text {
+                                    text: AppI18n.t("wsl_conf.boot_systemd_readonly", [AppI18n.version]);
+                                    font-size: 10px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_secondary;
+                                    vertical-alignment: center;
+                                }
+                                CustomCheckBox {
+                                    text: AppI18n.t("wsl_conf.boot_systemd", [AppI18n.version]);
+                                    checked <=> root.boot_systemd;
+                                    enabled: false; // Always read-only for safety
+                                }
+
+                                if (!AppI18n.is-rtl): Text {
+                                    text: AppI18n.t("wsl_conf.boot_systemd_readonly", [AppI18n.version]);
+                                    font-size: 10px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_secondary;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: AppI18n.t("wsl_conf.boot_command", [AppI18n.version]);
+                                    font-size: 12px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: Theme.text_secondary;
+                                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                }
+
+                                CustomLineEdit {
+                                    text <=> root.boot_command;
+                                    placeholder-text: AppI18n.t("wsl_conf.boot_command_placeholder", [AppI18n.version]);
+                                    enabled: root.boot_supported;
+                                }
+
+                                if (root.command_error != ""): Text {
+                                    text: root.command_error;
+                                    font-size: 11px * LayoutConstants.font-scale;
+                                    font-family: Theme.default_font;
+                                    color: #ff3333;
+                                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                }
+                            }
+
+                            CustomCheckBox {
+                                text: AppI18n.t("wsl_conf.boot_protect_binfmt", [AppI18n.version]);
+                                checked <=> root.boot_protect_binfmt;
+                                enabled: root.boot_supported;
+                            }
+
+                            Rectangle {
+                                height: 8px;
+                            }
+
+                            // ========== [gpu] ==========
+                            SectionHeader {
+                                title: AppI18n.t("wsl_conf.section_gpu", [AppI18n.version]);
+                                icon: "\u{E7F4}";
+                            }
+
+                            if (!root.gpu_supported): VersionHint {
+                                text: AppI18n.t("wsl_conf.requires_version", ["2.0.0", AppI18n.version]);
+                                visible_hint: true;
+                            }
+                            CustomCheckBox {
+                                text: AppI18n.t("wsl_conf.gpu_enabled", [AppI18n.version]);
+                                checked <=> root.gpu_enabled;
+                                enabled: root.gpu_supported;
+                            }
+
+                            Rectangle {
+                                height: 8px;
+                            }
+
+                            // ========== [time] ==========
+                            SectionHeader {
+                                title: AppI18n.t("wsl_conf.section_time", [AppI18n.version]);
+                                icon: "\u{E823}";
+                            }
+
+                            if (!root.time_supported): VersionHint {
+                                text: AppI18n.t("wsl_conf.requires_version", ["2.0.0", AppI18n.version]);
+                                visible_hint: true;
+                            }
+                            CustomCheckBox {
+                                text: AppI18n.t("wsl_conf.time_use_windows_timezone", [AppI18n.version]);
+                                checked <=> root.time_use_windows_timezone;
+                                enabled: root.time_supported;
+                            }
+
+                            Rectangle {
+                                height: 16px;
+                            }
+                        }
+                    }
+
+                    // Scrollbar
+                    if (flick.viewport-height > flick.height): CustomScrollbar {
+                        x: AppI18n.is-rtl ? 0px : parent.width - 8px;
+                        y: 0;
+                        width: 8px;
+                        height: 100%;
+                        maximum: flick.viewport-height - flick.height;
+                        page_size: flick.height;
+                        value: -flick.viewport-y;
+                        scroll_to(v) => {
+                            flick.viewport-y = -v;
+                        }
+                    }
+                }
+
+                // === Preview Panel ===
+                Rectangle {
+                    visible: root.show_preview;
+                    width: 100%;
+                    height: 100%;
+                    background: Theme.dark_mode ? #1e1e1e : #f5f5f5;
+                    border-radius: 4px;
+                    preview-flick := Flickable {
+                        viewport-height: preview-text.preferred-height + 24px;
+                        width: 100%;
+                        height: 100%;
+                        preview-text := Text {
+                            text: root.preview_content;
+                            font-size: 12px * LayoutConstants.font-scale;
+                            font-family: "Cascadia Code, Consolas, monospace";
+                            color: Theme.text_primary;
+                            x: 12px;
+                            y: 12px;
+                            width: parent.width - 24px;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    if (preview-flick.viewport-height > preview-flick.height): CustomScrollbar {
+                        x: AppI18n.is-rtl ? 0px : parent.width - 8px;
+                        y: 0;
+                        width: 8px;
+                        height: 100%;
+                        maximum: preview-flick.viewport-height - preview-flick.height;
+                        page_size: preview-flick.height;
+                        value: -preview-flick.viewport-y;
+                        scroll_to(v) => {
+                            preview-flick.viewport-y = -v;
+                        }
+                    }
+                }
+            }
+
+            // Footer buttons
+            HorizontalLayout {
+                alignment: AppI18n.is-rtl ? start : end;
+                spacing: 12px;
+                if (AppI18n.is-rtl): save-restart-btn-rtl := Rectangle {
+                    width: 130px;
+                    height: 32px;
+                    background: Theme.dark_mode ? #1b6b3a : #2e7d32;
+                    border-radius: 6px;
+                    TouchArea {
+                        clicked => {
+                            root.save_and_restart();
+                        }
+                    }
+
+                    Text {
+                        text: AppI18n.t("wsl_conf.save_and_restart", [AppI18n.version]);
+                        color: white;
+                        font-size: 13px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                if (AppI18n.is-rtl): save-btn-rtl := Rectangle {
+                    width: 90px;
+                    height: 32px;
+                    background: Theme.accent;
+                    border-radius: 6px;
+                    TouchArea {
+                        clicked => {
+                            root.save();
+                        }
+                    }
+
+                    Text {
+                        text: AppI18n.t("wsl_conf.save", [AppI18n.version]);
+                        color: white;
+                        font-size: 13px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // LTR / Always present Cancel Button (will be last in LTR, first in RTL layout if not handled carefully)
+                // Actually to reverse order completely for RTL, we should use conditional blocks for all.
+                
+
+
+                if (!AppI18n.is-rtl): Rectangle {
+                    width: 90px;
+                    height: 32px;
+                    background: Theme.accent;
+                    border-radius: 6px;
+                    TouchArea {
+                        clicked => {
+                            root.save();
+                        }
+                    }
+
+                    Text {
+                        text: AppI18n.t("wsl_conf.save", [AppI18n.version]);
+                        color: white;
+                        font-size: 13px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                if (!AppI18n.is-rtl): Rectangle {
+                    width: 130px;
+                    height: 32px;
+                    background: Theme.dark_mode ? #1b6b3a : #2e7d32;
+                    border-radius: 6px;
+                    TouchArea {
+                        clicked => {
+                            root.save_and_restart();
+                        }
+                    }
+
+                    Text {
+                        text: AppI18n.t("wsl_conf.save_and_restart", [AppI18n.version]);
+                        color: white;
+                        font-size: 13px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

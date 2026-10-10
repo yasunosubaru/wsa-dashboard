@@ -1,0 +1,54 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme, AppI18n, LayoutConstants } from "../../theme.slint";
+
+export component VSCodeStartupDialog inherits Rectangle {
+    callback close;
+    
+    // Background mask
+    background: #00000080;
+    
+    // Close on mask click
+    TouchArea {
+        clicked => {
+            root.close();
+        }
+    }
+
+    // Dialog Box
+    Rectangle {
+        width: 300px;
+        height: 140px; // Slightly taller to accommodate content comfortably
+        background: Theme.card_bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border_color;
+        TouchArea { /* prevent click through */ }
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 16px;
+            alignment: center;
+            
+            // Icon
+            Text {
+                text: "\u{E70B}"; // VS Code Icon
+                font-family: Theme.icon_font;
+                font-size: 36px;
+                color: Theme.accent;
+                horizontal-alignment: center;
+            }
+            
+            // Text
+            Text {
+                text: AppI18n.t("dialog.vscode_starting", [AppI18n.version]) + "...";
+                color: Theme.text_primary;
+                font-size: 15px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                font-weight: 500;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

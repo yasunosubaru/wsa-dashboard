@@ -1,0 +1,49 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme } from "../theme.slint";
+
+export component CustomScrollbar {
+    in-out property <length> value;
+    in property <length> maximum;
+    in property <length> page_size;
+    in property <bool> horizontal: false;
+    callback scroll_to(length);
+    width: 10px;
+    height: 10px;
+    track := Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.scrollbar_bg;
+        border-radius: 5px;
+        property <length> track-len: root.horizontal ? self.width : self.height;
+        property <length> thumb-len: root.horizontal ? thumb.width : thumb.height;
+        property <length> travel-dist: track-len - thumb-len;
+        thumb := Rectangle {
+            width: root.horizontal ? Math.max(20px, (root.page_size / (root.maximum + root.page_size)) * parent.width) : 6px;
+            height: root.horizontal ? 6px : Math.max(20px, (root.page_size / (root.maximum + root.page_size)) * parent.height);
+            x: root.horizontal ? (root.maximum > 0px ? (root.value / root.maximum) * track.travel-dist : 0px) : (parent.width - self.width) / 2;
+            y: root.horizontal ? (parent.height - self.height) / 2 : (root.maximum > 0px ? (root.value / root.maximum) * track.travel-dist : 0px);
+            background: touch.has-hover || touch.pressed ? Theme.scrollbar_thumb_hover : Theme.scrollbar_thumb;
+            border-radius: 3px;
+        }
+
+        touch := TouchArea {
+            property <length> pressed-scroll-value;
+            width: 100%;
+            height: 100%;
+            pointer-event(event) => {
+                if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                    self.pressed-scroll-value = root.value;
+                }
+            }
+            moved => {
+                if (self.pressed && track.travel-dist > 0px) {
+                    let delta = root.horizontal ? (self.mouse-x - self.pressed-x) : (self.mouse-y - self.pressed-y);
+                    let scroll-delta = (delta / track.travel-dist) * root.maximum;
+                    root.scroll_to(Math.max(0px, Math.min(root.maximum, self.pressed-scroll-value + scroll-delta)));
+                }
+            }
+        }
+    }
+}

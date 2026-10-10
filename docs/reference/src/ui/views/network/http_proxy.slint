@@ -1,0 +1,376 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme, AppI18n, LayoutConstants } from "../../theme.slint";
+import { 
+    CustomLineEdit, 
+    CustomCheckBox, 
+    CustomButton, 
+    CustomRadioButton 
+} from "../../components/form_widgets.slint";
+
+export component HttpProxyView inherits Rectangle {
+    in-out property <bool> proxy_is_enabled: false;
+    in-out property <string> proxy_host: "";
+    in-out property <string> proxy_port: "";
+    in-out property <bool> proxy_auth_enabled: false;
+    in-out property <string> proxy_username: "";
+    in-out property <string> proxy_password: "";
+    in-out property <string> proxy_no_proxy: "";
+
+    in property <string> default_host: "";
+    in property <string> default_port: "";
+    in property <string> default_no_proxy: "";
+
+    callback save_proxy_settings(bool, string, string, string, bool, string, string);
+    callback open_check_proxy_dialog();
+    callback show_proxy_help();
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+
+            Flickable {
+                viewport-height: proxy_content.preferred-height;
+                proxy_content := VerticalLayout {
+                    padding-left: AppI18n.is-rtl ? 16px : 4px;
+                    padding-right: AppI18n.is-rtl ? 4px : 16px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    alignment: start;
+
+                    Rectangle {
+                        background: Theme.card_bg;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border_color;
+
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 15px;
+
+                            // "No proxy" vs "Proxy configuration"
+                            VerticalLayout {
+                                spacing: 12px;
+                                CustomRadioButton {
+                                    text: AppI18n.t("network.proxy_no_proxy", [AppI18n.version]);
+                                    checked: !root.proxy_is_enabled;
+                                    clicked => { root.proxy_is_enabled = false; }
+                                }
+                                
+                                Rectangle {
+                                    height: 1px;
+                                    background: Theme.border_color;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: AppI18n.is-rtl ? end : start;
+
+                                    if (AppI18n.is-rtl): Rectangle {
+                                        width: 18px;
+                                        height: 18px;
+                                        y: (parent.height - self.height) / 2;
+                                        background: ta-proxy-rtl.has-hover ? #0078D420 : transparent;
+                                        border-radius: 9px;
+                                        Text {
+                                            text: "?";
+                                            font-size: 12px;
+                                            font-weight: 500;
+                                            font-family: Theme.default_font;
+                                            color: #0078D4;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: center;
+                                        }
+                                        ta-proxy-rtl := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.show_proxy_help(); }
+                                        }
+                                    }
+
+                                    CustomRadioButton {
+                                        text: AppI18n.t("network.proxy_config", [AppI18n.version]);
+                                        checked: root.proxy_is_enabled;
+                                        clicked => { root.proxy_is_enabled = true; }
+                                    }
+
+                                    if (!AppI18n.is-rtl): Rectangle {
+                                        width: 18px;
+                                        height: 18px;
+                                        y: (parent.height - self.height) / 2;
+                                        background: ta-proxy.has-hover ? #0078D420 : transparent;
+                                        border-radius: 9px;
+                                        Text {
+                                            text: "?";
+                                            font-size: 12px;
+                                            font-weight: 500;
+                                            font-family: Theme.default_font;
+                                            color: #0078D4;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: center;
+                                        }
+                                        ta-proxy := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.show_proxy_help(); }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Configuration fields
+                            VerticalLayout {
+                                spacing: 16px;
+                                padding-left: 24px;
+                                opacity: root.proxy_is_enabled ? 1.0 : 0.5;
+
+                                // Host and Port
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    alignment: AppI18n.is-rtl ? end : start;
+
+                                    if (AppI18n.is-rtl): CustomLineEdit {
+                                        enabled: root.proxy_is_enabled;
+                                        text: root.proxy_host;
+                                        placeholder-text: root.default_host;
+                                        width: 250px;
+                                        edited(t) => { root.proxy_host = t; }
+                                    }
+
+                                    Text {
+                                        text: AppI18n.t("network.proxy_host", [AppI18n.version]);
+                                        color: Theme.text_primary;
+                                        font-family: Theme.default_font;
+                                        font-size: 13px * LayoutConstants.font-scale;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                        width: 120px * LayoutConstants.font-scale;
+                                    }
+
+                                    if (!AppI18n.is-rtl): CustomLineEdit {
+                                        enabled: root.proxy_is_enabled;
+                                        text: root.proxy_host;
+                                        placeholder-text: root.default_host;
+                                        width: 250px;
+                                        edited(t) => { root.proxy_host = t; }
+                                    }
+
+                                    if (!AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                    if (AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    alignment: AppI18n.is-rtl ? end : start;
+
+                                    if (AppI18n.is-rtl): CustomLineEdit {
+                                        enabled: root.proxy_is_enabled;
+                                        text: root.proxy_port;
+                                        placeholder-text: root.default_port;
+                                        input-type: number;
+                                        width: 100px;
+                                        edited(t) => { root.proxy_port = t; }
+                                    }
+
+                                    Text {
+                                        text: AppI18n.t("network.proxy_port", [AppI18n.version]);
+                                        color: Theme.text_primary;
+                                        font-family: Theme.default_font;
+                                        font-size: 13px * LayoutConstants.font-scale;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                        width: 120px * LayoutConstants.font-scale;
+                                    }
+
+                                    if (!AppI18n.is-rtl): CustomLineEdit {
+                                        enabled: root.proxy_is_enabled;
+                                        text: root.proxy_port;
+                                        placeholder-text: root.default_port;
+                                        input-type: number;
+                                        width: 100px;
+                                        edited(t) => { root.proxy_port = t; }
+                                    }
+
+                                    if (!AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                    if (AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    alignment: AppI18n.is-rtl ? end : start;
+
+                                    if (AppI18n.is-rtl): CustomLineEdit {
+                                        enabled: root.proxy_is_enabled;
+                                        text: root.proxy_no_proxy;
+                                        width: 375px;
+                                        edited(t) => { root.proxy_no_proxy = t; }
+                                    }
+
+                                    Text {
+                                        text: AppI18n.t("network.proxy_no_proxy_label", [AppI18n.version]);
+                                        color: Theme.text_primary;
+                                        font-family: Theme.default_font;
+                                        font-size: 13px * LayoutConstants.font-scale;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                        width: 120px * LayoutConstants.font-scale;
+                                    }
+
+                                    if (!AppI18n.is-rtl): CustomLineEdit {
+                                        enabled: root.proxy_is_enabled;
+                                        text: root.proxy_no_proxy;
+                                        width: 375px;
+                                        edited(t) => { root.proxy_no_proxy = t; }
+                                    }
+
+                                    if (!AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                    if (AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                }
+
+                                // Configuration Divider
+                                HorizontalLayout {
+                                    padding-left: AppI18n.is-rtl ? 24px : 0px;
+                                    padding-right: AppI18n.is-rtl ? 0px : 24px;
+                                    Rectangle {
+                                        height: 1px;
+                                        background: Theme.border_color;
+                                    }
+                                }
+
+                                // Authentication
+                                VerticalLayout {
+                                    spacing: 12px;
+                                    CustomCheckBox {
+                                        enabled: root.proxy_is_enabled;
+                                        text: AppI18n.t("network.proxy_auth", [AppI18n.version]);
+                                        checked: root.proxy_auth_enabled;
+                                        toggled => { root.proxy_auth_enabled = self.checked; }
+                                    }
+
+                                    VerticalLayout {
+                                        spacing: 8px;
+                                        padding-left: AppI18n.is-rtl ? 0px : 24px;
+                                        padding-right: AppI18n.is-rtl ? 24px : 0px;
+                                        opacity: root.proxy_auth_enabled ? 1.0 : 0.5;
+
+                                        HorizontalLayout {
+                                            spacing: 12px;
+                                            alignment: AppI18n.is-rtl ? end : start;
+
+                                            if (AppI18n.is-rtl): CustomLineEdit {
+                                                enabled: root.proxy_is_enabled && root.proxy_auth_enabled;
+                                                text: root.proxy_username;
+                                                width: 250px;
+                                                edited(t) => { root.proxy_username = t; }
+                                            }
+
+                                            Text {
+                                                text: AppI18n.t("network.proxy_user", [AppI18n.version]);
+                                                color: Theme.text_secondary;
+                                                font-family: Theme.default_font;
+                                                font-size: 13px * LayoutConstants.font-scale;
+                                                vertical-alignment: center;
+                                                horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                                width: 120px * LayoutConstants.font-scale;
+                                            }
+
+                                            if (!AppI18n.is-rtl): CustomLineEdit {
+                                                enabled: root.proxy_is_enabled && root.proxy_auth_enabled;
+                                                text: root.proxy_username;
+                                                width: 250px;
+                                                edited(t) => { root.proxy_username = t; }
+                                            }
+
+                                            if (!AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                            if (AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 12px;
+                                            alignment: AppI18n.is-rtl ? end : start;
+
+                                            if (AppI18n.is-rtl): CustomLineEdit {
+                                                enabled: root.proxy_is_enabled && root.proxy_auth_enabled;
+                                                text: root.proxy_password;
+                                                width: 250px;
+                                                input-type: InputType.password;
+                                                edited(t) => { root.proxy_password = t; }
+                                            }
+
+                                            Text {
+                                                text: AppI18n.t("network.proxy_pass", [AppI18n.version]);
+                                                color: Theme.text_secondary;
+                                                font-family: Theme.default_font;
+                                                font-size: 13px * LayoutConstants.font-scale;
+                                                vertical-alignment: center;
+                                                horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                                width: 120px * LayoutConstants.font-scale;
+                                            }
+
+                                            if (!AppI18n.is-rtl): CustomLineEdit {
+                                                enabled: root.proxy_is_enabled && root.proxy_auth_enabled;
+                                                text: root.proxy_password;
+                                                width: 250px;
+                                                input-type: InputType.password;
+                                                edited(t) => { root.proxy_password = t; }
+                                            }
+
+                                            if (!AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                            if (AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                        }
+                                    }
+                                }
+
+                                // Check Connection Button
+                                HorizontalLayout {
+                                    if (AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                    CustomButton {
+                                        text: AppI18n.t("network.proxy_check_btn", [AppI18n.version]);
+                                        height: 32px;
+                                        enabled: root.proxy_is_enabled && root.proxy_host != "" && root.proxy_port != "";
+                                        clicked => { root.open_check_proxy_dialog(); }
+                                    }
+                                    if (!AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+            // Action Buttons
+            HorizontalLayout {
+                padding-top: 12px;
+                padding-bottom: 4px;
+                padding-right: 12px;
+                padding-left: 12px;
+                spacing: 8px;
+
+                if (!AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+
+                CustomButton {
+                    text: AppI18n.t("dialog.save", [AppI18n.version]);
+                    primary: true;
+                    height: 32px;
+                    width: 80px;
+                    clicked => {
+                        root.save_proxy_settings(
+                            root.proxy_is_enabled,
+                            root.proxy_host,
+                            root.proxy_port,
+                            root.proxy_no_proxy,
+                            root.proxy_auth_enabled,
+                            root.proxy_username,
+                            root.proxy_password
+                        );
+                    }
+                }
+
+                if (AppI18n.is-rtl): Rectangle { horizontal-stretch: 1; }
+            }
+    }
+}

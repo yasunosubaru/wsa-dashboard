@@ -1,0 +1,520 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Theme, AppI18n, LayoutConstants } from "../theme.slint";
+import {
+    CustomButton,
+    CustomLineEdit,
+    CustomComboBox,
+    CustomCheckBox,
+} from "../components/form_widgets.slint";
+
+export component AddInstanceView inherits VerticalLayout {
+    spacing: 12px;
+    padding-left: AppI18n.is-rtl ? 16px : 4px;
+    padding-right: AppI18n.is-rtl ? 4px : 16px;
+    padding-top: 6px;
+    padding-bottom: 8px;
+
+    // Properties passed from AppWindow
+    in-out property <string> new_instance_name;
+    in-out property <string> new_instance_path;
+    in-out property <string> selected_install_distro;
+    in property <[string]> installable_distro_names;
+    in property <bool> is_installing;
+    in property <string> install_status;
+    in property <bool> install_success;
+    in property <string> terminal_output;
+    in property <string> name_error;
+    in property <string> path_error;
+    in property <[string]> install_sources;
+    in-out property <int> selected_source_idx;
+    in-out property <string> install_file_path;
+    in-out property <bool> show_install_warn_dialog;
+    in property <string> distro_location;
+    in-out property <bool> show_rootfs_help: false;
+
+    // Linux Mirrors properties
+    in property <bool> is_mirror_loading: false;
+    in property <bool> is_store_loading: false;
+    in property <bool> mirror_list_available: false;
+    in property <[string]> mirror_distro_names: [];
+    in-out property <string> selected_mirror_distro: "";
+    in property <string> mirror_source_url: "";
+
+
+    // Callbacks
+    callback source_selected(int);
+    callback open_mirror_source_url();
+    callback select_install_file(int);
+    callback check_install_path(string);
+    callback select_folder();
+    callback install_distro(int, string, string, string, string);
+    callback distro_selected(string);
+    callback show_rootfs_help_clicked();
+    callback copy_terminal_output();
+
+
+    // Helper function: path concatenation
+    // Note: Slint logic is limited, we mainly trigger updates through logic
+    
+    // Form area
+    VerticalLayout {
+        spacing: 16px;
+        horizontal-stretch: 1;
+
+        // Source type
+        VerticalLayout {
+            z: 100; // Ensure dropdown is above other elements
+            spacing: 0px;
+            Text {
+                text: AppI18n.t("add.source_type", [AppI18n.version]);
+                font-size: 13px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                color: Theme.text_secondary;
+                height: 18px;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+            }
+
+            CustomComboBox {
+                model: root.install_sources;
+                current-index <=> root.selected_source_idx;
+                height: 32px;
+                enabled: !root.is_installing;
+                selected(idx) => {
+                    root.install_file_path = "";
+                    root.new_instance_name = "";
+                    root.new_instance_path = root.distro_location;
+                    root.selected_install_distro = "";
+                    root.selected_mirror_distro = "";
+                    root.source_selected(root.selected_source_idx);
+                }
+            }
+        }
+
+        // Dynamic rendering
+        if (root.selected_source_idx == 2): VerticalLayout {
+            z: 90;
+            spacing: 0px;
+            Text {
+                text: AppI18n.t("add.select_distro", [AppI18n.version]);
+                font-size: 13px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                color: Theme.text_secondary;
+                height: 18px;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+            }
+
+            CustomComboBox {
+                model: root.installable_distro_names;
+                current-index: 0; // Simplified for now since CustomComboBox uses index
+                height: 32px;
+                enabled: !root.is_installing && !root.is_store_loading;
+                selected(idx) => {
+                    root.selected_install_distro = root.installable_distro_names[idx];
+                    root.distro_selected(root.selected_install_distro);
+                }
+            }
+        }
+        
+        // Linux Mirrors Dynamic rendering
+        if (root.selected_source_idx == 3): VerticalLayout {
+            z: 80;
+            spacing: 0px;
+            HorizontalLayout {
+                spacing: 4px;
+                alignment: AppI18n.is-rtl ? end : start;
+                height: 18px;
+                
+                // LTR: text first, then link
+                if (!AppI18n.is-rtl): Text {
+                    text: AppI18n.t("add.select_distro", [AppI18n.version]);
+                    font-size: 13px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    color: Theme.text_secondary;
+                    vertical-alignment: center;
+                }
+                if (!AppI18n.is-rtl): HorizontalLayout {
+                    spacing: 0px;
+                    Text {
+                        text: "( " + AppI18n.t("add.speed_optimized", [AppI18n.version]) + "  ·  ";
+                        font-size: 12px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                    }
+                    TouchArea {
+                        mouse-cursor: root.mirror_source_url != "" ? pointer : default;
+                        width: txt-link-ltr.preferred-width;
+                        clicked => {
+                            if (root.mirror_source_url != "") {
+                                root.open_mirror_source_url();
+                            }
+                        }
+                        txt-link-ltr := Text {
+                            text: AppI18n.t("add.mirror_help", [AppI18n.version]);
+                            font-size: 12px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                            color: root.mirror_source_url != "" ? Theme.accent : Theme.text_secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Text {
+                        text: " )";
+                        font-size: 12px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if (AppI18n.is-rtl): HorizontalLayout {
+                    spacing: 0px;
+                    Text {
+                        text: " )";
+                        font-size: 12px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                    }
+                    TouchArea {
+                        mouse-cursor: root.mirror_source_url != "" ? pointer : default;
+                        width: txt-link-rtl.preferred-width;
+                        clicked => {
+                            if (root.mirror_source_url != "") {
+                                root.open_mirror_source_url();
+                            }
+                        }
+                        txt-link-rtl := Text {
+                            text: AppI18n.t("add.mirror_help", [AppI18n.version]);
+                            font-size: 12px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                            color: root.mirror_source_url != "" ? Theme.accent : Theme.text_secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Text {
+                        text: "( " + AppI18n.t("add.speed_optimized", [AppI18n.version]) + "  ·  ";
+                        font-size: 12px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                    }
+                }
+                if (AppI18n.is-rtl): Text {
+                    text: AppI18n.t("add.select_distro", [AppI18n.version]);
+                    font-size: 13px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    color: Theme.text_secondary;
+                    vertical-alignment: center;
+                }
+            }
+
+            CustomComboBox {
+                model: root.mirror_distro_names;
+                current-index: 0;
+                height: 32px;
+                enabled: !root.is_installing && !root.is_mirror_loading;
+                selected(idx) => {
+                    root.selected_mirror_distro = root.mirror_distro_names[idx];
+                    root.distro_selected(root.selected_mirror_distro);
+                }
+            }
+        }
+
+        if (root.selected_source_idx != 2 && root.selected_source_idx != 3): VerticalLayout {
+            spacing: 0px;
+            HorizontalLayout {
+                spacing: 4px;
+                alignment: AppI18n.is-rtl ? end : start;
+                
+                // LTR: Text then Icon
+                if (!AppI18n.is-rtl): Text {
+                    text: root.selected_source_idx == 0 ? AppI18n.t("add.select_rootfs", [AppI18n.version]) : AppI18n.t("add.select_vhdx", [AppI18n.version]);
+                    font-size: 13px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    color: Theme.text_secondary;
+                    height: 18px;
+                }
+                
+                // RTL: Icon then Text
+                if (AppI18n.is-rtl): Rectangle {
+                    width: 18px;
+                    height: 18px;
+                    y: (parent.height - self.height) / 2;
+                    background: ta-help-rtl.has-hover ? #0078D420 : transparent;
+                    border-radius: 9px;
+                    Text {
+                        text: "?";
+                        font-size: 12px;
+                        font-weight: 500;
+                        font-family: Theme.default_font;
+                        color: #0078D4;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    ta-help-rtl := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.show_rootfs_help_clicked();
+                        }
+                    }
+                }
+                if (AppI18n.is-rtl): Text {
+                    text: root.selected_source_idx == 0 ? AppI18n.t("add.select_rootfs", [AppI18n.version]) : AppI18n.t("add.select_vhdx", [AppI18n.version]);
+                    font-size: 13px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    color: Theme.text_secondary;
+                    height: 18px;
+                }
+                if (root.selected_source_idx == 0 && !AppI18n.is-rtl): Rectangle {
+                    width: 18px;
+                    height: 18px;
+                    y: (parent.height - self.height) / 2;
+                    background: ta-help.has-hover ? #0078D420 : transparent;
+                    border-radius: 9px;
+                    Text {
+                        text: "?";
+                        font-size: 12px;
+                        font-weight: 500;
+                        font-family: Theme.default_font;
+                        color: #0078D4;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    ta-help := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.show_rootfs_help_clicked();
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                
+                // LTR: Input left, Button right
+                if (!AppI18n.is-rtl): CustomLineEdit {
+                    placeholder-text: AppI18n.t("add.no_file", [AppI18n.version]);
+                    text <=> root.install_file_path;
+                    height: 32px;
+                    horizontal-stretch: 1;
+                    enabled: false;
+                }
+
+                // RTL: Button left, Input right
+                if (AppI18n.is-rtl): CustomButton {
+                    text: AppI18n.t("add.select_file", [AppI18n.version]);
+                    height: 32px;
+                    width: self.preferred-width; // Ensure button has natural width
+                    enabled: !root.is_installing;
+                    clicked => {
+                        root.select_install_file(root.selected_source_idx);
+                    }
+                }
+                if (AppI18n.is-rtl): CustomLineEdit {
+                    placeholder-text: AppI18n.t("add.no_file", [AppI18n.version]);
+                    text <=> root.install_file_path;
+                    height: 32px;
+                    horizontal-stretch: 1;
+                    enabled: false;
+                }
+                if (!AppI18n.is-rtl): CustomButton {
+                    text: AppI18n.t("add.select_file", [AppI18n.version]);
+                    height: 32px;
+                    width: self.preferred-width; // Ensure button has natural width
+                    enabled: !root.is_installing;
+                    clicked => {
+                        root.select_install_file(root.selected_source_idx);
+                    }
+                }
+            }
+        }
+
+        // Instance Name
+        VerticalLayout {
+            spacing: 0px;
+            Text {
+                text: AppI18n.t("add.instance_name", [AppI18n.version]);
+                font-size: 13px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                color: Theme.text_secondary;
+                height: 18px;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+            }
+
+            CustomLineEdit {
+                placeholder-text: AppI18n.t("add.placeholder_instance_name", [AppI18n.version]);
+                text <=> root.new_instance_name;
+                height: 32px;
+                enabled: !root.is_installing;
+                edited(val) => {
+                    if (val != "") {
+                        root.new_instance_path = root.distro_location + "\\" + val;
+                    } else {
+                        root.new_instance_path = root.distro_location;
+                    }
+                }
+            }
+
+            if (name_error != ""): Text {
+                text: name_error;
+                font-size: 11px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                color: #ff4d4f;
+                height: 16px;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+            }
+        }
+
+        // Installation Directory
+        VerticalLayout {
+            spacing: 0px;
+            Text {
+                text: AppI18n.t("add.install_dir", [AppI18n.version]);
+                font-size: 13px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                color: Theme.text_secondary;
+                height: 18px;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                
+                // LTR: Input left, Button right
+                if (!AppI18n.is-rtl): CustomLineEdit {
+                    text <=> root.new_instance_path;
+                    height: 32px;
+                    horizontal-stretch: 1;
+                    enabled: false;
+                    edited(text) => {
+                        root.check_install_path(text);
+                    }
+                }
+
+                // RTL: Button left, Input right
+                if (AppI18n.is-rtl): CustomButton {
+                    text: AppI18n.t("add.select_folder", [AppI18n.version]);
+                    height: 32px;
+                    width: self.preferred-width; // Ensure button has natural width
+                    enabled: !root.is_installing;
+                    clicked => {
+                        root.select_folder();
+                    }
+                }
+                if (AppI18n.is-rtl): CustomLineEdit {
+                    text <=> root.new_instance_path;
+                    height: 32px;
+                    horizontal-stretch: 1;
+                    enabled: false;
+                    edited(text) => {
+                        root.check_install_path(text);
+                    }
+                }
+                if (!AppI18n.is-rtl): CustomButton {
+                    text: AppI18n.t("add.select_folder", [AppI18n.version]);
+                    height: 32px;
+                    width: self.preferred-width; // Ensure button has natural width
+                    enabled: !root.is_installing;
+                    clicked => {
+                        root.select_folder();
+                    }
+                }
+            }
+
+            if (path_error != ""): Text {
+                text: path_error;
+                font-size: 11px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                color: #ff4d4f;
+                height: 16px;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+            }
+        }
+
+        Rectangle {
+            height: 8px;
+        }
+
+        CustomButton {
+            text: root.is_installing ? AppI18n.t("add.installing", [AppI18n.version]) : AppI18n.t("add.create", [AppI18n.version]);
+            enabled: !root.is_installing && root.new_instance_name != "" && path_error == "" && (root.selected_source_idx == 2 ? root.selected_install_distro != "" : (root.selected_source_idx == 3 ? root.selected_mirror_distro != "" : root.install_file_path != ""));
+            primary: true;
+            height: 36px;
+            clicked => {
+                if (root.selected_source_idx == 2 || root.selected_source_idx == 3) {
+                    root.show_install_warn_dialog = true;
+                } else {
+                    root.install_distro(root.selected_source_idx, root.new_instance_name, root.selected_install_distro, root.new_instance_path, root.install_file_path);
+                }
+            }
+        }
+
+        if (root.install_status != ""): Text {
+            text: root.install_status;
+            color: root.install_success ? #4CAF50 : Theme.accent;
+            font-size: 12px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            wrap: word-wrap;
+            horizontal-alignment: AppI18n.is-rtl ? right : left;
+        }
+        if (terminal_output != ""): VerticalLayout {
+            Rectangle {
+                height: 130px;
+                background: Theme.dark_mode ? #1e1e1e : #f5f5f5;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Theme.border_color;
+                TouchArea {
+                    pointer-event(event) => {
+                        if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                            root.copy_terminal_output();
+                        }
+                    }
+                }
+                Flickable {
+                    VerticalLayout {
+                        padding: 8px;
+                        alignment: start;
+                        Text {
+                            text: terminal_output;
+                            font-family: Theme.default_font;
+                            font-size: 11px * LayoutConstants.font-scale;
+                            color: Theme.dark_mode ? #cccccc : #333333;
+                            wrap: word-wrap;
+                            horizontal-alignment: AppI18n.is-rtl ? right : left;
+                        }
+                    }
+                }
+            }
+            // Bottom margin
+            Rectangle {
+                height: 5px;
+            }
+        }
+        if (root.is_installing && terminal_output == ""): Rectangle {
+            height: 4px;
+            background: Theme.hover_bg;
+            Rectangle {
+                width: parent.width * 0.3;
+                height: parent.height;
+                background: Theme.accent;
+                x: (parent.width - self.width) * (Math.mod(animation-tick(), 1s) / 1s);
+            }
+        }
+    }
+
+    VerticalLayout {
+        spacing: 8px;
+        Text {
+            text: AppI18n.t("add.note", [AppI18n.version]);
+            font-size: 11px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_secondary;
+            wrap: word-wrap;
+            horizontal-alignment: AppI18n.is-rtl ? right : left;
+        }
+    }
+}

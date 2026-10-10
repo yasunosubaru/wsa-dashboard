@@ -1,0 +1,294 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import {
+    Theme,
+    AppI18n,
+    LayoutConstants,
+} from "../../theme.slint";
+import { CustomLineEdit, CustomComboBox, CustomCheckBox } from "../form_widgets.slint";
+
+export component NetworkAddRuleDialog inherits Rectangle {
+    in property <[string]> distro_names: [];
+    in property <[string]> local_ips: [];
+    
+    in-out property <int> distro_idx: 0;
+    in-out property <int> ip_idx: 0;
+    in-out property <string> listen_port: "";
+    in-out property <string> target_port: "";
+    in-out property <bool> enable_fw: true;
+
+    in property <string> error_msg: "";
+
+    callback close;
+    callback add(string, string, string, string, bool);
+    
+    // Background mask
+    background: #00000080;
+    
+    // Trap clicks
+    TouchArea { }
+
+    // Dialog Box
+    Rectangle {
+        width: 500px;
+        height: layout.preferred-height;
+        background: Theme.card_bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border_color;
+        TouchArea { /* prevent click through */ }
+
+        layout := VerticalLayout {
+            padding: 24px;
+            spacing: 8px; // matches information_dialog
+            
+            // Header: title + close button
+            Rectangle {
+                height: 24px;
+                Text {
+                    x: AppI18n.is-rtl ? 32px : 0;
+                    width: parent.width - 32px;
+                    text: AppI18n.t("dialog.add_network_rule_title", [AppI18n.version]);
+                    font-size: 18px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    x: AppI18n.is-rtl ? 0 : parent.width - self.width;
+                    width: 24px;
+                    height: 24px;
+                    clicked => { root.close(); }
+                    Rectangle {
+                        background: parent.has-hover ? Theme.hover_bg : transparent;
+                        border-radius: 4px;
+                        Text {
+                            text: "\u{E8BB}";
+                            font-family: Theme.icon_font;
+                            font-size: 14px;
+                            color: Theme.text_primary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Divider
+            Rectangle {
+                height: 1px;
+                background: Theme.border_color;
+            }
+
+            // Content
+            VerticalLayout {
+                spacing: 16px;
+                horizontal-stretch: 1;
+
+                // Listen IP
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: AppI18n.is-rtl ? end : start;
+                    
+                    if (AppI18n.is-rtl): CustomComboBox {
+                        width: 300px;
+                        model: root.local_ips;
+                        current-index <=> root.ip_idx;
+                    }
+
+                    Text {
+                        text: AppI18n.t("network.add_rule_listen_ip", [AppI18n.version]) + ":";
+                        width: 110px;
+                        vertical-alignment: center;
+                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                        color: Theme.text_secondary;
+                        font-family: Theme.default_font;
+                    }
+                    
+                    if (!AppI18n.is-rtl): CustomComboBox {
+                        width: 300px;
+                        model: root.local_ips;
+                        current-index <=> root.ip_idx;
+                    }
+                }
+
+                // Listen Port
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: AppI18n.is-rtl ? end : start;
+
+                    if (AppI18n.is-rtl): CustomLineEdit {
+                        width: 300px;
+                        text <=> root.listen_port;
+                        input-type: number;
+                        placeholder-text: AppI18n.t("network.add_rule_port_placeholder", [AppI18n.version]);
+                        edited(t) => {
+                            // Sync full content to target_port
+                            root.target_port = t;
+                        }
+                    }
+
+                    Text {
+                        text: AppI18n.t("network.add_rule_listen_port", [AppI18n.version]) + ":";
+                        width: 110px;
+                        vertical-alignment: center;
+                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                        color: Theme.text_secondary;
+                        font-family: Theme.default_font;
+                    }
+
+                    if (!AppI18n.is-rtl): CustomLineEdit {
+                        width: 300px;
+                        text <=> root.listen_port;
+                        input-type: number;
+                        placeholder-text: AppI18n.t("network.add_rule_port_placeholder", [AppI18n.version]);
+                        edited(t) => {
+                            // Sync full content to target_port
+                            root.target_port = t;
+                        }
+                    }
+                }
+
+                // Target Distro
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: AppI18n.is-rtl ? end : start;
+
+                    if (AppI18n.is-rtl): CustomComboBox {
+                        width: 300px;
+                        model: root.distro_names;
+                        current-index <=> root.distro_idx;
+                    }
+
+                    Text {
+                        text: AppI18n.t("network.target_distro", [AppI18n.version]) + ":";
+                        width: 110px;
+                        vertical-alignment: center;
+                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                        color: Theme.text_secondary;
+                        font-family: Theme.default_font;
+                    }
+
+                    if (!AppI18n.is-rtl): CustomComboBox {
+                        width: 300px;
+                        model: root.distro_names;
+                        current-index <=> root.distro_idx;
+                    }
+                }
+
+                // Target Port
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: AppI18n.is-rtl ? end : start;
+
+                    if (AppI18n.is-rtl): CustomLineEdit {
+                        width: 300px;
+                        text <=> root.target_port;
+                        input-type: number;
+                        placeholder-text: AppI18n.t("network.add_rule_target_port_placeholder", [AppI18n.version]);
+                    }
+
+                    Text {
+                        text: AppI18n.t("network.add_rule_target_port", [AppI18n.version]) + ":";
+                        width: 110px;
+                        vertical-alignment: center;
+                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                        color: Theme.text_secondary;
+                        font-family: Theme.default_font;
+                    }
+
+                    if (!AppI18n.is-rtl): CustomLineEdit {
+                        width: 300px;
+                        text <=> root.target_port;
+                        input-type: number;
+                        placeholder-text: AppI18n.t("network.add_rule_target_port_placeholder", [AppI18n.version]);
+                    }
+                }
+
+                // Firewall Row
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: AppI18n.is-rtl ? end : start;
+                    
+                    if (!AppI18n.is-rtl): Rectangle { width: 110px; } // LTR Spacer on left
+                    
+                    CustomCheckBox {
+                        text: AppI18n.t("network.add_rule_enable_fw", [AppI18n.version]);
+                        checked <=> root.enable_fw;
+                    }
+
+                    if (AppI18n.is-rtl): Rectangle { width: 110px; } // RTL Spacer on right
+                }
+            }
+
+
+            // Error Message
+            if root.error_msg != "": HorizontalLayout {
+                padding-bottom: 8px;
+                alignment: center;
+                Text {
+                    text: root.error_msg;
+                    color: #ff3333;
+                    font-size: 13px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                }
+            }
+
+            // Footer
+            HorizontalLayout {
+                alignment: AppI18n.is-rtl ? start : end;
+                
+                Rectangle {
+                    width: 90px;
+                    height: 32px;
+                    background: Theme.accent;
+                    border-radius: 6px;
+                    TouchArea {
+                        clicked => {
+                            if (root.listen_port != "" && root.target_port != "" && root.distro_names.length > 0 && root.local_ips.length > 0) {
+                                root.add(
+                                    root.distro_names[root.distro_idx],
+                                    root.local_ips[root.ip_idx],
+                                    root.listen_port,
+                                    root.target_port,
+                                    root.enable_fw
+                                );
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 6px;
+                        alignment: center;
+                        
+                        Text {
+                            text: AppI18n.t("dialog.add", [AppI18n.version]);
+                            color: white;
+                            font-size: 13px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 14px;
+                            height: 14px;
+                            y: (parent.height - self.height) / 2;
+                            Image {
+                                source: @image-url("../../../../assets/feat/microsoft-shield.svg");
+                                width: 12px;
+                                height: 12px;
+                                image-fit: contain;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

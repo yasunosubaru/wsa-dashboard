@@ -1,0 +1,790 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import {
+    ConfirmationDialog,
+    ExportDialog,
+    CloneDialog,
+    MoveDialog,
+    MessageDialog,
+    CheckUpdateDialog,
+    CheckExpiredDialog,
+    StoreInstallWarnDialog,
+    InformationDialog,
+    SettingsDialog,
+    RootFSHelpDialog,
+    VSCodeStartupDialog,
+    WslConfigDialog,
+    NetworkAddRuleDialog,
+    CompressDialog,
+    WslCompatDialog,
+    LanguageSelectDialog,
+    PopupNoticeDialog,
+    PopupImageDialog,
+    MessageMailDialog,
+    UsbDeviceInfoDialog,
+ } from "dialogs.slint";
+import { ProxyHelpDialog } from "./dialogs/proxy_help_dialog.slint";
+import { CheckProxyDialog } from "./dialogs/check_proxy_dialog.slint";
+import { UsbSettingsDialog } from "./dialogs/usb_settings_dialog.slint";
+import { AppInfo, Information, RootFSHelpItem, MessageData, AppI18n, Theme, LayoutConstants, UsbDevice, UsbDeviceDetailInfo } from "../theme.slint";
+
+export component ModalManager inherits Rectangle {
+    // Controls
+    in property <bool> show_delete: false;
+    in property <bool> show_export: false;
+    in property <bool> show_clone: false;
+    in property <bool> show_move: false;
+    in property <bool> show_move_confirm: false;
+    in property <bool> show_message: false;
+    in property <bool> show_update: false;
+    in property <bool> show_install_warn: false;
+    in property <bool> show_expire: false;
+    in property <bool> show_information: false;
+    in-out property <bool> show_settings: false;
+    in property <bool> show_rootfs_help: false;
+    in property <bool> show_vscode_startup: false;
+    in-out property <bool> show_wsl_config: false;
+    in-out property <bool> show_add_network_rule: false;
+    in-out property <bool> show_check_proxy: false;
+    in-out property <bool> show_network_proxy_help: false;
+    in-out property <bool> show_compress: false;
+    in property <bool> show_stop_wsl_confirm: false;
+    in property <bool> is_installing: false;
+
+    // Language Select Dialog
+    in-out property <bool> show_language_dialog: false;
+    in-out property <int> language_current_index: 0;
+    in property <[string]> language_options;
+
+    // WSL Compat Dialog
+    in property <bool> show_wsl_compat: false;
+    in property <string> wsl_compat_msg1: "";
+    in property <string> wsl_compat_msg2: "";
+    in property <string> wsl_compat_msg3: "";
+    in property <string> wsl_compat_hint: "";
+    in property <string> wsl_compat_link: "";
+    in property <string> wsl_compat_issues_url: "";
+    in property <bool> wsl_compat_show_confirm: true;
+
+    // Popup Notice Dialog
+    in property <bool> show_popup_notice: false;
+    in property <string> popup_notice_title: "";
+    in property <string> popup_notice_msg1: "";
+    in property <string> popup_notice_msg2: "";
+    in property <string> popup_notice_msg3: "";
+    in property <string> popup_notice_hint: "";
+    in property <string> popup_notice_link: "";
+    in property <string> popup_notice_url: "";
+    in property <string> popup_notice_highlight: "";
+    in property <int> popup_notice_confirm: 0;
+
+    // Popup Image Dialog
+    in property <bool> show_popup_image: false;
+    in property <image> popup_image_source;
+    in property <string> popup_image_title: "";
+    in property <string> popup_image_url: "";
+    in property <int> popup_image_width: 400;
+    in property <int> popup_image_height: 300;
+
+    // Popup Mail Dialog
+    in property <bool> show_mail_popup: false;
+    in property <[MessageData]> mail_messages: [];
+    in property <int> mail_unread_count: 0;
+
+    // USB Settings Dialog
+    in property <bool> show_usb_settings: false;
+    in property <UsbDevice> usb_settings_device;
+    in-out property <bool> usb_settings_force_bind: false;
+    in-out property <bool> usb_settings_boot_attach: false;
+    in-out property <bool> usb_settings_auto_attach: false;
+    callback usb_save_device_settings(string, string, bool, bool, bool);
+    callback close_usb_settings();
+
+    // USB Device Info Dialog
+    in property <bool> show_usb_device_info: false;
+    in property <UsbDeviceDetailInfo> usb_device_info_data;
+    callback close_usb_device_info();
+
+    // Mount Disk Delete
+    in property <bool> show_mount_disk_delete: false;
+    in property <string> mount_disk_delete_target: "";
+
+    // Mount Disk Restart Confirm
+    in property <bool> show_mount_restart_confirm: false;
+
+    // Data
+    in property <string> delete_target_name: "";
+    in property <string> export_target_name: "";
+    in-out property <string> export_path;
+    in-out property <bool> export_compress: true;
+    in property <string> export_error: "";
+    in property <string> clone_source_name: "";
+    in-out property <string> clone_target_name;
+    in-out property <string> clone_target_path;
+    in property <string> clone_error: "";
+    in property <string> move_source_name: "";
+    in-out property <string> move_target_name;
+    in-out property <string> move_target_path;
+    in property <string> move_error: "";
+    in property <string> move_confirm_message: "";
+    in property <string> message_text;
+    in property <string> message_link_text: "";
+    in property <string> message_action_text: "";
+    in property <string> settings_target_name: "";
+    in-out property <string> settings_terminal_dir: "~";
+    in-out property <string> settings_vscode_dir: "/home";
+    in-out property <string> settings_distro_notes: "";
+    in-out property <bool> settings_is_default: false;
+    in-out property <bool> settings_lock_default: false;
+    in-out property <bool> settings_autostart: false;
+    in-out property <string> settings_startup_script: "";
+    in property <string> settings_startup_script_url: "";
+    in property <string> settings_terminal_dir_error: "";
+    in property <string> settings_vscode_dir_error: "";
+    in property <string> settings_distro_notes_error: "";
+    in property <string> settings_startup_script_error: "";
+    in property <string> settings_default_error: "";
+    in property <bool> settings_is_task_exists: true;
+    in-out property <bool> settings_terminal_proxy: true;
+    in property <Information> information;
+
+    in property <[RootFSHelpItem]> rootfs_help_list;
+    
+    // Network properties
+    in property <[string]> network_distro_names: [];
+    in property <[string]> network_local_ips: [];
+    in-out property <int> network_add_distro_idx: 0;
+    in-out property <int> network_add_ip_idx: 0;
+    in-out property <string> network_add_listen_port: "";
+    in-out property <string> network_add_target_port: "";
+    in-out property <bool> network_add_enable_fw: true;
+    in property <string> network_add_error: "";
+
+    // WSL Config Dialog properties
+    in property <string> wsl_config_distro_name: "";
+    in-out property <bool> wsl_config_automount_enabled: true;
+    in-out property <bool> wsl_config_automount_mount_fs_tab: true;
+    in-out property <string> wsl_config_automount_root: "/mnt/";
+    in-out property <string> wsl_config_automount_options: "";
+    in-out property <bool> wsl_config_network_generate_hosts: true;
+    in-out property <bool> wsl_config_network_generate_resolv_conf: true;
+    in-out property <string> wsl_config_network_hostname: "";
+    in-out property <bool> wsl_config_interop_enabled: true;
+    in-out property <bool> wsl_config_interop_append_windows_path: true;
+    in-out property <string> wsl_config_user_default: "";
+    in-out property <bool> wsl_config_boot_systemd: false;
+    in-out property <string> wsl_config_boot_command: "";
+    in-out property <bool> wsl_config_boot_protect_binfmt: true;
+    in-out property <bool> wsl_config_gpu_enabled: true;
+    in-out property <bool> wsl_config_time_use_windows_timezone: true;
+    in property <bool> wsl_config_boot_supported: true;
+    in property <bool> wsl_config_gpu_supported: true;
+    in property <bool> wsl_config_time_supported: true;
+    in property <bool> wsl_config_version_detection_failed: false;
+    in property <string> wsl_config_version_string: "";
+    in property <string> wsl_config_user_error: "";
+    in property <string> wsl_config_command_error: "";
+    in property <string> wsl_config_preview_content: "";
+
+    // Compress properties
+    in property <string> compress_target_name: "";
+    in property <string> compress_vhdx_size: "---";
+    in property <string> compress_free_space: "---";
+    in property <bool> compress_space_sufficient: false;
+    in property <string> compress_backup_path: "";
+    in property <string> compress_script_url: "";
+    in property <string> compress_source_url: "";
+    in property <bool> compress_is_wsl2: true;
+    in property <bool> compress_is_sparse: false;
+    in-out property <bool> compress_enable_sparse: false;
+    in-out property <bool> compress_cleanup: true;
+    in-out property <bool> compress_backup: true;
+
+    // Callbacks
+    callback confirm_delete();
+    callback cancel_delete();
+    callback confirm_mount_disk_delete();
+    callback cancel_mount_disk_delete();
+    callback confirm_mount_restart();
+    callback cancel_mount_restart();
+    callback confirm_export(string);
+    callback cancel_export();
+    callback browse_export();
+    callback confirm_clone(string, string);
+    callback cancel_clone();
+    callback browse_clone();
+    callback confirm_move(string);
+    callback cancel_move();
+    callback browse_move();
+    callback confirm_move_action();
+    callback cancel_move_confirm();
+    callback close_message();
+    callback message_link_clicked();
+    callback message_action_clicked();
+    callback clone_name_changed(string);
+    callback download_update();
+    callback close_update();
+    callback confirm_install_warn();
+    callback cancel_install_warn();
+    callback close_expire();
+    callback close_information();
+    callback confirm_settings(string, string, string, string, bool, bool, string, bool);
+    callback close_settings();
+    callback close_rootfs_help();
+    callback close_vscode_startup();
+    callback save_wsl_config();
+    callback save_wsl_config_and_restart();
+    callback close_wsl_config();
+    callback request_wsl_config_preview();
+    callback open_url(string);
+    callback add_network_rule(string, string, string, string, bool);
+    callback check_proxy_connection(string);
+    callback confirm_compress(string, bool, bool, bool, string);
+    callback cancel_compress();
+    callback confirm_stop_wsl();
+    callback cancel_stop_wsl();
+    callback language_selected(int);
+    callback close_wsl_compat();
+    callback wsl_compat_link_clicked();
+    callback close_popup_notice();
+    callback popup_notice_link_clicked();
+    callback close_popup_image();
+    callback popup_image_clicked();
+    callback mail_message_clicked(string, string);
+    callback mail_mark_all_read();
+    callback mail_close();
+
+    if (show_delete): ConfirmationDialog {
+        width: 100%;
+        height: 100%;
+        dialog_height: 200px;
+        title_text: AppI18n.t("dialog.delete_title", [delete_target_name, AppI18n.version]);
+        message: AppI18n.t("dialog.delete_msg", [delete_target_name, AppI18n.version]);
+        confirm => {
+            root.confirm_delete();
+        }
+        cancel => {
+            root.cancel_delete();
+        }
+    }
+    if (show_mount_disk_delete): ConfirmationDialog {
+        width: 100%;
+        height: 100%;
+        dialog_height: 200px;
+        title_text: AppI18n.t("mount_disk.delete_title", [mount_disk_delete_target, AppI18n.version]);
+        message: AppI18n.t("mount_disk.delete_confirm_msg", [mount_disk_delete_target, AppI18n.version]);
+        confirm => {
+            root.confirm_mount_disk_delete();
+        }
+        cancel => {
+            root.cancel_mount_disk_delete();
+        }
+    }
+    if (show_mount_restart_confirm): Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+        TouchArea {
+            clicked => { root.cancel_mount_restart(); }
+        }
+        Rectangle {
+            width: 400px;
+            height: 210px;
+            background: Theme.card_bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border_color;
+            TouchArea { }
+            VerticalLayout {
+                padding: 24px;
+                spacing: 8px;
+                Rectangle {
+                    height: 24px;
+                    Text {
+                        x: 0px;
+                        width: parent.width - 32px;
+                        text: AppI18n.t("dialog.info", [AppI18n.version]);
+                        font-size: 18px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        font-weight: 500;
+                        color: Theme.text_primary;
+                        horizontal-alignment: left;
+                        vertical-alignment: center;
+                    }
+                    TouchArea {
+                        x: parent.width - 24px;
+                        width: 24px;
+                        height: 24px;
+                        clicked => { root.cancel_mount_restart(); }
+                        Rectangle {
+                            background: parent.has-hover ? Theme.hover_bg : transparent;
+                            border-radius: 4px;
+                            Text {
+                                text: "\u{E8BB}";
+                                font-family: Theme.icon_font;
+                                font-size: 14px;
+                                color: Theme.text_primary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border_color;
+                }
+                Text {
+                    text: AppI18n.t("mount_disk.restart_confirm_msg", [AppI18n.version]);
+                    font-size: 14px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    color: Theme.text_primary;
+                    wrap: word-wrap;
+                    vertical-stretch: 1;
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    Rectangle {
+                        width: 80px;
+                        height: 32px;
+                        border-radius: 4px;
+                        background: touch_restart.has-hover ? #C42B1C : #E81123;
+                        Text {
+                            text: AppI18n.t("dialog.restart", [AppI18n.version]);
+                            font-size: 13px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                            color: white;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        touch_restart := TouchArea {
+                            clicked => { root.confirm_mount_restart(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (show_stop_wsl_confirm): ConfirmationDialog {
+        width: 100%;
+        height: 100%;
+        dialog_height: 210px;
+        title_text: AppI18n.t("dialog.stop_wsl_title", [AppI18n.version]);
+        message: AppI18n.t("dialog.stop_wsl_msg", [AppI18n.version]);
+        confirm => {
+            root.confirm_stop_wsl();
+        }
+        cancel => {
+            root.cancel_stop_wsl();
+        }
+    }
+    if (show_export): ExportDialog {
+        width: 100%;
+        height: 100%;
+        distro_name: export_target_name;
+        export_path <=> root.export_path;
+        error_msg: export_error;
+        enabled: !root.is_installing;
+        cancel => {
+            root.cancel_export();
+        }
+        browse => {
+            root.browse_export();
+        }
+        confirm(path) => {
+            root.confirm_export(path);
+        }
+        compress <=> root.export_compress;
+    }
+    if (show_clone): CloneDialog {
+        width: 100%;
+        height: 100%;
+        distro_name: clone_source_name;
+        clone_name <=> root.clone_target_name;
+        clone_path <=> root.clone_target_path;
+        error_msg: clone_error;
+        enabled: !root.is_installing;
+        cancel => {
+            root.cancel_clone();
+        }
+        browse => {
+            root.browse_clone();
+        }
+        name_changed(text) => {
+            root.clone_name_changed(text);
+        }
+        confirm(name, path) => {
+            root.confirm_clone(name, path);
+        }
+    }
+    if (show_move): MoveDialog {
+        width: 100%;
+        height: 100%;
+        distro_name: move_source_name;
+        move_path <=> root.move_target_path;
+        error_msg: move_error;
+        enabled: !root.is_installing;
+        cancel => {
+            root.cancel_move();
+        }
+        browse => {
+            root.browse_move();
+        }
+        confirm(path) => {
+            root.confirm_move(path);
+        }
+    }
+    if (show_move_confirm): ConfirmationDialog {
+        width: 100%;
+        height: 100%;
+        dialog_height: 280px;
+        title_text: AppI18n.t("dialog.move_title", [root.move_source_name, AppI18n.version]);
+        message: root.move_confirm_message;
+        confirm => {
+            root.confirm_move_action();
+        }
+        cancel => {
+            root.cancel_move_confirm();
+        }
+    }
+    if (show_message): Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+        TouchArea { /* prevent interaction with elements behind */ }
+
+        MessageDialog {
+            message: root.message_text;
+            link_text: root.message_link_text;
+            action_text: root.message_action_text;
+            close => {
+                root.close_message();
+            }
+            link_clicked => {
+                root.message_link_clicked();
+            }
+            action_clicked => {
+                root.message_action_clicked();
+            }
+        }
+    }
+    if (show_update): CheckUpdateDialog {
+        width: 100%;
+        height: 100%;
+        message_content: AppI18n.t("dialog.update_msg", [AppInfo.latest_version, AppInfo.latest_release_date, AppI18n.version]);
+        show_cancel: true;
+        download => {
+            root.download_update();
+        }
+        close => {
+            root.close_update();
+        }
+    }
+    if (show_install_warn): StoreInstallWarnDialog {
+        width: 100%;
+        height: 100%;
+        confirm => {
+            root.confirm_install_warn();
+        }
+        cancel => {
+            root.cancel_install_warn();
+        }
+    }
+    if (show_expire): CheckExpiredDialog {
+        width: 100%;
+        height: 100%;
+        close => {
+            root.close_expire();
+        }
+    }
+    if (show_information): InformationDialog {
+        width: 100%;
+        height: 100%;
+        info: information;
+        close => {
+            root.close_information();
+        }
+        open_path(url) => {
+            root.open_url(url);
+        }
+    }
+    if (show_settings): SettingsDialog {
+        width: 100%;
+        height: 100%;
+        distro_name: settings_target_name;
+        terminal_dir <=> settings_terminal_dir;
+        vscode_dir <=> settings_vscode_dir;
+        distro_notes <=> settings_distro_notes;
+        is_default <=> settings_is_default;
+        lock_default: settings_lock_default;
+        autostart <=> settings_autostart;
+        startup_script <=> settings_startup_script;
+        startup_script_url: settings_startup_script_url;
+        terminal_dir_error: settings_terminal_dir_error;
+        vscode_dir_error: settings_vscode_dir_error;
+        distro_notes_error: settings_distro_notes_error;
+        startup_script_error: settings_startup_script_error;
+        default_error: settings_default_error;
+        is_task_exists: settings_is_task_exists;
+        terminal_proxy <=> settings_terminal_proxy;
+        open-url(url) => {
+            root.open_url(url);
+        }
+        save => {
+            root.confirm_settings(root.settings_target_name, root.settings_terminal_dir, root.settings_vscode_dir, root.settings_distro_notes, root.settings_is_default, root.settings_autostart, root.settings_startup_script, root.settings_terminal_proxy);
+        }
+        close => {
+            root.close_settings();
+        }
+    }
+    if (show_rootfs_help): RootFSHelpDialog {
+        width: 100%;
+        height: 100%;
+        help_list: root.rootfs_help_list;
+        close => {
+            root.close_rootfs_help();
+        }
+        open_url(url) => {
+            root.open_url(url);
+        }
+    }
+    if (show_vscode_startup): VSCodeStartupDialog {
+        width: 100%;
+        height: 100%;
+        close => {
+            root.close_vscode_startup();
+        }
+    }
+    if (show_wsl_config): WslConfigDialog {
+        width: 100%;
+        height: 100%;
+        distro_name: root.wsl_config_distro_name;
+        automount_enabled <=> root.wsl_config_automount_enabled;
+        automount_mount_fs_tab <=> root.wsl_config_automount_mount_fs_tab;
+        automount_root <=> root.wsl_config_automount_root;
+        automount_options <=> root.wsl_config_automount_options;
+        network_generate_hosts <=> root.wsl_config_network_generate_hosts;
+        network_generate_resolv_conf <=> root.wsl_config_network_generate_resolv_conf;
+        network_hostname <=> root.wsl_config_network_hostname;
+        interop_enabled <=> root.wsl_config_interop_enabled;
+        interop_append_windows_path <=> root.wsl_config_interop_append_windows_path;
+        user_default <=> root.wsl_config_user_default;
+        boot_systemd <=> root.wsl_config_boot_systemd;
+        boot_command <=> root.wsl_config_boot_command;
+        boot_protect_binfmt <=> root.wsl_config_boot_protect_binfmt;
+        gpu_enabled <=> root.wsl_config_gpu_enabled;
+        time_use_windows_timezone <=> root.wsl_config_time_use_windows_timezone;
+        boot_supported: root.wsl_config_boot_supported;
+        gpu_supported: root.wsl_config_gpu_supported;
+        time_supported: root.wsl_config_time_supported;
+        version_detection_failed: root.wsl_config_version_detection_failed;
+        wsl_version_string: root.wsl_config_version_string;
+        user_error: root.wsl_config_user_error;
+        command_error: root.wsl_config_command_error;
+        preview_content: root.wsl_config_preview_content;
+        save => {
+            root.save_wsl_config();
+        }
+        save_and_restart => {
+            root.save_wsl_config_and_restart();
+        }
+        close => {
+            root.close_wsl_config();
+        }
+        request_preview => {
+            root.request_wsl_config_preview();
+        }
+    }
+    if (show_add_network_rule): NetworkAddRuleDialog {
+        width: 100%;
+        height: 100%;
+        distro_names: root.network_distro_names;
+        local_ips: root.network_local_ips;
+        distro_idx <=> root.network_add_distro_idx;
+        ip_idx <=> root.network_add_ip_idx;
+        listen_port <=> root.network_add_listen_port;
+        target_port <=> root.network_add_target_port;
+        enable_fw <=> root.network_add_enable_fw;
+        error_msg: root.network_add_error;
+        close => {
+            root.show_add_network_rule = false;
+        }
+        add(distro, ip, lp, tp, fw) => {
+            root.add_network_rule(distro, ip, lp, tp, fw);
+        }
+    }
+
+    if (show_check_proxy): Rectangle {
+        background: Theme.dark_mode ? #00000088 : #00000044;
+        z: 11;
+        TouchArea {
+            clicked => { root.show_check_proxy = false; }
+        }
+        CheckProxyDialog {
+            check_connection(url) => {
+                root.check_proxy_connection(url);
+                root.show_check_proxy = false;
+            }
+            close => {
+                root.show_check_proxy = false;
+            }
+        }
+    }
+
+
+    if (show_network_proxy_help): Rectangle {
+        background: Theme.dark_mode ? #00000088 : #00000044;
+        z: 12;
+        TouchArea {
+            clicked => { root.show_network_proxy_help = false; }
+        }
+        ProxyHelpDialog {
+            close => { root.show_network_proxy_help = false; }
+        }
+    }
+
+    if (show_compress): CompressDialog {
+        width: 100%;
+        height: 100%;
+        distro_name: root.compress_target_name;
+        vhdx_size: root.compress_vhdx_size;
+        free_space: root.compress_free_space;
+        space_sufficient: root.compress_space_sufficient;
+        backup_path: root.compress_backup_path;
+        script_url: root.compress_script_url;
+        source_url: root.compress_source_url;
+        cleanup <=> root.compress_cleanup;
+        backup <=> root.compress_backup;
+        is_wsl2: root.compress_is_wsl2;
+        is_sparse: root.compress_is_sparse;
+        enable_sparse <=> root.compress_enable_sparse;
+        open_url(url) => {
+            root.open_url(url);
+        }
+        confirm(n, c, b, s, u) => {
+            root.confirm_compress(n, c, b, s, u);
+        }
+        cancel => {
+            root.cancel_compress();
+        }
+    }
+
+    if (show_language_dialog): LanguageSelectDialog {
+        width: 100%;
+        height: 100%;
+        title: AppI18n.t("settings.language", [AppI18n.version]);
+        languages: root.language_options;
+        current_index: root.language_current_index;
+        close => {
+            root.show_language_dialog = false;
+        }
+        selected(idx) => {
+            root.language_selected(idx);
+            root.show_language_dialog = false;
+        }
+    }
+
+    if (show_wsl_compat): Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+        TouchArea { }
+        WslCompatDialog {
+            msg1: root.wsl_compat_msg1;
+            msg2: root.wsl_compat_msg2;
+            msg3: root.wsl_compat_msg3;
+            hint_text: root.wsl_compat_hint;
+            link_text: root.wsl_compat_link;
+            issues_url: root.wsl_compat_issues_url;
+            show_confirm: root.wsl_compat_show_confirm;
+            close => { root.close_wsl_compat(); }
+            link_clicked => { root.wsl_compat_link_clicked(); }
+        }
+    }
+
+    // Popup Notice Dialog
+    if (show_popup_notice): Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+        TouchArea { }
+        PopupNoticeDialog {
+            title: root.popup_notice_title;
+            msg1: root.popup_notice_msg1;
+            msg2: root.popup_notice_msg2;
+            msg3: root.popup_notice_msg3;
+            hint_text: root.popup_notice_hint;
+            link_text: root.popup_notice_link;
+            url: root.popup_notice_url;
+            highlight: root.popup_notice_highlight;
+            confirm: root.popup_notice_confirm;
+            close => { root.close_popup_notice(); }
+            link_clicked => { root.popup_notice_link_clicked(); }
+        }
+    }
+
+    // Popup Image Dialog
+    if (show_popup_image): Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+        TouchArea { }
+        PopupImageDialog {
+            image_source: root.popup_image_source;
+            title: root.popup_image_title;
+            url: root.popup_image_url;
+            dialog_width: root.popup_image_width;
+            dialog_height: root.popup_image_height;
+            close => { root.close_popup_image(); }
+            image_clicked => { root.popup_image_clicked(); }
+        }
+    }
+
+    // Popup Mail Dialog
+    if (show_mail_popup): Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+        TouchArea { }
+        MessageMailDialog {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            messages: root.mail_messages;
+            unread_count: root.mail_unread_count;
+            message_clicked(id, url) => { root.mail_message_clicked(id, url); }
+            mark_all_read => { root.mail_mark_all_read(); }
+            close => { root.mail_close(); }
+        }
+    }
+
+    // USB Settings Dialog
+    if (show_usb_settings): UsbSettingsDialog {
+        z: 100;
+        width: 100%;
+        height: 100%;
+        device: root.usb_settings_device;
+        force_bind <=> root.usb_settings_force_bind;
+        boot_attach <=> root.usb_settings_boot_attach;
+        auto_attach <=> root.usb_settings_auto_attach;
+        close => {
+            root.close_usb_settings();
+        }
+        save(bi, vp, fb, ba, aa) => {
+            root.usb_save_device_settings(bi, vp, fb, ba, aa);
+        }
+    }
+
+    // USB Device Info Dialog
+    if (show_usb_device_info): UsbDeviceInfoDialog {
+        z: 101;
+        width: 100%;
+        height: 100%;
+        info: root.usb_device_info_data;
+        close => {
+            root.close_usb_device_info();
+        }
+    }
+}

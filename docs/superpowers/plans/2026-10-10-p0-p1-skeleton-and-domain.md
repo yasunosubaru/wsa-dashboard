@@ -452,34 +452,37 @@ git commit -m "feat(P1): resolve WSA package location, manifest and adb port"
 - Consumes: `FALLBACK_PORT`（Task 4）
 - Produces: `pub enum WsaCommand`、`impl WsaCommand { pub fn argv(&self) -> Vec<String>; pub fn is_write(&self) -> bool; pub fn is_heavy(&self) -> bool; pub fn display(&self) -> String }` —— executor 消费
 
-- [ ] **Step 1: 写失败测试（内联 `src/wsa/command.rs`）**
+- [x] **Step 1: 写失败测试（内联 `src/wsa/command.rs`）**
+
+> **修正（执行时发现）**：原计划在这一步断言 `WsaCommand::LaunchApp` 的 `argv()` 是 `am start ...`，与 **spec §2.3 矛盾**——§2.3 写明 `LaunchApp` 落地为 `Start-Process wsa://<pkg>`，Task 11 也已定死用 `open::that("wsa://...")`。同理 `StopSubsystem`（终止 `WsaClient.exe`）、`StartSubsystem`（`wsa://`）、`OpenSettings`（`explorer shell:AppsFolder\…`）、`VhdxInfo`（读本地 vhdx）都不是 adb 子进程，进枚举就是**死代码**。
+> 因此 `WsaCommand` 定为 **adb 命令面**（即 Step 3 的变体表），这五行由 Task 11 的 ops 直接实现；§2.2 散文里的 `AmStart` 也随之取消。测试改为断言真实会执行的 `AmForceStop`。
 
 断言枚举的三条分类（决定超时分级）：
 ```rust
-assert!(!WsaCommand::ListPackages.is_write());
+assert!(!WsaCommand::ListPackages { include_system: false }.is_write());
+assert!(!WsaCommand::GetProps.is_write());
+assert!(WsaCommand::AmForceStop { package: "com.x".into() }.is_write());
 assert!(WsaCommand::InstallApk { path: "a.apk".into() }.is_heavy());
-assert!(!WsaCommand::LaunchApp { package: "com.x".into() }.is_write());
-assert!(WsaCommand::StopSubsystem.is_write());
 ```
-另断言 `LaunchApp` 的 `argv()` 是 `["shell","am","start","-W","-n","com.x"]` 形状——**注意：这里故意用 `am start` 而非 `wsa://`**，因为 `wsa://` 走 `ShellExecute` 协议激活而非 `adb` 子进程，属 Task 11 的职责，不在 `argv()` 里。
+另断言 `AmForceStop` 的 `argv()` 是 `["shell","am","force-stop","com.x"]` 形状（`wsa://` 走 `ShellExecute` 协议激活而非 adb 子进程，属 Task 11 职责，不在 `argv()` 里）。
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cargo test --release --bin wsadash`
 Expected: FAIL
 
-- [ ] **Step 3: 实现 `command.rs`**
+- [x] **Step 3: 实现 `command.rs`**
 
-枚举变体（spec §2.3）：`ConnectAdb { port }`、`ListAdbDevices`、`ProbeReady`、`GetProps`、`ListPackages { include_system }`、`PackageInfo { package }`、`AmForceStop { package }`、`InstallApk { path }`、`UninstallApk { package }`、`ForwardAdd/ForwardRemove/ReverseAdd/ReverseRemove`、`Shell { args }`。
+枚举变体（spec §2.3，仅 adb 面，见 Step 1 的修正）：`ConnectAdb { port }`、`ListAdbDevices`、`ProbeReady`、`GetProps`、`ListPackages { include_system }`、`PackageInfo { package }`、`AmForceStop { package }`、`InstallApk { path }`、`UninstallApk { package }`、`ForwardAdd { local, remote }`/`ForwardRemove { local }`/`ReverseAdd { device, host }`/`ReverseRemove { device }`、`Shell { args }`（`argv()` 会给它补上前缀 `shell`）。
 
 `argv()` 返回 adb 后的参数（不含 `adb` 本身，executor 拼 exe 路径）。分类规则：只读命令（`List*`/`Probe*`/`GetProps`/`PackageInfo`/`* --list`）→ `is_write=false`；`InstallApk`/`UninstallApk` → `is_heavy=true`；其余 → `is_write=true`。
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add -A

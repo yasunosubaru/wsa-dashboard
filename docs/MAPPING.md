@@ -131,6 +131,30 @@ usb  usb.detail  main  toast  task  debug  mail  scheduler  mount_disk
 | **首页搜索框** | 用于在应用列表中检索；标注为本项目新增（Q24） |
 | 无图标占位 | 包名首字母纯色块，颜色按包名哈希（Q29） |
 | `wsadash` CLI bin | 参照没有独立 CLI 包（其 `/` 开关在 GUI 进程内）（Q19） |
+| `src/wsa/app/wsa_path.rs` | 参照不需要"定位宿主"（WSL 内置于 Windows），WSA 侧载包必须运行时解析（spec §1.1 / R6） |
+
+#### 4.1.1 `WsaCommand` 变体命名（spec §2.3 意图名 → 实际变体名）
+
+spec §2.2 散文与 §2.3 表格用了两套名字，且 §2.3 把**非 adb 操作**也列进了同一张表。落地时：
+
+| spec §2.3 意图 | 落地位置 | 说明 |
+|---|---|---|
+| `ConnectAdb` | `WsaCommand::ConnectAdb { port }` | |
+| `DeviceProps` | `WsaCommand::GetProps` | §2.2 散文作 `GetProp` |
+| `ListPackages` | `WsaCommand::ListPackages { include_system }` | |
+| `PackageInfo` | `WsaCommand::PackageInfo { package }` | |
+| `StopApp` | `WsaCommand::AmForceStop { package }` | 命令名而非意图名，避免与 `StopSubsystem` 混淆 |
+| `InstallApk` / `UninstallApk` | 同名变体 | |
+| `ForwardPorts` / `ReversePorts` | `ForwardAdd`/`ForwardRemove`/`ReverseAdd`/`ReverseRemove` | 一条命令一个变体 |
+| **`LaunchApp`** | ❌ **不进枚举** | 落地为 `Start-Process wsa://<pkg>`，无 adb argv；Task 11 用 `open::that`（spec §1.2）。§2.2 散文的 `AmStart` 同步取消 |
+| **`StartSubsystem`** | ❌ 不进枚举 | 同上，`wsa://<任一已装包>` |
+| **`StopSubsystem`** | ❌ 不进枚举 | 终止 `WsaClient.exe` 进程，非 adb |
+| **`OpenSettings`** | ❌ 不进枚举 | `explorer shell:AppsFolder\…!SettingsApp` |
+| **`VhdxInfo`** | ❌ 不进枚举 | 读本地 `LocalState\*.vhdx`，不调 adb |
+| — | `WsaCommand::ListAdbDevices` | 新增：`adb devices`，probe 三态判定的输入 |
+| — | `WsaCommand::Shell { args }` | 新增：逃生口；`argv()` 会补前缀 `shell` |
+
+**判据**：`WsaCommand` 是 **adb 命令面**。不经过 adb 子进程的操作没有 argv，也不该过 executor（spec §2.2 的"唯一出口"约束的是 adb 调用），由 ops 直接实现。
 
 ---
 

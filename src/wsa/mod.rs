@@ -8,4 +8,5 @@
 //! one-for-one (docs/MAPPING.md).
 
 pub mod app;
+pub mod command;
 pub mod models;

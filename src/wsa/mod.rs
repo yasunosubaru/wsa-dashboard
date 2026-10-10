@@ -7,4 +7,5 @@
 //! Layout mirrors `src/wsl/` in the reference so each file can be ported
 //! one-for-one (docs/MAPPING.md).
 
+pub mod app;
 pub mod models;

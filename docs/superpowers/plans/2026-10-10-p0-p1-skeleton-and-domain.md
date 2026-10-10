@@ -409,32 +409,32 @@ git commit -m "feat(P1): getprop decoder and subsystem state machine"
 - Consumes: `parse_local_port`（Task 4）
 - Produces: `pub struct WsaPaths { pub install_location: PathBuf, pub manifest_path: PathBuf, pub client_exe: PathBuf, pub settings_aumid: String, pub adb_port: u16 }`、`pub fn resolve() -> Result<WsaPaths, WsaPathError>` —— executor 与 CLI 全部消费
 
-- [ ] **Step 1: 采集真实 manifest fixture**
+- [x] **Step 1: 采集真实 manifest fixture**
 
 Run: `Copy-Item "$((Get-AppxPackage MicrosoftCorporationII.WindowsSubsystemForAndroid).InstallLocation)\AppxManifest.xml" tests\fixtures\AppxManifest_full.xml`
 Expected: 文件存在且含 `Package Name="MicrosoftCorporationII.WindowsSubsystemForAndroid"`
 
-- [ ] **Step 2: 写失败测试（内联 `src/wsa/app/wsa_path.rs`）**
+- [x] **Step 2: 写失败测试（内联 `src/wsa/app/wsa_path.rs`）**
 
 用 fixture 解析出：`install_location` 非空、`adb_port == 58526`、`client_exe` 以 `WsaClient\WsaClient.exe` 结尾、`settings_aumid` 含 `!SettingsApp`。另测 manifest 读不到时返回 `Err(WsaPathError::NotInstalled)`。
 
 **这条测试就是 Review Focus 第 4 条**：动态端口解析生效，回退只在 manifest 不可读时发生。
 
-- [ ] **Step 3: 运行确认失败**
+- [x] **Step 3: 运行确认失败**
 
 Run: `cargo test --release --bin wsadash`
 Expected: FAIL
 
-- [ ] **Step 4: 实现 `wsa_path.rs`**
+- [x] **Step 4: 实现 `wsa_path.rs`**
 
 签名照上。`resolve()` 走 `Get-AppxPackage`（用 `powershell -NoProfile -Command` 子进程拿 `InstallLocation`，不用 PowerShell SDK 依赖——避免引入 Windows 侧 crate 的版本风险）。`adb_port` = `parse_local_port(&manifest)` 得到的值，`None` 时用 `FALLBACK_PORT`。`settings_aumid` 由 manifest 的 `Identity Name` + `Application Id="SettingsApp"` 拼成 `{name}_8wekyb3d8bbwe!SettingsApp`——publisher hash 常量 `8wekyb3d8bbwe` 照本机实测写死（微软商店应用的 publisher hash 固定）。
 
-- [ ] **Step 5: 运行确认通过**
+- [x] **Step 5: 运行确认通过**
 
 Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add -A

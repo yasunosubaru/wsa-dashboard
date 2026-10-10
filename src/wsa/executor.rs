@@ -87,11 +87,23 @@ impl ExecError {
                 stdout,
                 stderr,
             } => {
-                // adb's own text first -- it names the real cause.
-                let detail = if !stdout.trim().is_empty() {
-                    stdout.trim()
-                } else {
-                    stderr.trim()
+                // Which stream carries the diagnosis is not something to
+                // assume, because adb uses both for it. `adb install` names
+                // a failure as `Failure [...]` on **stdout** on some builds,
+                // while a real invalid apk on this machine printed nothing
+                // but progress on stdout (`Performing Streamed Install`)
+                // and the actual `INSTALL_PARSE_FAILED_*` reason on stderr.
+                // Picking one stream therefore loses the reason half the
+                // time, so: stderr leads when present, because that is what
+                // made the process fail, and stdout follows so the
+                // `Failure [...]` case is still fully told.
+                let stdout = stdout.trim();
+                let stderr = stderr.trim();
+                let detail = match (stderr.is_empty(), stdout.is_empty()) {
+                    (true, true) => String::new(),
+                    (false, true) => stderr.to_string(),
+                    (true, false) => stdout.to_string(),
+                    (false, false) => format!("{stderr}\n{stdout}"),
                 };
                 if detail.is_empty() {
                     format!("exit code {code}")
@@ -391,6 +403,60 @@ mod tests {
         // The user-facing sentence must name the real cause, not just a code.
         assert!(err.reason().contains("out"), "{}", err.reason());
         assert!(err.reason().contains('7'), "{}", err.reason());
+    }
+
+    // -- which stream the diagnosis is in --------------------------------
+
+    /// Task 13 measured the gap this closes.
+    ///
+    /// `adb install` of a 4 KB apk with no certificate printed only
+    /// `Performing Incremental Install` / `Performing Streamed Install` on
+    /// stdout and put `Failure [INSTALL_PARSE_FAILED_*]` on stderr. A
+    /// `reason()` that prefers stdout -- which the earlier wording did --
+    /// showed the user two lines of progress and an exit code, and nothing
+    /// about what was wrong. Preferring stderr would have hidden the Task 10
+    /// case instead, where adb names the failure on stdout, so both streams
+    /// are kept with stderr leading.
+    #[test]
+    fn a_failure_that_blames_stderr_keeps_that_blame() {
+        let err = ExecError::Failed {
+            code: 1,
+            stdout: "Performing Incremental Install\nPerforming Streamed Install\n".into(),
+            stderr: "Failure [INSTALL_PARSE_FAILED_NO_CERTIFICATES: Failed to collect \
+                     certificates from /data/app/base.apk]"
+                .into(),
+        };
+
+        let reason = err.reason();
+        assert!(
+            reason.contains("INSTALL_PARSE_FAILED_NO_CERTIFICATES"),
+            "{reason}"
+        );
+        assert!(reason.starts_with("Failure"), "{reason}");
+        assert!(reason.contains('1'), "{reason}");
+    }
+
+    /// The Task 10 shape, unchanged: the diagnosis on stdout alone.
+    #[test]
+    fn a_failure_that_blames_stdout_still_carries_it() {
+        let err = ExecError::Failed {
+            code: 1,
+            stdout: "Failure [INSTALL_FAILED_OLDER_SDK]".into(),
+            stderr: String::new(),
+        };
+
+        assert_eq!(err.reason(), "Failure [INSTALL_FAILED_OLDER_SDK] (exit code 1)");
+    }
+
+    #[test]
+    fn a_failure_with_no_text_at_all_reports_the_exit_code() {
+        let err = ExecError::Failed {
+            code: 42,
+            stdout: "  \n\t".into(),
+            stderr: String::new(),
+        };
+
+        assert_eq!(err.reason(), "exit code 42");
     }
 
     /// Review Focus #1: a missing adb must be a readable diagnostic, not a

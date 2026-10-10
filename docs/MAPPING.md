@@ -191,6 +191,35 @@ spec §2.2 散文与 §2.3 表格用了两套名字，且 §2.3 把**非 adb 操
 （走 `cmd.exe /c`），且 `adb devices` 的 **tab 分隔**能原样穿过往返。批处理是**纯 ASCII**
 且状态目录取自 `%~dp0`（不是烤进去的路径），所以临时目录带空格或非 ASCII 也不会坏。
 
+### 4.1.3 CLI（`src/wsadash.rs`）与端到端验证中测到的事实
+
+参照**没有 CLI**：它的九个动词是进程内的 `/` 斜杠命令。所以 §4.1 的"1:1 映射"在这里
+不适用，下面记的是本项目自己定的接口，以及真机验收时才暴露出来的事实。
+
+| 事项 | 结论 | 依据 |
+|---|---|---|
+| 参数解析 | **不引 `clap`**，手写匹配 | 参照也没用；一个只为读九个动词的依赖会成为 CLI 重新编译的唯一理由 |
+| 退出码 | `0` 就绪/成功、`1` 用法、`2` Booting、`3` Stopped、`4` 未安装、`5` 缺 adb、`6` 操作失败、`7` Unauthorized、`8` Offline | 计划只列了四个状态，但 `SubsystemState` 有六个。缺码会让"需要用户去 WSA 点同意"和"真的坏了"撞成同一个数 |
+| `WSADASH_ADB` | 环境变量，覆盖 PATH 里的 `adb` | Review Focus #1 说 adb 不保证在 PATH；也是 Q8 要求的"不依赖实机"唯一能落地的方式——把 CLI 指向替身 adb |
+| 面向设备的动词 | 先跑一次 `probe`（`require_device`），非 `Ready`/`Booting` 就用**该状态自己的退出码**返回并提示怎么办 | 否则 `wsadash list` 打一个停着的子系统会拿到 adb 那句谁也看不懂的失败，而不是"Stopped —— 请先 `wsadash start`"。也复用了 Task 11 已测过的自愈重连 |
+| 读不懂的包列表 | 判定 `adb/decoder.rs::listing_is_unparseable`（纯函数），警告在 `ops.rs::list_apps` 里 `tracing::warn!` | Review Focus #3。放在 ops 层而非 CLI：那里是唯一同时握着"原始回复"和"解析结果"的地方，GUI 从 P2 起免费拿到同一条警告，不必再跑一次 `pm list packages`。判定**关于回复本身**而不是解析结果——`filter_system` 合法滤空或真的没有用户应用时，必须保持沉默 |
+
+**端到端跑出的真实缺陷（已修，Task 10 的盲区）**：`ExecError::reason()` 原先优先取
+stdout。真机拿一个 4 KB 假 apk 跑 `install`，adb 把 `Performing Incremental Install` /
+`Performing Streamed Install` 打在 **stdout**，而把真正的
+`INSTALL_PARSE_FAILED_NOT_APK` 打在 **stderr**——用户于是只看到两行进度加一个退出码，
+完全不知道哪里错了。但也不能简单改成只看 stderr：Task 10 记录的"`Failure [...]` 在
+stdout"同样是实测。定论是 **stderr 在前、stdout 跟在后面，两者都留**；3 个单测把两种
+形态和"两个流都空"钉住。
+
+**验收替身的延时用 `for /L` 而不是 `ping`**：`ping` 是孙进程，父进程被杀后必然还活着，
+而 Review Focus #5 要验证的恰恰是"杀完还剩什么"。留一个注定残留的孙进程会污染结论。
+`for /L` 由 cmd.exe 自己执行，杀掉 cmd.exe 就什么都没有了。
+
+**杀掉 `WsaClient.exe` 之后 `probe` 报 `Offline` 而不是 `Stopped`**：这是 Task 11 记下的
+实测事实（陈旧条目要老化才消失），不是 bug。spec §5 把陈旧条目归 T2"重连"、`Stopped`
+归 T3"启动"，两者本来就必须渲染成不同的东西。P2 的重连按钮要处理的正是这一态。
+
 ---
 
 ## 5. 禁用项（硬性）

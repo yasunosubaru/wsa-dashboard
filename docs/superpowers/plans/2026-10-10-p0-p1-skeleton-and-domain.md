@@ -659,13 +659,21 @@ git commit -m "feat(P1): WsaOpGuard with Drop-based unregistration"
 - Consumes: `WsaDashboard`（Task 12）、`SubsystemStatus`（Task 3）
 - Produces: 可执行的 `wsadash.exe`，子命令 `probe` / `list` / `info` / `launch` / `stop-app` / `install` / `uninstall` / `start` / `stop`（Q19）
 
-- [ ] **Step 1: 实现子命令分派**
+> **一处环境扩展（执行时决定）**：新增 `WSADASH_ADB` 环境变量，覆盖默认的 `adb`（PATH 查找）。理由有两条，都来自已经记录过的事实：Review Focus #1 本身就说 adb 不保证在 PATH 上；Q8 要求"单测不依赖实机"，而**没有它就没法把 CLI 指向替身 adb 做端到端验证**——Task 13 的两个 Review Focus 验证都靠它。已在 `--help` 与 `docs/MAPPING.md` 记录。
+
+- [x] **Step 1: 实现子命令分派**
 
 不引 `clap`（参照未用，保持依赖一致）；手写 `args[0]` 匹配。`probe` 无子命令时打印 `SubsystemStatus` 摘要并返回退出码：`Ready`→0、`Booting`→2、`Stopped`→3、`NotInstalled`→4。
 
 **这条覆盖 Review Focus 第 1 条**：adb 缺失时 `probe` 打印"未找到 adb，可用 `winget install Microsoft.PlatformTools` 安装"并返回 5，不 panic。
 
-- [ ] **Step 2: 真机端到端验证**
+> **四处落地时的补充**：
+> 1. **退出码补了两个状态**。计划列的是四个，但 `SubsystemState` 有六个（Task 11 按 spec §1.4 加了 `Offline`）。缺码会让 `Unauthorized` / `Offline` 撞进"操作失败"，脚本分不出"需要用户去 WSA 里点同意"和"真的坏了"。补为 `Unauthorized`→7、`Offline`→8；`1` 保留给用法错误，`6` 留给"跑了且失败"。
+> 2. **`wsadash` 不带参数＝`wsadash probe`**。Step 1 的"probe 无子命令时"两种读法都成立，于是都实现：裸调用做 `probe`（只读，安全），`wsadash probe` 也做 `probe`。
+> 3. **所有面向设备的动词先跑一次 `probe`**（`require_device`），计划没有要求。不做的话，`wsadash list` 打一个停着的子系统会拿到 adb 那句谁也看不懂的失败，而不是"子系统是 Stopped —— 请先 `wsadash start`"。顺带复用了 Task 11 已经测过的自愈重连，CLI 和以后的 UI 用同一条判定路径。
+> 4. **`hint=` 与其余字段一样是 `key=value`**，`probe` 的 stdout 因此全程可 grep；用法说明只在 `--help` 或参数出错时打印，且打到 stderr，保证 `wsadash list | cut -f1` 是干净的管道。
+
+- [x] **Step 2: 真机端到端验证**
 
 Run（按顺序）:
 ```
@@ -679,20 +687,76 @@ wsadash start                       # 期望 12-17s 内 Ready
 ```
 Expected: 每条退出码符合预期；`stop` 后 `adb devices` 无条目；`start` 后 `sys.boot_completed=1`。
 
-- [ ] **Step 3: 验证 Review Focus 第 5 条（重活超时杀进程）**
+> **修正**：Step 2 第 4 行写的 `wsadash stop com.android.settings` 与 Q19 的动词表对不上——停单个应用是 `stop-app`，`stop` 是停整个子系统（带参数的 `stop` 会落进用法错误、返回 1）。按 Q19 执行。
+
+实测结果（全部按预期）：
+
+| 命令 | 退出码 | 实测输出 |
+|---|---|---|
+| `probe` / 裸 `wsadash` | 0 | `state=Ready`、`adb_port=58526`、`boot_completed=true` |
+| `list` | 0 | 3 个第三方包，含 `com.topjohnwu.magisk  30.6  Magisk` |
+| `list --all` | 0 | 94 行 |
+| `info com.topjohnwu.magisk` | 0 | `version_name=30.6`、`version_code=30600` |
+| `info com.no.such.package` | 6 | 明确说明"未安装或平台拒绝读取" |
+| `stop-app com.android.settings` | 0 | — |
+| `launch com.android.settings` | 0 | 3s 后 `topResumedActivity=...com.android.settings/.Settings`（**真起来了**） |
+| `stop` | 0 | 1.4s；`vmmemWSA` 进程 1 → 0 |
+| `stop` 后 `probe` | 8 | `state=Offline` —— 见下 |
+| `start` | 0 | 12s，`state=Offline` → `state=Ready` |
+| `start` 后 `probe` | 0 | `sys.boot_completed` 直读 adb 得 `1` |
+| `frobnicate` / 缺参数 / 多余参数 / `--bogus` / apk 路径不存在 | 1 | 用法说明 |
+| adb 路径不存在 | 5 | winget 提示，**无 panic** |
+
+> **`stop` 后 `probe` 是 `Offline` 而非 `Stopped`**：这不是 bug，是 Task 11 记下的实测事实（杀掉 `WsaClient.exe` 会留下一条陈旧的 adb 条目，之后才会老化消失）。spec §5 把陈旧条目归到 T2"重连"，`Stopped` 归 T3"启动"，两者本来就必须不同。提示语 `the endpoint is offline; run \`wsadash start\`` 正确指向了能解决它的那条命令。P2 的重连按钮要处理的正是这一态。
+
+- [x] **Step 3: 验证 Review Focus 第 5 条（重活超时杀进程）**
 
 临时把 heavy 超时改为 2s，跑 `wsadash install <大apk>`，确认返回 `TimedOut` 且 `Get-Process adb` 无残留子进程。
 
-- [ ] **Step 4: 验证 Review Focus 第 3 条（解析不静默返回空表）**
+> **做法上的两处替换**（不改变要验证的东西）：
+> 1. **替身 adb 而非"大 apk"**。手边没有能自然跑满几秒的合法 apk，与其塞个几十 MB 的随机文件，不如写一个一次性 `slow-adb.cmd`：`install` 分支做约 14s 的延时，其余分支照答。`WSADASH_ADB` 指向它即可。
+> 2. **延时用 `for /L` 纯内建循环，不用 `ping`**。`ping` 是孙进程，父进程被杀后仍会活着——而本次要验证的恰恰是"杀完还剩什么"。留一个必然会残留的孙进程，等于把结论污染掉。`for /L` 由 cmd.exe 自己跑，杀掉 cmd.exe 就什么都没有了。
+>
+> 验证时把 `HEAVY_TIMEOUT` 临时改成 2s，**跑完立即 `git checkout -- src/wsa/executor.rs` 还原**，并复跑全套测试确认（`HEAVY_TIMEOUT` 回到 `1800`，113 通过）。仓库里没有留下任何临时改动。
+
+实测：
+
+| 检查项 | 结果 |
+|---|---|
+| 退出码 | 6 |
+| 用时 | **2.5s**（不是 14s）—— 预算按时切断了它 |
+| 提示 | `the command took too long and was cancelled` |
+| 残留的 `cmd.exe`（跑替身 adb 的那个进程） | **none** |
+| 残留的 `ping.exe` | none（替身结构上就不会有） |
+| 再跑一次 install | 同样 2.5s 后超时 —— 证明 heavy 锁与信号量**没有被卡住**，超时真的释放了资源 |
+
+- [x] **Step 4: 验证 Review Focus 第 3 条（解析不静默返回空表）**
 
 `wsadash list` 在 adb 返回非预期格式时必须打印 stderr 警告，不能静默输出空列表。
 
-- [ ] **Step 5: 提交**
+> **落地位置比计划更靠里**：判定放在 `adb/decoder.rs` 的纯函数 `listing_is_unparseable(stdout)`，警告放在 `ops.rs::list_apps` 里用 `tracing::warn!` 打——**而不是在 CLI 里**。理由是 `list_apps` 是唯一同时握着"原始回复"和"解析结果"的地方；放 CLI 里就得再跑一次 `pm list packages` 才看得到原始字节，放 GUI 里则要等 P2 重新实现一遍。现在 GUI 从 P2 起免费拿到同一条警告。
+>
+> 判定刻意是**关于回复本身**而非关于解析结果：`filter_system` 可能合法地把一份格式正确的列表全部过滤掉，那时若报警就是每次刷新都在喊狼来了；同理，空回复（机器上确实一个用户应用都没有）也保持沉默。
+>
+> 真机演示（`WSADASH_ADB` 指向一个对 `pm list packages` 回 `error: device offline` 的替身）：
+> ```
+>  WARN wsadash::wsa::dashboard::ops: adb replied to `pm list packages` with no
+>       package: line; reporting an empty list rather than a failure
+>       bytes=23 sample=error: device offline
+> ```
+> stdout 零行、退出码 0，但**没有任何地方声称"没有安装应用"**——这句话现在只可能来自真的空回复。`decoder.rs` 内另有 4 个单测覆盖：空回复不报、有 `package:` 行不报（哪怕后面跟噪声）、无 `package:` 行必报、被 `filter_system` 滤空不报。
+
+> **端到端跑出来一个真实缺陷，已修**（Task 10 的盲区）：真机拿一个 4 KB 假 apk 跑 `install`，adb 把 `Performing Incremental Install` / `Performing Streamed Install` 打在 **stdout**，而把真正的 `INSTALL_PARSE_FAILED_NOT_APK` 打在 **stderr**。`ExecError::reason()` 当时优先 stdout，于是用户只看到两行进度和一个退出码——**完全不知道哪里错了**。Task 10 记录的"`Failure [...]` 在 stdout"也是真的，所以不能简单改成只看 stderr。定论：**stderr 在前、stdout 跟在后面，两者都留**；修后同一条命令给出
+> `adb.exe: failed to install …: Failure [INSTALL_PARSE_FAILED_NOT_APK: Failed to parse …]`。新增 3 个单测把两种形态都钉住，另加一个"两个流都空时只报退出码"。
+
+- [x] **Step 5: 提交**
 
 ```bash
 git add -A
 git commit -m "feat(P1): wsadash CLI with end-to-end verified commands"
 ```
+
+Result: **113 passed / 0 failed / 2 ignored，零 warning**（+10 测试：decoder 4、executor 3、CLI 本身靠真机端到端覆盖）。实机 `#[ignore]` 项复跑仍为 `state=Ready port=58526 boot_completed=true`。
 
 ---
 

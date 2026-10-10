@@ -75,6 +75,32 @@ fn package_name_from_entry(entry: &str) -> String {
     }
 }
 
+/// True when adb's reply contained no `package:` line at all.
+///
+/// Review Focus #3: a reply we did not understand and a genuinely empty
+/// listing are the same bytes on the way out -- zero names either way -- and
+/// quietly reporting the first as "no apps installed" is the failure that
+/// takes the longest to notice. The UI would draw an empty grid, and the
+/// natural conclusion would be that WSA has nothing in it.
+///
+/// Deliberately about the *reply* rather than about the parsed result:
+/// `filter_system` may legitimately remove every name from a well-formed
+/// listing, and warning there would cry wolf on a machine that simply has no
+/// user-installed apps. An empty reply stays silent for the same reason.
+///
+/// Returns as soon as one `package:` line is seen, so extra trailing noise
+/// does not turn an understood reply into a warning.
+pub fn listing_is_unparseable(stdout: &str) -> bool {
+    let mut saw_other_content = false;
+    for line in stdout.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if line.starts_with("package:") {
+            return false;
+        }
+        saw_other_content = true;
+    }
+    saw_other_content
+}
+
 // ---- `dumpsys package` ------------------------------------------------------
 
 /// Parse `adb shell dumpsys package <name>` stdout into an `AppInfo`.
@@ -266,7 +292,7 @@ pub fn subsystem_status(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_system_package, parse_package_list};
+    use super::{is_system_package, listing_is_unparseable, parse_package_list};
 
     /// Captured 2026-10-10 from the local device:
     /// `adb shell pm list packages -3`
@@ -319,6 +345,41 @@ package:/product/overlay/NavigationBarModeGesturalExtraWideBack/NavigationBarMod
     fn empty_input_yields_empty_output() {
         assert!(parse_package_list("", false).is_empty());
         assert!(parse_package_list("\n\n   \n", true).is_empty());
+    }
+
+    // -- Review Focus #3: an unreadable reply must not read as "no apps" -----
+
+    #[test]
+    fn an_empty_reply_is_not_unparseable() {
+        assert!(!listing_is_unparseable(""));
+        assert!(!listing_is_unparseable("\n\n   \n"));
+    }
+
+    #[test]
+    fn a_listing_of_any_length_is_not_unparseable() {
+        assert!(!listing_is_unparseable("package:com.a.b\npackage:com.c.d\n"));
+        // One understood line is enough: trailing noise does not retroactively
+        // make a reply we successfully read into one we did not.
+        assert!(!listing_is_unparseable("package:com.a.b\nsomething else\n"));
+    }
+
+    #[test]
+    fn a_reply_with_no_package_line_is_unparseable() {
+        assert!(listing_is_unparseable("error: no devices/emulators found\n"));
+        assert!(listing_is_unparseable("adb: unrecognized command\n"));
+        assert!(listing_is_unparseable(
+            "List of devices attached\n127.0.0.1:58526\toffline\n"
+        ));
+    }
+
+    #[test]
+    fn unparseable_is_about_the_reply_not_about_the_filtered_result() {
+        // A well-formed listing whose every name the system heuristic removes
+        // must stay silent, or a machine with no user apps would warn on every
+        // refresh.
+        let only_system = "package:com.android.settings\npackage:com.android.systemui\n";
+        assert!(parse_package_list(only_system, true).is_empty());
+        assert!(!listing_is_unparseable(only_system));
     }
 
     #[test]

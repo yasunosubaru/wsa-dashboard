@@ -45,7 +45,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::adb::decoder::{
-    is_system_package, parse_package_info, parse_package_list, subsystem_status,
+    is_system_package, listing_is_unparseable, parse_package_info, parse_package_list,
+    subsystem_status,
 };
 use crate::wsa::command::WsaCommand;
 use crate::wsa::executor::{run_program, CommandOutput, ExecError};
@@ -387,6 +388,19 @@ impl WsaDashboard {
     /// so both are applied.
     pub async fn list_apps(&self, include_system: bool) -> Result<Vec<AppInfo>, OpsError> {
         let listing = self.run(WsaCommand::ListPackages { include_system }).await?;
+        // Review Focus #3: a reply that parses to nothing and a reply we did
+        // not understand are the same to the caller, so say so while we still
+        // have the raw bytes. `tracing` rather than `eprintln` because the
+        // GUI consumes this same method from P2 and there is only one place
+        // that can see the reply.
+        if listing_is_unparseable(&listing.stdout) {
+            tracing::warn!(
+                bytes = listing.stdout.len(),
+                sample = %listing.stdout.trim().chars().take(160).collect::<String>(),
+                "adb replied to `pm list packages` with no package: line; \
+                 reporting an empty list rather than a failure"
+            );
+        }
         let names = parse_package_list(&listing.stdout, !include_system);
 
         let mut apps = Vec::with_capacity(names.len());

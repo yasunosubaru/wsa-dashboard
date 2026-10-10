@@ -107,6 +107,7 @@ impl ExecError {
 ///
 /// Construct one and keep it: it owns the concurrency state, so a fresh
 /// executor per call would silently disable every guarantee below.
+#[derive(Debug)]
 pub struct WsaCommandExecutor {
     adb_path: PathBuf,
     heavy_lock: Arc<Mutex<()>>,
@@ -127,6 +128,18 @@ impl WsaCommandExecutor {
     /// The adb executable this executor invokes, for diagnostics.
     pub fn adb_path(&self) -> &Path {
         &self.adb_path
+    }
+
+    /// The heavy-operation lock, for callers that want the same non-blocking
+    /// `try_lock` pre-check the reference's UI handlers do before starting
+    /// something heavy.
+    ///
+    /// Exposed rather than duplicated on the dashboard: `run` already holds
+    /// this lock for the whole round trip of every `is_heavy()` command, so a
+    /// second lock elsewhere would be a second truth about one invariant, and
+    /// the two could disagree at the worst moment.
+    pub fn heavy_lock(&self) -> &Mutex<()> {
+        &self.heavy_lock
     }
 
     /// Run one command through the gate.

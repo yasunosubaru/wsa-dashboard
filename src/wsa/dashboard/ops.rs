@@ -51,6 +51,7 @@ use crate::wsa::command::WsaCommand;
 use crate::wsa::executor::{run_program, CommandOutput, ExecError};
 use crate::wsa::models::{AppInfo, SubsystemStatus, SubsystemState};
 
+use super::op_guard::{self, OpBusy, WsaOpGuard};
 use super::WsaDashboard;
 
 /// Long enough for `taskkill` / `tasklist`, both of which answer in
@@ -91,11 +92,23 @@ pub enum OpsError {
     /// The command ran and produced output we could not read -- typically
     /// `dumpsys package <name>` for a package that is not installed.
     NoData(String),
+    /// Another operation holds the slot (spec 2.2: the next request is
+    /// refused rather than queued or silently overwritten).
+    ///
+    /// Carries the operation that got there first so the UI can map it to
+    /// `toast.distro_busy` and name what is in the way.
+    Busy(OpBusy),
 }
 
 impl From<ExecError> for OpsError {
     fn from(err: ExecError) -> Self {
         Self::Adb(err)
+    }
+}
+
+impl From<OpBusy> for OpsError {
+    fn from(busy: OpBusy) -> Self {
+        Self::Busy(busy)
     }
 }
 
@@ -107,6 +120,7 @@ impl std::fmt::Display for OpsError {
                 write!(f, "{detail}")
             }
             Self::NoData(detail) => write!(f, "{detail}"),
+            Self::Busy(busy) => write!(f, "{busy}"),
         }
     }
 }
@@ -406,10 +420,20 @@ impl WsaDashboard {
 
     /// Start one Android app (spec 1.2).
     pub async fn launch_app(&self, package: &str) -> Result<(), OpsError> {
+        let _guard = WsaOpGuard::create(self, op_guard::LAUNCHING)?;
         activate(&launch_uri(package))
     }
 
     /// Stop one Android app the way Android itself does.
+    ///
+    /// **No guard, deliberately.** Spec 2.2 authorises exactly five operation
+    /// names and `stop_app` is not one of them; reusing `STOPPING` would make
+    /// the busy toast say a subsystem operation was running when it was an
+    /// app, and inventing a sixth name would need an i18n key the spec did not
+    /// ask for. It needs no exclusion either: `am force-stop` is a single
+    /// fast, idempotent write against a different package than any install is
+    /// touching, so there is no state for it to corrupt and nothing for it to
+    /// wait on.
     pub async fn stop_app(&self, package: &str) -> Result<(), OpsError> {
         self.run(WsaCommand::AmForceStop {
             package: package.to_owned(),
@@ -419,7 +443,12 @@ impl WsaDashboard {
     }
 
     /// Install an apk (spec 1.4: `adb install -r` round-trip verified).
+    ///
+    /// Mutual exclusion between two installs comes from the executor's heavy
+    /// lock, which `run` takes for the whole round trip because `InstallApk`
+    /// is `is_heavy()`. There is no second lock here to take.
     pub async fn install_apk(&self, path: &Path) -> Result<(), OpsError> {
+        let _guard = WsaOpGuard::create(self, op_guard::INSTALLING)?;
         let out = self
             .run(WsaCommand::InstallApk {
                 path: path.to_string_lossy().into_owned(),
@@ -430,6 +459,7 @@ impl WsaDashboard {
 
     /// Remove a package.
     pub async fn uninstall_apk(&self, package: &str) -> Result<(), OpsError> {
+        let _guard = WsaOpGuard::create(self, op_guard::UNINSTALLING)?;
         let out = self
             .run(WsaCommand::UninstallApk {
                 package: package.to_owned(),
@@ -446,6 +476,7 @@ impl WsaDashboard {
     /// spec 1.4 requires after a start happens inside `probe` itself, once
     /// the endpoint exists to connect to.
     pub async fn start_subsystem(&self) -> Result<(), OpsError> {
+        let _guard = WsaOpGuard::create(self, op_guard::STARTING)?;
         activate(&start_uri())
     }
 
@@ -457,6 +488,7 @@ impl WsaDashboard {
     /// separately, and `probe` against the live subsystem is the `#[ignore]`
     /// test at the bottom of this file.
     pub async fn stop_subsystem(&self) -> Result<(), OpsError> {
+        let _guard = WsaOpGuard::create(self, op_guard::STOPPING)?;
         // `taskkill`'s own exit code is deliberately not consulted: it exits
         // non-zero when the image is already gone, which is the state we
         // want. The poll below is what actually decides.
@@ -544,6 +576,7 @@ echo failed to connect to %~2: Connection refused 1>&2
 exit /b 1
 
 :op
+if exist "%S%op.delay" ping -n 2 127.0.0.1 >nul
 type "%S%op.stdout"
 type "%S%op.stderr" 1>&2
 set "CODE=1"
@@ -1135,6 +1168,63 @@ List of devices attached\n\
             .uninstall_apk("com.example.app")
             .await
             .expect("adb reported Success");
+    }
+
+    // -- the guard, observed from inside a running operation -----------------
+
+    /// Task 12's real claim: the five mutating operations actually *hold* the
+    /// slot while they run. Proving it needs to look inside a live call, so
+    /// the fake adb gains an optional `op.delay` file that makes an install
+    /// answer ~1s late -- long enough to observe the guard, short enough that
+    /// this test costs 1s rather than the 10s read timeout.
+    ///
+    /// The intruder is `uninstall_apk` rather than `launch_app` on purpose:
+    /// if the guard were broken, `launch_app` would hand a real `wsa://`
+    /// URI to ShellExecute and cold-start the reader's own subsystem. An
+    /// uninstall only reaches the fake adb, so a failure here is a failed
+    /// assertion rather than an interrupted session.
+    #[tokio::test]
+    async fn a_running_operation_is_visible_and_refuses_the_next_one() {
+        let adb = FakeAdb::new();
+        adb.write("op.stdout", "Performing Streamed Install\nSuccess\n");
+        adb.write("op.delay", "");
+        let dash = Arc::new(adb.dashboard());
+
+        let installing = tokio::spawn({
+            let dash = Arc::clone(&dash);
+            async move { dash.install_apk(Path::new(r"C:\apks\demo app.apk")).await }
+        });
+
+        // Wait for the guard rather than sleeping a guessed amount: the
+        // fake's delay is an implementation detail, and a fixed sleep would
+        // turn into a flaky test the moment the machine got slower.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while dash.get_active_op() != Some(op_guard::INSTALLING) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "install never registered its guard"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(dash.get_active_op(), Some(op_guard::INSTALLING));
+
+        let err = dash
+            .uninstall_apk("com.example.app")
+            .await
+            .expect_err("a second operation must be refused, not queued");
+        assert!(matches!(err, OpsError::Busy(_)), "{err:?}");
+        assert!(err.to_string().contains("Installing"), "{err}");
+        assert_eq!(
+            dash.get_active_op(),
+            Some(op_guard::INSTALLING),
+            "the refusal must not clobber the operation in flight"
+        );
+
+        installing
+            .await
+            .expect("join")
+            .expect("the install itself succeeds");
+        assert_eq!(dash.get_active_op(), None, "released on completion");
     }
 
     // -- live subsystem ------------------------------------------------------

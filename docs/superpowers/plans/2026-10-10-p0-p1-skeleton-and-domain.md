@@ -605,26 +605,43 @@ git commit -m "feat(P1): dashboard ops - launch via wsa://, stop by killing WsaC
 
 **Interfaces:**
 - Consumes: `ops.rs`（Task 11）
-- Produces: `pub struct WsaDashboard`、`pub struct WsaOpGuard<'a>`，`WsaOpGuard::create(dashboard: &'a WsaDashboard, op: &'static str) -> WsaOpGuard<'a>`，`pub fn get_active_op(&self) -> Option<&'static str>`；`Drop` 时反注册
+- Produces: `pub struct WsaDashboard`、`pub struct WsaOpGuard<'a>`、`pub struct OpBusy { current }`，`WsaOpGuard::create(dashboard: &'a WsaDashboard, op: &'static str) -> Result<WsaOpGuard<'a>, OpBusy>`，`pub fn get_active_op(&self) -> Option<&'static str>`；`Drop` 时反注册
 
-- [ ] **Step 1: 实现 `WsaOpGuard`**
+> **修正（执行时发现）**：Step 1 的签名写的是 `-> WsaOpGuard<'a>`（无 `Result`），而 Step 3 的测试要求"第二个返回 `Err(OpBusy)`"——两者不可能同时成立。以测试为准，因为 spec §2.2 的措辞是"**注册过则 UI 弹 `toast.distro_busy`**"，即**拒绝**而非覆盖。另：`create` 不需要 `.await`（参照是 `async fn`），因为决定与写入之间没有 `await` 点，同步版本在一把锁下天然原子。
 
-照参照 `src/wsl/dashboard/operation_guard.rs`：`create` 注册 op 名并存入 dashboard 的 `active_op: Mutex<Option<&'static str>>`；`Drop` 清空。op 名取值 `Starting` / `Stopping` / `Launching` / `Installing` / `Uninstalling`（spec §2.2）。
+- [x] **Step 1: 实现 `WsaOpGuard`**
 
-- [ ] **Step 2: 让每个改变状态的 op 持有 guard**
+照参照 `src/wsl/dashboard/operation_guard.rs`：`create` 注册 op 名并存入 dashboard 的 `active_op: Mutex<Option<&'static str>>`；`Drop` 清空。op 名取值 `Starting` / `Stopping` / `Launching` / `Installing` / `Uninstalling`（spec §2.2），落为 `op_guard.rs` 里的**常量**——UI 靠名字选 `toast.distro_busy`，拼错只会表现为运行时缺一条翻译。
 
-`launch_app`/`stop_app`/`install_apk`/`uninstall_apk`/`start_subsystem`/`stop_subsystem` 开头 `let _guard = WsaOpGuard::create(self, "Launching");`。`heavy_op_lock` 只在 `install`/`uninstall` 持有。
+> **三处与参照的差异，全部因为"只有一个子系统"而起**：
+> 1. **`active_op` 用 `std::sync::Mutex` 而非 tokio 的**。`Drop` 无法 `await`；参照因为 unregister 是 async，`Drop` 里只能 spawn 一个后台任务并在没有 runtime 时 `error!` 一句——**槽位可能就此永久留在"忙碌"，没有任何东西会再发现**。同步锁让 `Drop` 同步、不可失败、不需要 runtime。本项目 `panic = "abort"`，泄漏路径本就不多。
+> 2. **`create` 拒绝而非覆盖**。参照按 distro 名存 map 且无条件插入，所以**先 drop 的那个 guard 会清掉后注册的标签**（last-out-wins）。单个 `Option<&'static str>` 没有顺序可错。
+> 3. **`Drop` 只清掉仍然属于自己的标签**（比较 `op` 而非无脑置 `None`）。今天 `create` 的互斥让第二个 guard 不可能出现，但无条件清空在将来放宽（例如按包操作）时会变成真 bug。
 
-- [ ] **Step 3: 写失败测试（内联 `src/wsa/dashboard/op_guard.rs`）**
+- [x] **Step 2: 让每个改变状态的 op 持有 guard**
+
+`launch_app`/`install_apk`/`uninstall_apk`/`start_subsystem`/`stop_subsystem` 开头 `let _guard = WsaOpGuard::create(self, op_guard::X)?;`
+
+> **两处修正**：
+> 1. **`stop_app` 不拿 guard**。Step 2 把它列进了清单，但 spec §2.2 只授权**五个** op 名，`stop_app` 不在其中；复用 `"Stopping"` 会让 busy 提示谎称是子系统操作，新增第六个名字又需要 spec 没要求的 i18n 键。而且它没有排除的必要：`am force-stop` 是一次快速幂等写，打的是与任何安装不同的包，无状态可破坏、无锁可等（写信号量本身已经允许 4 路并发）。
+> 2. **`heavy_op_lock` 不再是第二个锁**。Step 2 写的"只在 install/uninstall 持有"读起来像是要在 ops 层再取一把。实际上 executor 的 `run` **已经**对所有 `is_heavy()` 命令持有它一整个往返（Task 10），再加一把只会形成"同一个不变量的两份真相"，两者会在最坏的时刻分叉。落地为 `WsaDashboard::heavy_op_lock()` **委托**到 `executor.heavy_lock()`——spec §2.2 要的那把锁仍然只有一把，且 UI 可以像参照的 handler 那样 `try_lock()` 做非阻塞预检。
+
+- [x] **Step 3: 写失败测试（内联 `src/wsa/dashboard/op_guard.rs`）**
 
 断言：① 创建后 `get_active_op() == Some("Launching")`；② guard drop 后回到 `None`；③ 嵌套创建时第二个返回 `Err(OpBusy)`（不覆盖第一个）。
 
-- [ ] **Step 4: 运行确认通过**
+> **比计划多写了两个**：④ **提前 `return` 也必须释放槽位**——这是唯一能把整个 dashboard 冻住的失败模式，且 `?` 路径最容易漏；⑤ `OPS` 常量与 spec §2.2 的五个名字**逐字节相等**。
+>
+> 另在 `ops.rs` 加了一个**集成测试**（计划没有）：`a_running_operation_is_visible_and_refuses_the_next_one`。计划的三个断言只证明守卫本身自洽，不证明**操作真的持有它**。为此给假 adb 加了个 `op.delay` 文件——存在时 `ping -n 2 127.0.0.1` 让 install 晚约 1s 应答，于是可以从外面观察到"install 进行中 → 第二个操作被拒 → install 完成 → 槽位释放"整条链路。闯入者选 `uninstall_apk` 而不是 `launch_app`：万一守卫坏了，`launch_app` 会把真的 `wsa://` 交给 ShellExecute 并把读者的子系统冷启动一遍；`uninstall` 只碰假 adb，失败就是一条断言失败而不是一次中断的会话。
+
+- [x] **Step 4: 运行确认通过**
 
 Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+Result: **106 passed / 0 failed / 2 ignored，零 warning**（+7 测试：op_guard 6 + ops 集成 1）。实机 `#[ignore]` 项复跑仍为 `state=Ready port=58526 boot_completed=true`。
+
+- [x] **Step 5: 提交**
 
 ```bash
 git add -A

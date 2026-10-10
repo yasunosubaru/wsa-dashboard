@@ -17,14 +17,17 @@
 // access the fields directly.
 #![allow(dead_code)]
 
+pub mod op_guard;
 pub mod ops;
 
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::wsa::app::wsa_path::WsaPaths;
 use crate::wsa::executor::WsaCommandExecutor;
 
 /// Everything needed to operate the subsystem.
+#[derive(Debug)]
 pub struct WsaDashboard {
     /// The single exit point for adb. Constructed once and kept: a fresh
     /// executor per call would silently drop every concurrency guarantee it
@@ -37,11 +40,59 @@ pub struct WsaDashboard {
     /// state the UI must render *before* it has a dashboard, so it cannot be
     /// hidden inside this constructor.
     paths: WsaPaths,
+    /// Which mutating operation is running, if any (spec 2.2).
+    ///
+    /// A `std::sync::Mutex` and not `tokio::sync::Mutex` on purpose:
+    /// [`op_guard::WsaOpGuard`] is synchronous, and `Drop` cannot await, so an
+    /// async mutex here would make unregistering the one thing that can fail
+    /// at exactly the moment failure cannot be reported. Nothing holds this
+    /// across an `await` -- only a `Copy` value is moved in and out -- so the
+    /// sync kind costs nothing.
+    active_op: Mutex<Option<&'static str>>,
 }
 
 impl WsaDashboard {
     pub fn new(executor: WsaCommandExecutor, paths: WsaPaths) -> Self {
-        Self { executor, paths }
+        Self {
+            executor,
+            paths,
+            active_op: Mutex::new(None),
+        }
+    }
+
+    /// The operation registered by the guard holding the slot right now, if
+    /// any. This is what the UI polls to decide whether to show the busy
+    /// state, and what the CLI reports instead of guessing.
+    pub fn get_active_op(&self) -> Option<&'static str> {
+        *self.active_op_lock()
+    }
+
+    /// Lock the operation slot.
+    ///
+    /// `pub(crate)` rather than private because [`op_guard::WsaOpGuard`] is
+    /// the only thing that should ever hold it, and it lives in a sibling
+    /// module.
+    pub(crate) fn active_op_lock(&self) -> MutexGuard<'_, Option<&'static str>> {
+        // Nothing in `create` or `drop` can panic while the lock is held --
+        // both only move a `Copy` value in and out. Recover anyway: a
+        // permanently poisoned mutex would refuse every future operation with
+        // an error no user action could clear, which is a strictly worse
+        // outcome than losing a slot that was already lost.
+        self.active_op.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
+    /// The heavy-operation lock (spec 2.2).
+    ///
+    /// Delegates to the executor's lock rather than introducing a second one.
+    /// The reference keeps `heavy_op_lock` on the dashboard *and* relies on
+    /// its UI handlers to remember a `try_lock()` pre-check before every heavy
+    /// action; a second lock here would instead be a second truth about the
+    /// same invariant, and the two can drift. There is one heavy lock, it is
+    /// held for the whole `install`/`uninstall` round trip, and this accessor
+    /// exists so the UI can do the same non-blocking pre-check the reference's
+    /// handlers do.
+    pub fn heavy_op_lock(&self) -> &tokio::sync::Mutex<()> {
+        self.executor.heavy_lock()
     }
 
     /// The adb gate, for callers that need a command this facade has no

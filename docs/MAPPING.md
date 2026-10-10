@@ -175,6 +175,9 @@ spec §2.2 散文与 §2.3 表格用了两套名字，且 §2.3 把**非 adb 操
 | 轮询目标 | — | `tasklist /FI "IMAGENAME eq vmmemWSA*"` | **实测坑**：进程名是 `vmmemWSA` **不带 `.exe`**；`IMAGENAME eq vmmemWSA.exe` 匹配 0 行，而 **`tasklist` 匹配与否都 exit 0** —— 过滤器写错时退出码救不回来，只能读 stdout。`*` 兼容两种拼写 |
 | 错误类型 | 计划只写 `Result<T>` | `OpsError { Adb, Activate, Helper, Rejected, NoData }` | 九个操作里有两个不跑 adb（`wsa://` 激活）、两个跑 Windows helper（`taskkill`/`tasklist`），塞进 `ExecError` 会让调用方靠字符串猜原因 |
 | 成功判定 | 计划："检查 exit code 与 stdout 含 `Success`" | **两者都要** | adb 有 exit 0 却打印 `Failure [...]` 的先例（Task 10 实测，且它打在 **stdout**）。失败关闭：假"失败"会重试，假"成功"会丢安装 |
+| 操作守卫 `WsaOpGuard` | `DistroOpGuard`：`async create` 按 distro 名存 map、**无条件插入**、`Drop` **spawn 后台任务** unregister | **同步** `create -> Result<_, OpBusy>`（拒绝而非覆盖）、单槽位 `Mutex<Option<&'static str>>`、`Drop` **同步**清空 | spec §2.2"注册过则 UI 弹 `toast.distro_busy`"＝拒绝。参照 `Drop` 没有 runtime 时只 `error!` 一句，**槽位会永久留在忙碌且无人发现**；同步锁让 `Drop` 不可失败。参照先 drop 的 guard 会清掉后注册的标签（last-out-wins）；单槽位没有顺序可错 |
+| `heavy_op_lock` | dashboard 自带一把，靠每个 UI handler 自己记得 `try_lock()` | `WsaDashboard::heavy_op_lock()` **委托**到 executor 的同一把 | spec §2.2 要求存在；但 Task 10 的 `run` 已对所有 `is_heavy()` 命令持有它**一整个往返**。再加一把＝同一个不变量的两份真相，会在最坏时刻分叉 |
+| `stop_app` 守卫 | 参照无对应物（没有"停单个应用"） | **不拿 guard** | spec §2.2 只授权五个 op 名，`stop_app` 不在其中；复用 `Stopping` 会让 busy 提示谎称是子系统操作，新增第六名又需 spec 没要求的 i18n 键。`am force-stop` 也无状态可破坏 |
 
 **三项故意不做单测**：`launch_app` / `start_subsystem` / `stop_subsystem`。
 唯一能验证它们的办法就是**真启动、真杀掉用户自己的子系统**，任何单测都会在每次

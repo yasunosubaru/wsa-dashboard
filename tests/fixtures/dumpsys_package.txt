@@ -1,0 +1,147 @@
+Activity Resolver Table:
+  Non-Data Actions:
+      android.intent.action.MAIN:
+        e296fd9 com.topjohnwu.magisk/.ui.MainActivity filter 28eed9e
+          Action: "android.intent.action.MAIN"
+          Category: "android.intent.category.LAUNCHER"
+      android.intent.action.VIEW:
+        568984c com.topjohnwu.magisk/.ui.surequest.SuRequestActivity filter 2b83095
+          Action: "android.intent.action.VIEW"
+          Category: "android.intent.category.DEFAULT"
+      android.intent.action.APPLICATION_PREFERENCES:
+        e296fd9 com.topjohnwu.magisk/.ui.MainActivity filter 975807f
+          Action: "android.intent.action.APPLICATION_PREFERENCES"
+          Category: "android.intent.category.DEFAULT"
+
+Receiver Resolver Table:
+  Schemes:
+      package:
+        f7845aa com.topjohnwu.magisk/.core.Receiver filter faced38
+          Action: "android.intent.action.PACKAGE_REPLACED"
+          Action: "android.intent.action.PACKAGE_FULLY_REMOVED"
+          Scheme: "package"
+
+  Non-Data Actions:
+      android.intent.action.UID_REMOVED:
+        f7845aa com.topjohnwu.magisk/.core.Receiver filter 6eba59b
+          Action: "android.intent.action.LOCALE_CHANGED"
+          Action: "android.intent.action.UID_REMOVED"
+          Action: "android.intent.action.MY_PACKAGE_REPLACED"
+      android.intent.action.LOCALE_CHANGED:
+        f7845aa com.topjohnwu.magisk/.core.Receiver filter 6eba59b
+          Action: "android.intent.action.LOCALE_CHANGED"
+          Action: "android.intent.action.UID_REMOVED"
+          Action: "android.intent.action.MY_PACKAGE_REPLACED"
+      android.intent.action.MY_PACKAGE_REPLACED:
+        f7845aa com.topjohnwu.magisk/.core.Receiver filter 6eba59b
+          Action: "android.intent.action.LOCALE_CHANGED"
+          Action: "android.intent.action.UID_REMOVED"
+          Action: "android.intent.action.MY_PACKAGE_REPLACED"
+
+Domain verification status:
+
+Registered ContentProviders:
+  com.topjohnwu.magisk/.core.Provider:
+    Provider{9181405 com.topjohnwu.magisk/.core.Provider}
+
+ContentProvider Authorities:
+  [com.topjohnwu.magisk.provider]:
+    Provider{9181405 com.topjohnwu.magisk/.core.Provider}
+      applicationInfo=ApplicationInfo{6383c5a com.topjohnwu.magisk}
+
+Key Set Manager:
+  [com.topjohnwu.magisk]
+      Signing KeySets: 25
+
+Packages:
+  Package [com.topjohnwu.magisk] (ff14e8b):
+    userId=10085
+    pkg=Package{a2efb68 com.topjohnwu.magisk}
+    codePath=/data/app/~~vWmI2bw9xWvsj5RerXNaxw==/com.topjohnwu.magisk-LekV3bKD8Fp2VD-yRIGFTA==
+    resourcePath=/data/app/~~vWmI2bw9xWvsj5RerXNaxw==/com.topjohnwu.magisk-LekV3bKD8Fp2VD-yRIGFTA==
+    legacyNativeLibraryDir=/data/app/~~vWmI2bw9xWvsj5RerXNaxw==/com.topjohnwu.magisk-LekV3bKD8Fp2VD-yRIGFTA==/lib
+    extractNativeLibs=true
+    primaryCpuAbi=x86_64
+    secondaryCpuAbi=null
+    cpuAbiOverride=null
+    versionCode=30600 minSdk=23 targetSdk=36
+    minExtensionVersions=[]
+    versionName=30.6
+    usesNonSdkApi=false
+    splits=[base]
+    apkSigningVersion=2
+    flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]
+    privateFlags=[ PRIVATE_FLAG_ACTIVITIES_RESIZE_MODE_RESIZEABLE_VIA_SDK_VERSION ALLOW_AUDIO_PLAYBACK_CAPTURE PRIVATE_FLAG_REQUEST_LEGACY_EXTERNAL_STORAGE PARTIALLY_DIRECT_BOOT_AWARE PRIVATE_FLAG_ALLOW_NATIVE_HEAP_POINTER_TAGGING ]
+    forceQueryable=false
+    dataDir=/data/user/0/com.topjohnwu.magisk
+    supportsScreens=[small, medium, large, xlarge, resizeable, anyDensity]
+    usesOptionalLibraries:
+      androidx.window.extensions
+      androidx.window.sidecar
+    timeStamp=2026-09-22 18:29:27
+    lastUpdateTime=2026-09-22 18:29:37
+    packageSource=0
+    signatures=PackageSignatures{10aeb81 version:2, signatures:[ba28c03b], past signatures:[]}
+    installPermissionsFixed=true
+    pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]
+    requested permissions:
+      android.permission.INTERNET
+      android.permission.ACCESS_NETWORK_STATE
+      android.permission.REQUEST_INSTALL_PACKAGES
+      android.permission.HIDE_OVERLAY_WINDOWS
+      android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION
+      android.permission.POST_NOTIFICATIONS
+      android.permission.RUN_USER_INITIATED_JOBS
+      android.permission.FOREGROUND_SERVICE
+      android.permission.QUERY_ALL_PACKAGES
+    install permissions:
+      android.permission.FOREGROUND_SERVICE: granted=true
+      android.permission.INTERNET: granted=true
+      android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION: granted=true
+      android.permission.HIDE_OVERLAY_WINDOWS: granted=true
+      android.permission.ACCESS_NETWORK_STATE: granted=true
+      android.permission.REQUEST_INSTALL_PACKAGES: granted=false
+      android.permission.QUERY_ALL_PACKAGES: granted=true
+    User 0: ceDataInode=1139130 installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=0 instant=false virtual=false
+      installReason=0
+      firstInstallTime=2026-09-22 18:29:37
+      uninstallReason=0
+      gids=[3003]
+      runtime permissions:
+        android.permission.POST_NOTIFICATIONS: granted=true, flags=[ USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]
+
+Queries:
+  system apps queryable: false
+  queries via forceQueryable:
+  queries via package name:
+  queries via component:
+    com.android.settings.intelligence:
+      com.topjohnwu.magisk
+  queryable via interaction:
+    User 0:
+      [com.android.settings,com.android.localtransport,com.android.dynsystem,com.android.inputdevices,android,com.android.providers.settings,com.android.keychain,com.android.location.fused,com.android.wallpaperbackup,com.microsoft.windows.systemapp]:
+        com.topjohnwu.magisk
+  queryable via uses-library:
+
+Dexopt state:
+  [com.topjohnwu.magisk]
+    path: /data/app/~~vWmI2bw9xWvsj5RerXNaxw==/com.topjohnwu.magisk-LekV3bKD8Fp2VD-yRIGFTA==/base.apk
+      x86_64: [status=verify] [reason=install]
+  BgDexopt state:
+    enabled:true
+    mDexOptThread:null
+    mDexOptCancellingThread:null
+    mFinishedPostBootUpdate:true
+    mLastExecutionStatus:0
+    mLastExecutionStartTimeMs:2651775
+    mLastExecutionDurationIncludingSleepMs:619
+    mLastExecutionStartUptimeMs:2651775
+    mLastExecutionDurationMs:619
+    now:18545795
+    mLastCancelledPackages:
+    mFailedPackageNamesPrimary:
+    mFailedPackageNamesSecondary:
+
+Compiler stats:
+  [com.topjohnwu.magisk]
+     base.apk - 184

@@ -284,13 +284,13 @@ git commit -m "feat(P1): dynamic adb port resolution from WSA manifest"
 ### Task 5: decoder — `pm list packages` 解析
 
 **Files:**
-- Create: `src/adb/decoder.rs`, `tests/decoder_packages.rs`
+- Create: `src/adb/decoder.rs`（测试**内联**在该文件的 `#[cfg(test)] mod tests` 里；无 `tests/*.rs`）
 
 **Interfaces:**
 - Consumes: `AppInfo`（Task 3）
 - Produces: `pub fn parse_package_list(stdout: &str, filter_system: bool) -> Vec<String>` —— ops 层消费
 
-- [x] **Step 1: 写失败测试 `tests/decoder_packages.rs`**
+- [x] **Step 1: 写失败测试（内联 `src/adb/decoder.rs`）**
 
 覆盖四种输入：① 正常 `package:com.android.settings\npackage:com.topjohnwu.magisk\n` → 2 项；② 带 `-3` 过滤时系统包被排除；③ 空输入返回空 `Vec`（**不是 panic**）；④ 含 `package:android.auto_generated_rro_vendor__` 这类下划线包名不被误删。
 
@@ -298,8 +298,8 @@ git commit -m "feat(P1): dynamic adb port resolution from WSA manifest"
 
 - [x] **Step 2: 运行确认失败**
 
-Run: `cargo test --test decoder_packages`
-Expected: FAIL，`no function named parse_package_list`
+Run: `cargo test --release --bin wsadash`
+Expected: FAIL，`unresolved import super::parse_package_list`
 
 - [x] **Step 3: 实现 `parse_package_list`**
 
@@ -307,7 +307,7 @@ Expected: FAIL，`no function named parse_package_list`
 
 - [x] **Step 4: 运行确认通过**
 
-Run: `cargo test --test decoder_packages`
+Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
 - [x] **Step 5: 提交**
@@ -322,37 +322,37 @@ git commit -m "feat(P1): pm list packages decoder"
 ### Task 6: decoder — `dumpsys package` 解析
 
 **Files:**
-- Modify: `src/adb/decoder.rs`
-- Create: `tests/decoder_package_info.rs`, `tests/fixtures/dumpsys_package.txt`
+- Modify: `src/adb/decoder.rs`（测试**内联**在该文件的 `#[cfg(test)] mod tests` 里）
+- Create: `tests/fixtures/dumpsys_package.txt`（仅 fixture，无 `tests/*.rs`）
 
 **Interfaces:**
 - Consumes: `AppInfo`（Task 3）
 - Produces: `pub fn parse_package_info(stdout: &str) -> Option<AppInfo>` —— 首页应用卡片与 CLI `info` 消费
 
-- [ ] **Step 1: 采集真实 fixture**
+- [x] **Step 1: 采集真实 fixture**
 
 Run: `adb shell dumpsys package com.topjohnwu.magisk > tests/fixtures/dumpsys_package.txt`
 Expected: 文件非空，含 `versionName=` 与 `firstInstallTime=`
 
-- [ ] **Step 2: 写失败测试 `tests/decoder_package_info.rs`**
+- [x] **Step 2: 写失败测试（内联 `src/adb/decoder.rs`）**
 
 断言：从 fixture 解析出的 `AppInfo.package == "com.topjohnwu.magisk"`、`version_name` 非空、`version_code > 0`、`is_system == false`。另测无 `versionName=` 的输入返回 `None`（不 panic、不造默认值）。
 
-- [ ] **Step 3: 运行确认失败**
+- [x] **Step 3: 运行确认失败**
 
-Run: `cargo test --test decoder_package_info`
-Expected: FAIL，`no function named parse_package_info`
+Run: `cargo test --release --bin wsadash`
+Expected: FAIL，`unresolved import super::parse_package_info`
 
-- [ ] **Step 4: 实现 `parse_package_info`**
+- [x] **Step 4: 实现 `parse_package_info`**
 
 `pub fn parse_package_info(stdout: &str) -> Option<AppInfo>`：定位 `Packages:` 段下与目标包匹配的块，取 `versionName=`、`versionCode=`。`apk_size_bytes` 在本函数恒为 0——真实大小走 `adb shell pm path` + `stat`，属 ops 层职责，不让 decoder 依赖两次命令。
 
-- [ ] **Step 5: 运行确认通过**
+- [x] **Step 5: 运行确认通过**
 
-Run: `cargo test --test decoder_package_info`
+Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add -A
@@ -364,14 +364,13 @@ git commit -m "feat(P1): dumpsys package decoder"
 ### Task 7: decoder — `getprop` 批量解析
 
 **Files:**
-- Modify: `src/adb/decoder.rs`
-- Create: `tests/decoder_props.rs`
+- Modify: `src/adb/decoder.rs`（测试**内联**在该文件的 `#[cfg(test)] mod tests` 里；无 `tests/*.rs`）
 
 **Interfaces:**
 - Consumes: `SubsystemStatus`、`SubsystemState`（Task 3）
 - Produces: `pub fn parse_props(stdout: &str) -> HashMap<String,String>`、`pub fn subsystem_status(props: &HashMap<String,String>, adb_online: bool, port: u16) -> SubsystemStatus` —— probe 消费
 
-- [ ] **Step 1: 写失败测试 `tests/decoder_props.rs`**
+- [ ] **Step 1: 写失败测试（内联 `src/adb/decoder.rs`）**
 
 两条链路断言：① `parse_props("[ro.build.type]: [user]\n[ro.debuggable]: [0]\n")` 得 2 键；② `subsystem_status` 状态机——`adb_online=false` → `Stopped`；`adb_online=true` 但 `sys.boot_completed != "1"` → `Booting`；两者齐备 → `Ready`。
 
@@ -379,8 +378,8 @@ git commit -m "feat(P1): dumpsys package decoder"
 
 - [ ] **Step 2: 运行确认失败**
 
-Run: `cargo test --test decoder_props`
-Expected: FAIL
+Run: `cargo test --release --bin wsadash`
+Expected: FAIL，`unresolved import super::{parse_props, subsystem_status}`
 
 - [ ] **Step 3: 实现两个函数**
 
@@ -388,7 +387,7 @@ Expected: FAIL
 
 - [ ] **Step 4: 运行确认通过**
 
-Run: `cargo test --test decoder_props`
+Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
@@ -403,7 +402,8 @@ git commit -m "feat(P1): getprop decoder and subsystem state machine"
 ### Task 8: 定位 WSA 包 `src/wsa/app/wsa_path.rs`
 
 **Files:**
-- Create: `src/wsa/app/mod.rs`, `src/wsa/app/wsa_path.rs`, `tests/wsa_path.rs`, `tests/fixtures/AppxManifest_full.xml`
+- Create: `src/wsa/app/mod.rs`, `src/wsa/app/wsa_path.rs`, `tests/fixtures/AppxManifest_full.xml`
+- 测试**内联**在 `src/wsa/app/wsa_path.rs` 的 `#[cfg(test)] mod tests` 里（无 `tests/*.rs`）
 
 **Interfaces:**
 - Consumes: `parse_local_port`（Task 4）
@@ -414,7 +414,7 @@ git commit -m "feat(P1): getprop decoder and subsystem state machine"
 Run: `Copy-Item "$((Get-AppxPackage MicrosoftCorporationII.WindowsSubsystemForAndroid).InstallLocation)\AppxManifest.xml" tests\fixtures\AppxManifest_full.xml`
 Expected: 文件存在且含 `Package Name="MicrosoftCorporationII.WindowsSubsystemForAndroid"`
 
-- [ ] **Step 2: 写失败测试 `tests/wsa_path.rs`**
+- [ ] **Step 2: 写失败测试（内联 `src/wsa/app/wsa_path.rs`）**
 
 用 fixture 解析出：`install_location` 非空、`adb_port == 58526`、`client_exe` 以 `WsaClient\WsaClient.exe` 结尾、`settings_aumid` 含 `!SettingsApp`。另测 manifest 读不到时返回 `Err(WsaPathError::NotInstalled)`。
 
@@ -422,7 +422,7 @@ Expected: 文件存在且含 `Package Name="MicrosoftCorporationII.WindowsSubsys
 
 - [ ] **Step 3: 运行确认失败**
 
-Run: `cargo test --test wsa_path`
+Run: `cargo test --release --bin wsadash`
 Expected: FAIL
 
 - [ ] **Step 4: 实现 `wsa_path.rs`**
@@ -431,7 +431,7 @@ Expected: FAIL
 
 - [ ] **Step 5: 运行确认通过**
 
-Run: `cargo test --test wsa_path`
+Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
 - [ ] **Step 6: 提交**
@@ -446,14 +446,13 @@ git commit -m "feat(P1): resolve WSA package location, manifest and adb port"
 ### Task 9: `WsaCommand` 枚举 `src/wsa/command.rs`
 
 **Files:**
-- Create: `src/wsa/command.rs`
-- Create: `tests/command.rs`
+- Create: `src/wsa/command.rs`（测试**内联**在该文件的 `#[cfg(test)] mod tests` 里；无 `tests/*.rs`）
 
 **Interfaces:**
 - Consumes: `FALLBACK_PORT`（Task 4）
 - Produces: `pub enum WsaCommand`、`impl WsaCommand { pub fn argv(&self) -> Vec<String>; pub fn is_write(&self) -> bool; pub fn is_heavy(&self) -> bool; pub fn display(&self) -> String }` —— executor 消费
 
-- [ ] **Step 1: 写失败测试 `tests/command.rs`**
+- [ ] **Step 1: 写失败测试（内联 `src/wsa/command.rs`）**
 
 断言枚举的三条分类（决定超时分级）：
 ```rust
@@ -466,7 +465,7 @@ assert!(WsaCommand::StopSubsystem.is_write());
 
 - [ ] **Step 2: 运行确认失败**
 
-Run: `cargo test --test command`
+Run: `cargo test --release --bin wsadash`
 Expected: FAIL
 
 - [ ] **Step 3: 实现 `command.rs`**
@@ -477,7 +476,7 @@ Expected: FAIL
 
 - [ ] **Step 4: 运行确认通过**
 
-Run: `cargo test --test command`
+Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
@@ -492,14 +491,13 @@ git commit -m "feat(P1): WsaCommand enum with timeout classification"
 ### Task 10: 执行闸门 `src/wsa/executor.rs`
 
 **Files:**
-- Create: `src/wsa/executor.rs`
-- Create: `tests/executor.rs`
+- Create: `src/wsa/executor.rs`（测试**内联**在该文件的 `#[cfg(test)] mod tests` 里；无 `tests/*.rs`）
 
 **Interfaces:**
 - Consumes: `WsaCommand`（Task 9）
 - Produces: `pub struct WsaCommandExecutor { adb_path: PathBuf, heavy_lock: Arc<Mutex<()>>, read_sem: Arc<Semaphore>, write_sem: Arc<Semaphore> }`、`impl WsaCommandExecutor { pub async fn run(&self, cmd: &WsaCommand) -> Result<CommandOutput, ExecError>`、`pub struct CommandOutput { pub stdout: String, pub stderr: String, pub exit_code: i32 }`、`pub enum ExecError { TimedOut, NotFound, Failed { code: i32, stderr: String } }`
 
-- [ ] **Step 1: 写失败测试 `tests/executor.rs`（不依赖实机 adb）**
+- [ ] **Step 1: 写失败测试（内联 `src/wsa/executor.rs`，用 `#[tokio::test]`）**
 
 用 `WsaCommand::Shell { args }` 指向一个会 sleep 的假命令验证超时与杀进程：
 ```rust
@@ -510,7 +508,7 @@ assert!(matches!(out, Err(ExecError::TimedOut)));
 
 - [ ] **Step 2: 运行确认失败**
 
-Run: `cargo test --test executor`
+Run: `cargo test --release --bin wsadash`
 Expected: FAIL
 
 - [ ] **Step 3: 实现 `executor.rs`**
@@ -520,7 +518,7 @@ Expected: FAIL
 
 - [ ] **Step 4: 运行确认通过**
 
-Run: `cargo test --test executor`
+Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
@@ -591,13 +589,13 @@ git commit -m "feat(P1): dashboard ops - launch via wsa://, stop by killing WsaC
 
 `launch_app`/`stop_app`/`install_apk`/`uninstall_apk`/`start_subsystem`/`stop_subsystem` 开头 `let _guard = WsaOpGuard::create(self, "Launching");`。`heavy_op_lock` 只在 `install`/`uninstall` 持有。
 
-- [ ] **Step 3: 写 `tests/op_guard.rs`**
+- [ ] **Step 3: 写失败测试（内联 `src/wsa/dashboard/op_guard.rs`）**
 
 断言：① 创建后 `get_active_op() == Some("Launching")`；② guard drop 后回到 `None`；③ 嵌套创建时第二个返回 `Err(OpBusy)`（不覆盖第一个）。
 
 - [ ] **Step 4: 运行确认通过**
 
-Run: `cargo test --test op_guard`
+Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
 - [ ] **Step 5: 提交**

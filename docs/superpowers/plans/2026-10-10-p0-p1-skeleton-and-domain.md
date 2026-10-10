@@ -177,40 +177,59 @@ git commit -m "feat(P0): skia build channel and empty window"
 
 ### Task 3: 领域模型 `src/wsa/models.rs`
 
+> **修正（执行时发现）**：计划原写 `tests/models.rs` 集成测试，**走不通**——集成测试只能 import **lib target** 的公开 API，而参照是 **bin-only crate**（`src/lib.rs` 不存在、`tests/` 不存在、无 `[lib]`，见 `docs/reference`）。参照自己用的是**内联 `#[cfg(test)] mod tests`**（`api/client.rs:209`、`app/scheduler_task/schtasks.rs:773`、`config/mod.rs:544`、`utils/device_id.rs:16`、`utils/machine.rs:80` 共 5 处）。
+>
+> **不加 lib target**：加了会把 `crate::app::…` 这类路径全部改写成 `wsadashboard::app::…`，破坏"逐行对照参照"的前提（Q12）。改为内联单测，同时更贴合 Q8 的"单测"。
+
 **Files:**
-- Create: `src/wsa/models.rs`, `src/wsa/mod.rs`, `tests/models.rs`
-- Modify: `src/wsadash.rs`（加 `mod` 声明）
+- Create: `src/wsa/models.rs`, `src/wsa/mod.rs`
+- Modify: `src/wsadash.rs`（加 `mod wsa;` —— 领域层暂挂在 CLI bin 下，GUI 在 P2 需要时同样加一行；两个 bin 各自编译一次，代价可忽略）
 
 **Interfaces:**
 - Consumes: 无
 - Produces: `AppInfo`、`DeviceInfo`、`SubsystemStatus`、`StorageInfo`、`PortRule` —— 后续 decoder/ops/CLI 全部消费这些类型
 
-- [ ] **Step 1: 写失败测试 `tests/models.rs::app_info_roundtrip`**
+- [x] **Step 1: 写失败测试（内联在 `models.rs`）**
 
 ```rust
-let a = AppInfo { package: "com.topjohnwu.magisk".into(), version_name: "30.6".into(),
-                  version_code: 30600, apk_size_bytes: 54389465, is_system: false };
-assert_eq!(a.display_name(), "Magisk");
-assert!(!a.is_system);
+#[cfg(test)]
+mod tests {
+    use super::AppInfo;
+
+    #[test]
+    fn display_name_from_last_package_segment() {
+        let a = AppInfo { package: "com.topjohnwu.magisk".into(), version_name: "30.6".into(),
+                          version_code: 30600, apk_size_bytes: 54389465, is_system: false };
+        assert_eq!(a.display_name(), "Magisk");
+        assert!(!a.is_system);
+    }
+
+    #[test]
+    fn display_name_splits_underscores() {
+        let a = AppInfo { package: "com.example.my_app".into(), ..blank() };
+        assert_eq!(a.display_name(), "My App");
+    }
+}
 ```
-`display_name()` 的规则（spec §1.4）：截取包名最后一段，首字母大写，`.`/`_` 分词。
 
-- [ ] **Step 2: 运行确认失败**
+规则见 **spec §1.7**（`rsplit('.')` 取末段 → 在 `_/.'` 上分词 → 每词首字母大写 → 空格连接）。
 
-Run: `cargo test --test models`
-Expected: FAIL，`cannot find struct AppInfo in this scope`
+- [x] **Step 2: 运行确认失败**
 
-- [ ] **Step 3: 实现 `models.rs`**
+Run: `cargo test --bin wsadash`
+Expected: FAIL，`cannot find struct AppInfo in this scope` / `no method named display_name`
+
+- [x] **Step 3: 实现 `models.rs`**
 
 精确签名：`pub struct AppInfo { pub package: String, pub version_name: String, pub version_code: i64, pub apk_size_bytes: u64, pub is_system: bool }`；`impl AppInfo { pub fn display_name(&self) -> String }`。
 另定义 `pub enum SubsystemState { NotInstalled, Stopped, Booting, Ready, Unauthorized }`（spec §5 三态降级的细分）、`pub struct SubsystemStatus { pub state: SubsystemState, pub adb_port: u16, pub boot_completed: bool }`、`pub struct DeviceInfo`、`pub struct StorageInfo`、`pub struct PortRule { pub local_port: u16, pub remote: String, pub direction: PortDirection }`，`pub enum PortDirection { Forward, Reverse }`。
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
-Run: `cargo test --test models`
+Run: `cargo test --bin wsadash`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add -A

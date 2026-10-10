@@ -123,6 +123,20 @@
 - `WsaSettings.exe` 今日崩 2 次（`Windows.UI.Xaml.dll`，`0xc0000409`）→ **dashboard 不得依赖设置面板存活**；子系统设置页必须是"深链 + 打不开时给出手动路径"的降级。
 - `WsaClient` 曾崩一次留 4 个 tombstone，随后停在 `/partiallyrunning` → 半运行状态**不影响 adb**，所以**启动状态不能看 `WsaClient` 命令行**。
 
+### 1.7 包名 → 显示名规则（新增，2026-10-10 补）
+
+安卓平台不返回应用 label（`pm list packages` / `dumpsys` 均只给包名，见 §1.4 与 R3）。
+显示名由包名规则化推导，**规则固定为**：
+
+1. 取包名 **`rsplit('.')` 的最后一段**（`com.topjohnwu.magisk` → `magisk`）；
+2. 在 **`_` 与 `.`** 上分词（防最后一段仍含 `_`，如 `com.example.my_app`）；
+3. 每个非空词**首字母大写**，其余保持原样（不转小写）；
+4. 以单个空格连接。
+
+示例：`com.topjohnwu.magisk` → `Magisk`；`com.example.my_app` → `My App`；单段 `magisk` → `Magisk`。
+
+实现锚点：`src/wsa/models.rs::AppInfo::display_name`。这条规则同时驱动 Q29 的图标占位块（首字母取自该显示名，颜色按完整包名哈希）。
+
 ---
 
 ## 2. 参照架构 → 目标架构（1:1 映射）

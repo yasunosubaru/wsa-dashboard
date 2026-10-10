@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal extract of a real WSA AppxManifest.xml.
+
+  Source: Get-AppxPackage MicrosoftCorporationII.WindowsSubsystemForAndroid
+          -> InstallLocation -> AppxManifest.xml
+          (build 2407.40000.4.0, lines 209-213 and the Applications block)
+
+  Trimmed to the parts this project parses. Kept well-formed so future tasks
+  can reuse it. The firewall rule is what the adb port resolution reads
+  (src/adb/port.rs); note that the attribute is LocalPortMin/LocalPortMax,
+  NOT "LocalPort".
+-->
+<Package
+    xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+    xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+    xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+    xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+    xmlns:desktop2="http://schemas.microsoft.com/appx/manifest/desktop/windows10/2">
+
+  <Identity Name="MicrosoftCorporationII.WindowsSubsystemForAndroid"
+            Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+            Version="2407.40000.4.0" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Windows Subsystem for Android</DisplayName>
+    <PublisherDisplayName>Microsoft Corporation</PublisherDisplayName>
+  </Properties>
+
+  <Applications>
+    <Application Id="SettingsApp"
+                 Executable="WsaClient\WsaClient.exe"
+                 EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Windows Subsystem for Android"
+                          Description="Windows Subsystem for Android"
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\StoreLogo.png"
+                          Square44x44Logo="Assets\StoreLogo.png" />
+      <uap3:Protocol Name="wsa" Parameters="/launch %1" />
+    </Application>
+  </Applications>
+
+  <Extensions>
+    <desktop2:Extension Category="windows.firewallRules">
+      <desktop2:FirewallRules Executable="WsaClient\WsaClient.exe">
+        <desktop2:Rule Direction="in" IPProtocol="TCP" LocalPortMin="58526" LocalPortMax="58526" Profile="private" />
+      </desktop2:FirewallRules>
+    </desktop2:Extension>
+  </Extensions>
+</Package>

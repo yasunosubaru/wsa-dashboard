@@ -12,6 +12,7 @@
 // force `crate::app::...` to become `wsadashboard::app::...` everywhere and
 // break line-by-line diffing against the reference. The GUI bin adds the same
 // `mod wsa;` line when it starts consuming these types in P2.
+mod adb;
 mod wsa;
 
 fn main() {

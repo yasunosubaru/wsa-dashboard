@@ -241,35 +241,38 @@ git commit -m "feat(P1): domain models"
 ### Task 4: adb 端口动态解析 `src/adb/port.rs`
 
 **Files:**
-- Create: `src/adb/mod.rs`, `src/adb/port.rs`, `tests/fixtures/AppxManifest.xml`, `tests/port.rs`
+- Create: `src/adb/mod.rs`, `src/adb/port.rs`, `tests/fixtures/AppxManifest.xml`
+- Modify: `src/wsadash.rs`（加 `mod adb;`）
+
+> 同 Task 3 的修正：**测试内联**（bin-only crate 无法做集成测试）。fixture 放在 `tests/fixtures/` 供 P5–P7 复用，用 `include_str!("../../tests/fixtures/AppxManifest.xml")` 编译期引入，路径错了会立刻编译失败而不是运行时 `None`。
 
 **Interfaces:**
 - Consumes: 无
 - Produces: `pub fn parse_local_port(manifest_xml: &str) -> Option<u16>`、`pub const FALLBACK_PORT: u16 = 58526` —— executor 与 probe 消费
 
-- [ ] **Step 1: 写失败测试 `tests/port.rs`**
+- [x] **Step 1: 写失败测试（内联在 `port.rs`）**
 
-三条断言：① fixture 含 `LocalPort="58526"` 时返回 `Some(58526)`；② fixture 改成 `LocalPort="60000"` 返回 `Some(60000)`；③ 无 `LocalPort` 属性返回 `None`（**不返回 fallback**——回退由调用方做，这样可测）。
+三条断言：① fixture 含 `LocalPort="58526"` 时返回 `Some(58526)`；② fixture 改成 `LocalPort="60000"` 返回 `Some(60000)`；③ 无 `LocalPort` 属性返回 `None`（**不返回 fallback**——回退由调用方做，这样才可测）。fixture 只读一份，②③ 用字符串改写生成。
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
-Run: `cargo test --test port`
+Run: `cargo test --release --bin wsadash`
 Expected: FAIL，`no function or associated item named parse_local_port`
 
-- [ ] **Step 3: 写 `tests/fixtures/AppxManifest.xml`**
+- [x] **Step 3: 写 `tests/fixtures/AppxManifest.xml`**
 
 从本机真实 manifest 截取含 `<firewallRules>` 的最小片段，保留 `Executable="WsaClient\WsaClient.exe" LocalPort="58526" Profile="private"`。
 
-- [ ] **Step 4: 实现 `parse_local_port`**
+- [x] **Step 4: 实现 `parse_local_port`**
 
 `pub fn parse_local_port(manifest_xml: &str) -> Option<u16>`：找 `LocalPort="..."` 属性并解析 u16。用字符串查找而非完整 XML 解析——manifest 是 WSA 自己的产物，格式稳定，引入 XML 依赖不划算。
 
-- [ ] **Step 5: 运行确认通过**
+- [x] **Step 5: 运行确认通过**
 
-Run: `cargo test --test port`
-Expected: PASS（3 passed）
+Run: `cargo test --release --bin wsadash`
+Expected: PASS
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add -A

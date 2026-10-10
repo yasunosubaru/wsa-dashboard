@@ -95,7 +95,20 @@
 
 | 事实 | 影响 |
 |---|---|
-| 端口 **58526**，中继由 `WsaClient.exe` 持有（manifest 声明 `firewallRules Executable="WsaClient\WsaClient.exe" LocalPort 58526 Profile=private`） | 网络页的"端口转发"要与这个原生规则区分 |
+| 端口 **58526**，中继由 `WsaClient.exe` 持有（manifest 声明见下） | 网络页的"端口转发"要与这个原生规则区分 |
+
+manifest 中该规则的真实形态（`AppxManifest.xml:209-213`，2026-10-10 实读）：
+
+```xml
+<desktop2:Extension Category="windows.firewallRules">
+  <desktop2:FirewallRules Executable="WsaClient\WsaClient.exe">
+    <desktop2:Rule Direction="in" IPProtocol="TCP"
+                   LocalPortMin="58526" LocalPortMax="58526" Profile="private" />
+  </desktop2:FirewallRules>
+</desktop2:Extension>
+```
+
+> **事实更正（2026-10-10，执行 Task 4 时发现）**：属性名是 **`LocalPortMin` / `LocalPortMax`**，**不存在 `LocalPort` 属性**。元素名是 `<desktop2:Rule>`，外层是 `<desktop2:FirewallRules Executable="...">`（带 `Executable` 属性，容易被"紧接着 `>`"的正则漏掉）。解析见 `src/adb/port.rs`。
 | **WSA 停止后 adb server 会把设备条目整个清掉**（不是留 offline） | 每次启动后必须显式 `adb connect 127.0.0.1:58526`，不能假设条目还在 |
 | 连接中会短暂出现 `unauthorized`（等 RSA 授权） | 探活要容忍三态：`absent` / `offline` / `unauthorized` / `device`，只有 `device` 才算就绪 |
 | `adb root` 不可用：`adbd cannot run as root in production builds` | ❌ 不要用 `adb root` |
@@ -383,7 +396,7 @@ UI handler  →  WsaDashboard (src/wsa/dashboard/)
 | Q24 | 首页布局 | **照搬竖排 48/96px 卡片 + 拖拽排序，顶部加搜索框**（搜索框标进 `MAPPING.md`） |
 | Q25 | GUI 命令行开关 | **六个全照搬**（`/version` `/help` `/silent` `/scheduler` `/clean` `/initialize`） |
 | Q26 | adb 来源 | 配置可指定路径，未配置走 PATH，找不到给安装引导 |
-| Q27 | adb 端口 | **从 WSA 包 manifest 动态读 `LocalPort`**，失败回退 58526 |
+| Q27 | adb 端口 | **从 WSA 包 manifest 动态读**，失败回退 58526。读的是 `LocalPortMin`/`LocalPortMax`（见 §1.4 事实更正）；两者不等时返回 `None` 不猜，回退由调用方做 |
 | Q28 | WSA 未安装 | 照搬 `DistroNotFoundView` 结构，换文案与链接 |
 | Q29 | 无图标占位 | 包名首字母纯色块（按包名哈希取色） |
 | Q30 | 配置目录文件名 | 见 §6 |

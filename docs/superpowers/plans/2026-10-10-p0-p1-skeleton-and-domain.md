@@ -290,27 +290,27 @@ git commit -m "feat(P1): dynamic adb port resolution from WSA manifest"
 - Consumes: `AppInfo`（Task 3）
 - Produces: `pub fn parse_package_list(stdout: &str, filter_system: bool) -> Vec<String>` —— ops 层消费
 
-- [ ] **Step 1: 写失败测试 `tests/decoder_packages.rs`**
+- [x] **Step 1: 写失败测试 `tests/decoder_packages.rs`**
 
 覆盖四种输入：① 正常 `package:com.android.settings\npackage:com.topjohnwu.magisk\n` → 2 项；② 带 `-3` 过滤时系统包被排除；③ 空输入返回空 `Vec`（**不是 panic**）；④ 含 `package:android.auto_generated_rro_vendor__` 这类下划线包名不被误删。
 
 关键断言：`parse_package_list("package:a\n\npackage:b\n", false) == vec!["a", "b"]`（空行被跳过）。
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cargo test --test decoder_packages`
 Expected: FAIL，`no function named parse_package_list`
 
-- [ ] **Step 3: 实现 `parse_package_list`**
+- [x] **Step 3: 实现 `parse_package_list`**
 
 `pub fn parse_package_list(stdout: &str, filter_system: bool) -> Vec<String>`：逐行 trim，跳过空行，剥 `package:` 前缀。`filter_system` 时排除 `is_system_package(name)` 判定为系统的包——`is_system_package` 判据：包名以 `com.android.`、`android.`、`com.google.android.`、`com.amazon.` 开头，或 `com.android.*.auto_generated_rro_vendor__` 后缀。
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `cargo test --test decoder_packages`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add -A

@@ -6,4 +6,5 @@
 //! Mirrors the reference's `src/network/` + `src/usb/` split at the file
 //! level; see docs/MAPPING.md.
 
+pub mod decoder;
 pub mod port;

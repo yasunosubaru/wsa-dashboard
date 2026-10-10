@@ -180,7 +180,14 @@ fn timeout_for(cmd: &WsaCommand) -> Duration {
 /// part that has to be right -- and the part that cannot be exercised through
 /// `run` without a live adb (Q8): the executor decides the program and the
 /// argv, but not what the program does.
-async fn run_program(
+///
+/// `pub(crate)` rather than private so the ops layer can stop the subsystem
+/// (`taskkill`) and check it (`tasklist`) through the same spawn, capture,
+/// timeout and kill-on-drop path instead of growing a second one that would
+/// never be tested. Those helpers go through `run`'s sibling, not through
+/// `run` itself: they are not adb commands and must not take a semaphore slot
+/// reserved for adb traffic.
+pub(crate) async fn run_program(
     program: &Path,
     argv: &[String],
     limit: Duration,

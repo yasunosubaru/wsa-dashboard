@@ -107,6 +107,15 @@ pub enum SubsystemState {
     Ready,
     /// adb reports `unauthorized`; the user must accept the key prompt.
     Unauthorized,
+    /// adb has an entry for the endpoint but no working session with it.
+    ///
+    /// Spec 1.3 measured this as what killing `WsaClient.exe` leaves behind,
+    /// before the entry ages out entirely (spec 1.4). It is deliberately not
+    /// folded into [`SubsystemState::Stopped`]: spec 5 puts a stale entry in
+    /// the T2 tier, where the UI offers *reconnect*, while `Stopped` is T3
+    /// and offers *start*. Pressing start on a subsystem that is already
+    /// running does nothing useful, so the two must not render the same.
+    Offline,
 }
 
 /// Combined subsystem readiness.
@@ -262,6 +271,7 @@ mod tests {
             (SubsystemState::Booting, false),
             (SubsystemState::Ready, true),
             (SubsystemState::Unauthorized, false),
+            (SubsystemState::Offline, false),
         ] {
             let status = SubsystemStatus {
                 state,

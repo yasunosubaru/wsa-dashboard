@@ -132,6 +132,7 @@ usb  usb.detail  main  toast  task  debug  mail  scheduler  mount_disk
 | 无图标占位 | 包名首字母纯色块，颜色按包名哈希（Q29） |
 | `wsadash` CLI bin | 参照没有独立 CLI 包（其 `/` 开关在 GUI 进程内）（Q19） |
 | `src/wsa/app/wsa_path.rs` | 参照不需要"定位宿主"（WSL 内置于 Windows），WSA 侧载包必须运行时解析（spec §1.1 / R6） |
+| `src/wsa/dashboard/` | 参照为 `wsl/dashboard/mod.rs` + `wsl/ops/*.rs`；见 §4.1.2 |
 
 #### 4.1.1 `WsaCommand` 变体命名（spec §2.3 意图名 → 实际变体名）
 
@@ -155,6 +156,37 @@ spec §2.2 散文与 §2.3 表格用了两套名字，且 §2.3 把**非 adb 操
 | — | `WsaCommand::Shell { args }` | 新增：逃生口；`argv()` 会补前缀 `shell` |
 
 **判据**：`WsaCommand` 是 **adb 命令面**。不经过 adb 子进程的操作没有 argv，也不该过 executor（spec §2.2 的"唯一出口"约束的是 adb 调用），由 ops 直接实现。
+
+#### 4.1.2 ops 层 `src/wsa/dashboard/{mod,ops}.rs`（Task 11）
+
+参照对应物是 `src/wsl/dashboard/mod.rs` + `src/wsl/ops/{lifecycle,transfer,info,…}.rs`。
+本项目把九个操作合在**一个** `ops.rs`：spec §2.2 的操作本就是一张表，按参照那样拆成
+七个文件只会增加跳转而没有边界收益（参照拆分的 `compress`/`sparse` 在 WSA 侧不存在）。
+`WsaDashboard` 与参照同名同形状（executor + 路径），但**不带**参照的 `distros` 缓存、
+`Notify`、`refresh_interval`——参照需要它们是因为 `wsl -l -v` 是快照命令，本项目所有读
+都过 `WsaCommandExecutor`，再存一份缓存只是把同一状态放两处。
+
+| 项 | 参照 / 计划原文 | 本项目落地 | 依据 |
+|---|---|---|---|
+| 状态枚举 | `WslStatus` 三态 | `SubsystemState` 增 **`Offline`**（Task 3 已定 `Unauthorized`） | spec §5 把 `offline`/`unauthorized` 归 **T2**（"重连"按钮），不能与 T3"未运行/启动"同渲染；spec §1.3 实测杀 `WsaClient` 后 adb 先变 `offline` |
+| 探活 | `wsl -l -v`，只读 | `probe()` 在**条目缺失时自动 `adb connect` 一次** | spec §1.4：WSA 停止后 adb server 把条目**整个清掉**，系统里没有任何东西会再连回去——只读的 probe 会永远报 `Stopped`。实测：`adb disconnect 127.0.0.1:58526` 后 `adb devices` 确实空行，`adb connect` 后恢复 `device` |
+| 启动 | 参照 `instance.rs` 的启动 handler | `open::that("wsa://<pkg>")` / `wsa://com.android.settings` | spec §1.2：`WsaClient /launch` 七种机制 **exit 0 零动作**，`wsa://` 是唯一有效路径 |
+| 停止子系统 | `wsl --terminate` | `taskkill /F /IM WsaClient.exe` → 轮询 `vmmemWSA` 消失（30s） | spec §1.3：`/terminate` 零动作；杀进程才让 `vmmemWSA` 干净下线 |
+| 轮询目标 | — | `tasklist /FI "IMAGENAME eq vmmemWSA*"` | **实测坑**：进程名是 `vmmemWSA` **不带 `.exe`**；`IMAGENAME eq vmmemWSA.exe` 匹配 0 行，而 **`tasklist` 匹配与否都 exit 0** —— 过滤器写错时退出码救不回来，只能读 stdout。`*` 兼容两种拼写 |
+| 错误类型 | 计划只写 `Result<T>` | `OpsError { Adb, Activate, Helper, Rejected, NoData }` | 九个操作里有两个不跑 adb（`wsa://` 激活）、两个跑 Windows helper（`taskkill`/`tasklist`），塞进 `ExecError` 会让调用方靠字符串猜原因 |
+| 成功判定 | 计划："检查 exit code 与 stdout 含 `Success`" | **两者都要** | adb 有 exit 0 却打印 `Failure [...]` 的先例（Task 10 实测，且它打在 **stdout**）。失败关闭：假"失败"会重试，假"成功"会丢安装 |
+
+**三项故意不做单测**：`launch_app` / `start_subsystem` / `stop_subsystem`。
+唯一能验证它们的办法就是**真启动、真杀掉用户自己的子系统**，任何单测都会在每次
+`cargo test` 时把读者机器上的 WSA 关一遍。可测的部分已被抽出来钉住：
+`launch_uri`/`start_uri` 的字符串（spec §1.2 的核心结论）、`wait_until` 的超时分支
+（`stop_subsystem` 里唯一会出错的地方）。三项由 Task 13 的 CLI 手工验收。
+
+**假 adb**：`ops.rs` 的测试用一个 `.cmd` 冒充 adb——executor 只决定程序和 argv，不知道
+程序做什么，所以让它指向一个从自身目录读"应答文件"的批处理，每个测试就能决定 adb 说了
+什么。写这个之前先实证过：`std::process::Command` **能**在 Windows 上直接执行 `.cmd`
+（走 `cmd.exe /c`），且 `adb devices` 的 **tab 分隔**能原样穿过往返。批处理是**纯 ASCII**
+且状态目录取自 `%~dp0`（不是烤进去的路径），所以临时目录带空格或非 ASCII 也不会坏。
 
 ---
 

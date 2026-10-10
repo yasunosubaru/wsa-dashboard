@@ -543,33 +543,53 @@ git commit -m "feat(P1): command executor with timeout tiers and kill_on_drop"
 
 **Interfaces:**
 - Consumes: `WsaCommandExecutor`（Task 10）、decoders（Task 5–7）、`WsaPaths`（Task 8）
-- Produces: `impl WsaDashboard { pub async fn probe(&self) -> Result<SubsystemStatus>; pub async fn list_apps(&self, include_system: bool) -> Result<Vec<AppInfo>>; pub async fn app_info(&self, package: &str) -> Result<AppInfo>; pub async fn launch_app(&self, package: &str) -> Result<()>; pub async fn stop_app(&self, package: &str) -> Result<()>; pub async fn install_apk(&self, path: &Path) -> Result<()>; pub async fn uninstall_apk(&self, package: &str) -> Result<()>; pub async fn start_subsystem(&self) -> Result<()>; pub async fn stop_subsystem(&self) -> Result<()> }` —— CLI 与 P2+ UI 消费
+- Produces: `pub struct WsaDashboard { executor, paths }`（+ `new`/`executor`/`paths`/`adb_port` 访问器）与 `impl WsaDashboard { pub async fn probe(&self) -> Result<SubsystemStatus, OpsError>; pub async fn list_apps(&self, include_system: bool) -> Result<Vec<AppInfo>, OpsError>; pub async fn app_info(&self, package: &str) -> Result<AppInfo, OpsError>; pub async fn launch_app(&self, package: &str) -> Result<(), OpsError>; pub async fn stop_app(&self, package: &str) -> Result<(), OpsError>; pub async fn install_apk(&self, path: &Path) -> Result<(), OpsError>; pub async fn uninstall_apk(&self, package: &str) -> Result<(), OpsError>; pub async fn start_subsystem(&self) -> Result<(), OpsError>; pub async fn stop_subsystem(&self) -> Result<(), OpsError> }` —— CLI 与 P2+ UI 消费
 
-- [ ] **Step 1: 实现 `launch_app` 用 `wsa://`，不用 `WsaClient /launch`**
+> **修正（执行时发现）**：计划原文只写 `Result<T>`，没定错误类型。九个操作里两个不跑 adb（`wsa://` 激活）、两个跑 Windows helper（`taskkill`/`tasklist`），所以引入 **`OpsError { Adb(ExecError), Activate, Helper, Rejected, NoData }`**；`impl From<ExecError> for OpsError` 让 `?` 仍然可用。详见 `docs/MAPPING.md` §4.1.2。
+
+- [x] **Step 1: 实现 `launch_app` 用 `wsa://`，不用 `WsaClient /launch`**
 
 这是 spec §1.2 的核心结论。`launch_app` 必须走 `ShellExecuteW("wsa://{package}")`，**不是** spawn `WsaClient.exe /launch`——后者已被 7 种机制实测证伪（exit 0 零动作）。用 `open` crate（已在依赖里）：`open::that(format!("wsa://{package}"))`。
 
 `start_subsystem` 同理：`open::that("wsa://com.android.settings")`（spec §1.2 实测 12s 冷启动，系统包为兜底，Q2 已定）。
 
-- [ ] **Step 2: 实现 `stop_subsystem` 杀 `WsaClient` 进程**
+> **单测边界**：URI 字符串被 `launch_uri` / `start_uri` 抽出来钉住（`launch_uri_is_the_wsa_scheme_and_nothing_else`）；`open::that` 本身**不在单测里调用**——它真的会冷启动子系统，跑一次单测就把读者机器上的 WSA 关一遍。由 Task 13 的 CLI 手工验收。
+
+- [x] **Step 2: 实现 `stop_subsystem` 杀 `WsaClient` 进程**
 
 spec §1.3 实测：`/terminate` 零动作，杀进程才让 `vmmemWSA` 干净下线。实现用 `taskkill /F /IM WsaClient.exe`，随后轮询 `vmmemWSA` 消失（最多 30s）。
 
-- [ ] **Step 3: 实现 `probe` 三段判定**
+> **修正（实测，非推断）**：轮询过滤器必须是 `tasklist /FI "IMAGENAME eq vmmemWSA*"`。进程名实读为 **`vmmemWSA`，不带 `.exe`**；写 `vmmemWSA.exe` 时 `tasklist` 返回 **"No tasks are running which match" 即 0 行**，而**匹配与否 exit code 都是 0**——过滤器写错时退出码救不回来，只有 stdout 能分辨。`taskkill` 自身的退出码**故意不看**：进程已不在时它非零退出，那恰恰是想要的状态；真正判定成功与否的是轮询。
+>
+> 同样故意不写单测：`stop_subsystem` 的唯一验证办法就是真杀掉读者正在跑的 WSA。可测的部分已抽出为 `wait_until`（含超时分支，`wait_until_reports_a_subsystem_that_will_not_stop`）。
+
+- [x] **Step 3: 实现 `probe` 三段判定**
 
 顺序：① `ListAdbDevices` 无 `device` 行 → `Stopped`；② 有设备但 `sys.boot_completed != "1"` → `Booting`；③ 否则 `Ready`。`Unauthorized` 由 `adb devices` 输出含 `unauthorized` 判定（spec §1.4 要求容忍四态）。
 
 **这条覆盖 Review Focus 第 2 条**（未运行 vs 未安装必须可区分）。
 
-- [ ] **Step 4: 实现其余操作**
+> **修正（执行时发现的两处）**：
+> 1. **缺 `Offline` 态**。spec §5 把 `offline`/`unauthorized` 归 **T2**（给"重连"），不能与 T3"未运行/启动"同渲染——按计划"无 device 行 → Stopped"会把 offline 塌进 T3，用户对着已运行的子系统按"启动"。故 `SubsystemState` 新增 **`Offline`**（`models.rs`，`only_ready_counts_as_ready` 同步补一例）。
+> 2. **计划漏了 `adb connect`**。spec §1.4 明说"WSA 停止后 adb server 把设备条目整个清掉（不是留 offline）"，且系统里没有任何东西会再连回去——一个只读的 probe 会**永远**报 `Stopped`，哪怕 WSA 正在跑。故 `probe` 在条目 `Absent` 时先跑一次 `ConnectAdb` 再重读（`adb connect` 到关闭端口非零退出是常态，已忽略；实测 `adb disconnect` 后 `adb devices` 确为空）。`Offline`/`Unauthorized` **不**触发 connect：`adb connect` 对已存在的条目只是打印 `already connected`，不会重新握手，连了也没用。
+
+- [x] **Step 4: 实现其余操作**
 
 `install_apk`/`uninstall_apk` 走 `InstallApk`/`UninstallApk` 命令后检查 exit code 与 stdout 含 `Success`。`list_apps` 走 `ListPackages` + 逐包 `PackageInfo`（并发受 executor 信号量约束）。
 
-- [ ] **Step 5: 手工验证（不写单测——依赖实机 adb，Q8 已定）**
+> **两处落地细节**：① `list_apps` 收到 `dumpsys` 失败或解析不出时**不丢行**，降级为版本 0 的占位项（spec §5"绝不空白"落到每个包上）——`assemble` 的 `None` 分支有专门测试；② 信号量之外实际是**顺序**逐包 `dumpsys`，因为 spec §4 写的是"所有 adb 调用串行过闸"，且顺序执行让返回顺序与列表顺序一致。
+
+- [x] **Step 5: 手工验证**
 
 Run: `cargo run --bin wsadash -- probe`（CLI 在 Task 13 才有，此处先用 `cargo test` 里的 `#[ignore]` 集成测试占位）
 
-- [ ] **Step 6: 提交**
+> **修正（比计划做得多，但不是自作主张）**：计划写"不写单测——依赖实机 adb，Q8 已定"。实际上**不依赖实机就能测**：`ops.rs` 的测试拿一个 `.cmd` 冒充 adb（executor 只决定程序和 argv，不知道程序做什么），从自身目录读"应答文件"，每个测试自己决定 adb 说了什么——于是 probe 四态、`adb connect` 自愈、列表过滤、降级占位、`Success`/`Failure` 判定全部有了单测（**+20 个**）。写之前先实证过 `std::process::Command` 确实能在 Windows 上直接执行 `.cmd`（走 `cmd.exe /c`），以及 `adb devices` 的 tab 分隔能原样穿过往返。
+>
+> 首轮 **97/99 通过、2 失败**，两根因都记在 `ops.rs` 模块文档里：假脚本把 serial 拼重了（`127.0.0.1:` + `%~2`，而 `%~2` 本身已带前缀），以及"缺 adb"的测试删的是 `.cmd`（那只模型化了*损坏*的 adb——`cmd.exe` 仍能跑，错误是 `Failed{code:1}` 而非 `NotFound`，两者对应完全不同的补救动作）。
+>
+> 实机占位测试 `probe_against_the_live_subsystem` 已实跑通过：`state=Ready port=58526 boot_completed=true`。
+
+- [x] **Step 6: 提交**
 
 ```bash
 git add -A

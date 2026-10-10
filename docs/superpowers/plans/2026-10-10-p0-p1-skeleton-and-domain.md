@@ -370,27 +370,27 @@ git commit -m "feat(P1): dumpsys package decoder"
 - Consumes: `SubsystemStatus`、`SubsystemState`（Task 3）
 - Produces: `pub fn parse_props(stdout: &str) -> HashMap<String,String>`、`pub fn subsystem_status(props: &HashMap<String,String>, adb_online: bool, port: u16) -> SubsystemStatus` —— probe 消费
 
-- [ ] **Step 1: 写失败测试（内联 `src/adb/decoder.rs`）**
+- [x] **Step 1: 写失败测试（内联 `src/adb/decoder.rs`）**
 
 两条链路断言：① `parse_props("[ro.build.type]: [user]\n[ro.debuggable]: [0]\n")` 得 2 键；② `subsystem_status` 状态机——`adb_online=false` → `Stopped`；`adb_online=true` 但 `sys.boot_completed != "1"` → `Booting`；两者齐备 → `Ready`。
 
 **这条测试就是 Review Focus 第 2 条**（"WSA 已安装但子系统没启动"必须报"未运行"而非"未安装"）。
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cargo test --release --bin wsadash`
 Expected: FAIL，`unresolved import super::{parse_props, subsystem_status}`
 
-- [ ] **Step 3: 实现两个函数**
+- [x] **Step 3: 实现两个函数**
 
 签名照上。`parse_props` 逐行匹配 `[key]: [value]`。`subsystem_status` 只做状态推导，不发命令。
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add -A

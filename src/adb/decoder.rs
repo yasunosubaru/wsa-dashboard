@@ -12,7 +12,9 @@
 
 #![allow(dead_code)]
 
-use crate::wsa::models::AppInfo;
+use std::collections::HashMap;
+
+use crate::wsa::models::{AppInfo, SubsystemState, SubsystemStatus};
 
 /// Name prefixes that mark a package as preinstalled rather than user-added.
 ///
@@ -191,6 +193,75 @@ fn field_value<'a>(body: &'a str, key: &str) -> Option<&'a str> {
 fn system_flags(body: &str) -> Option<&str> {
     let pkg = field_value(body, "pkgFlags");
     pkg.or_else(|| field_value(body, "flags"))
+}
+
+// ---- `getprop` -----------------------------------------------------------
+
+/// Parse `adb shell getprop` stdout into a key/value map.
+///
+/// One `[key]: [value]` pair per line, which is the only shape the platform
+/// emits. Anything else is dropped rather than reported: the probe runs on
+/// whatever adb hands back, and a single warning line must not take the
+/// health check down.
+///
+/// Duplicate keys keep the last value -- the platform does not produce any,
+/// and last-wins matches how a reader would scan the output.
+pub fn parse_props(stdout: &str) -> HashMap<String, String> {
+    stdout.lines().filter_map(parse_prop_line).collect()
+}
+
+/// `[key]: [value]` -> `(key, value)`.
+///
+/// Splits on the first `]` so a value that itself contains `]: ` still lands
+/// in the value half, then strips exactly one enclosing bracket.
+fn parse_prop_line(line: &str) -> Option<(String, String)> {
+    let rest = line.trim().strip_prefix('[')?;
+    let key_end = rest.find(']')?;
+    let key = &rest[..key_end];
+    if key.is_empty() {
+        return None;
+    }
+    let tail = rest[key_end + 1..].strip_prefix(':')?.trim_start();
+    let inner = tail.strip_prefix('[')?;
+    let value = inner.strip_suffix(']').unwrap_or(inner);
+    Some((key.to_string(), value.to_string()))
+}
+
+/// Derive subsystem readiness. Pure state derivation -- it issues no commands,
+/// so the whole state machine is unit testable.
+///
+/// Three inputs decide three states:
+///   * `adb_online == false` -> `Stopped`. This is the installed-but-not-
+///     running case, and it must never be reported as `NotInstalled`: the
+///     caller already knows WSA is installed by the time it asks.
+///   * online but `sys.boot_completed` is not `1` -> `Booting`.
+///   * both -> `Ready`.
+///
+/// `sys.boot_completed` is the health signal on purpose; `mCurrentFocus` is
+/// not usable (spec 1.4).
+pub fn subsystem_status(
+    props: &HashMap<String, String>,
+    adb_online: bool,
+    port: u16,
+) -> SubsystemStatus {
+    let boot_completed = props
+        .get("sys.boot_completed")
+        .map(|v| v.trim())
+        .is_some_and(|v| v == "1");
+
+    let state = if !adb_online {
+        SubsystemState::Stopped
+    } else if boot_completed {
+        SubsystemState::Ready
+    } else {
+        SubsystemState::Booting
+    };
+
+    SubsystemStatus {
+        state,
+        adb_port: port,
+        boot_completed,
+    }
 }
 
 #[cfg(test)]
@@ -383,5 +454,112 @@ package:/product/overlay/NavigationBarModeGesturalExtraWideBack/NavigationBarMod
 
         let text = "Packages:\n  Package [com.topjohnwu.magisk] (a1):\n    versionName=1.0\n    versionCode=1\n";
         assert!(!parse_package_info(text).unwrap().is_system);
+    }
+
+    // ---- Task 7: `getprop` + subsystem state machine ---------------------
+
+    use super::{parse_props, subsystem_status};
+    use crate::wsa::models::{SubsystemState, SubsystemStatus};
+
+    /// Subset of real `adb shell getprop` output from the local device,
+    /// 2026-10-10. The values matter: the model string contains `(` `)` and
+    /// the release value is a bare `13`.
+    const GETPROP: &str = "\
+[init.svc.zygote]: [running]
+[ro.build.type]: [user]
+[ro.build.version.release]: [13]
+[ro.debuggable]: [0]
+[ro.product.model]: [Subsystem for Android(TM)]
+[sys.boot_completed]: [1]
+";
+
+    #[test]
+    fn parses_getprop_pairs() {
+        let props = parse_props(
+            "[ro.build.type]: [user]\n[ro.debuggable]: [0]\n",
+        );
+        assert_eq!(props.len(), 2);
+        assert_eq!(props["ro.build.type"], "user");
+        assert_eq!(props["ro.debuggable"], "0");
+    }
+
+    #[test]
+    fn parses_real_getprop_output() {
+        let props = parse_props(GETPROP);
+        assert_eq!(props["sys.boot_completed"], "1");
+        assert_eq!(props["ro.product.model"], "Subsystem for Android(TM)");
+        assert_eq!(props["ro.build.version.release"], "13");
+        assert_eq!(props.len(), 6);
+    }
+
+    /// adb output is not guaranteed to be clean -- a warning line, a stray
+    /// prompt or an empty line must be skipped, not panic the probe.
+    #[test]
+    fn malformed_getprop_lines_are_skipped() {
+        let props = parse_props("garbage\n\n   \n[truncated]\n[ok.key]: [v]\n[nested]: [a]: [b]\n");
+        assert_eq!(props["ok.key"], "v");
+        assert_eq!(props.len(), 2);
+    }
+
+    #[test]
+    fn empty_prop_value_is_kept_as_empty() {
+        let props = parse_props("[some.key]: []\n");
+        assert_eq!(props["some.key"], "");
+        assert!(props.contains_key("some.key"));
+    }
+
+    #[test]
+    fn empty_input_yields_no_props() {
+        assert!(parse_props("").is_empty());
+    }
+
+    // -- the state machine. This is Review Focus #2: an installed but
+    // -- stopped subsystem must report "not running", never "not installed".
+
+    fn status(adb_online: bool, boot_completed: &str) -> SubsystemStatus {
+        let mut props = std::collections::HashMap::new();
+        props.insert("sys.boot_completed".to_string(), boot_completed.to_string());
+        subsystem_status(&props, adb_online, 58526)
+    }
+
+    #[test]
+    fn offline_subsystem_is_stopped_not_not_installed() {
+        let s = status(false, "");
+        assert_eq!(s.state, SubsystemState::Stopped);
+        assert!(!s.boot_completed);
+        assert!(!s.is_ready());
+    }
+
+    #[test]
+    fn online_but_boot_not_done_is_booting() {
+        assert_eq!(status(true, "").state, SubsystemState::Booting);
+        assert_eq!(status(true, "0").state, SubsystemState::Booting);
+        assert_eq!(status(true, "yes").state, SubsystemState::Booting);
+    }
+
+    #[test]
+    fn online_and_boot_done_is_ready() {
+        let s = status(true, "1");
+        assert_eq!(s.state, SubsystemState::Ready);
+        assert!(s.boot_completed);
+        assert!(s.is_ready());
+    }
+
+    /// Whitespace around the value must not flip the state.
+    #[test]
+    fn boot_completed_value_is_trimmed() {
+        let mut props = std::collections::HashMap::new();
+        props.insert("sys.boot_completed".to_string(), " 1 ".to_string());
+        let s = subsystem_status(&props, true, 58526);
+        assert_eq!(s.state, SubsystemState::Ready);
+    }
+
+    #[test]
+    fn status_carries_the_resolved_port() {
+        assert_eq!(status(false, "").adb_port, 58526);
+        assert_eq!(status(true, "1").adb_port, 58526);
+        let s = subsystem_status(&std::collections::HashMap::new(), true, 12345);
+        assert_eq!(s.adb_port, 12345);
+        assert_eq!(s.state, SubsystemState::Booting);
     }
 }

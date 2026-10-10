@@ -498,33 +498,36 @@ git commit -m "feat(P1): WsaCommand enum with timeout classification"
 
 **Interfaces:**
 - Consumes: `WsaCommand`（Task 9）
-- Produces: `pub struct WsaCommandExecutor { adb_path: PathBuf, heavy_lock: Arc<Mutex<()>>, read_sem: Arc<Semaphore>, write_sem: Arc<Semaphore> }`、`impl WsaCommandExecutor { pub async fn run(&self, cmd: &WsaCommand) -> Result<CommandOutput, ExecError>`、`pub struct CommandOutput { pub stdout: String, pub stderr: String, pub exit_code: i32 }`、`pub enum ExecError { TimedOut, NotFound, Failed { code: i32, stderr: String } }`
+- Produces: `pub struct WsaCommandExecutor { adb_path: PathBuf, heavy_lock: Arc<Mutex<()>>, read_sem: Arc<Semaphore>, write_sem: Arc<Semaphore> }`、`impl WsaCommandExecutor { pub async fn run(&self, cmd: &WsaCommand) -> Result<CommandOutput, ExecError>`、`pub struct CommandOutput { pub stdout: String, pub stderr: String, pub exit_code: i32 }`、`pub enum ExecError { TimedOut, NotFound, Failed { code: i32, stdout: String, stderr: String } }`
 
-- [ ] **Step 1: 写失败测试（内联 `src/wsa/executor.rs`，用 `#[tokio::test]`）**
+> **修正（执行时发现）**：`Failed` 原计划只带 `stderr`。**不够**——`adb install` 失败时把 `Failure [REINSTALL_FAILED_…]` 打在 **stdout**，只留 stderr 会让最常见的失败显示为空原因。故 `Failed` 带上完整 `stdout`，并加 `ExecError::reason() -> String` 供 UI/日志直接用（stdout 优先，stderr 兜底，都没有时退化为 `exit code N`）。
+> 另加两个计划未写但必需的项：`WsaCommandExecutor::new(adb_path)` 与 `adb_path()` 访问器（Task 11 与 Task 13 要在"adb 未找到"时把路径显示给用户）。
 
-用 `WsaCommand::Shell { args }` 指向一个会 sleep 的假命令验证超时与杀进程：
-```rust
-let out = executor.run(&WsaCommand::Shell{args: vec!["sleep".into(),"9999".into()]}).await;
-assert!(matches!(out, Err(ExecError::TimedOut)));
-```
-另测：`ExecError::NotFound` 在 adb 路径不存在时触发（**Review Focus 第 1 条**：adb 缺失要给可读诊断，不 panic）。
+- [x] **Step 1: 写失败测试（内联 `src/wsa/executor.rs`，用 `#[tokio::test]`）**
 
-- [ ] **Step 2: 运行确认失败**
+> **修正（执行时发现）**：原计划用 `WsaCommand::Shell { args: vec!["sleep","9999"] }` 造超时——这要求真机 adb 在跑，违反 Q8（测试不得依赖实机）。且 `argv()` 会给 `Shell` 补前缀 `shell`，`adb shell sleep 9999` 在无设备时立刻失败，根本不会超时。
+> 实际做法：把执行闸门拆出一条可注入的 seam `run_program(program, argv, limit)`，测试直接拿它喂 **cmd.exe**（自带 `for /l` 无限循环、可控 exit code 与两个流）；而 `WsaCommandExecutor::run` 一层则用 **findstr.exe** 当假 adb——它对任意 argv 都以非零退出并写 stderr。
+> 两个假件都是实测选出来的：`powershell.exe` 每次启动 ~2s（135s 套件 → 3.3s），且 `install -r a.apk` 竟返回 exit 0；`cmd.exe` 当假 adb 则因 stdin 为 null 时交互提示符 EOF 后干净退出 0，让"失败"看起来像成功。
+
+覆盖：超时、`kill_on_drop` 真的杀掉子进程（用临时 marker 文件观察写入是否停止）、`NotFound`（**Review Focus 第 1 条**：adb 缺失要给可读诊断，不 panic）、stdout/stderr/exit code 捕获、`Failed` 携带两个流、读写两条信号量互不阻塞、`heavy_lock` 互斥且释放。
+
+- [x] **Step 2: 运行确认失败**
 
 Run: `cargo test --release --bin wsadash`
 Expected: FAIL
 
-- [ ] **Step 3: 实现 `executor.rs`**
+- [x] **Step 3: 实现 `executor.rs`**
 
 关键取值（照 spec §2.2）：超时读 `10s`/写 `45s`/重活 `1800s`；信号量读 `Semaphore::new(16)`、写 `Semaphore::new(4)`；信号量获取超时 `20s`（流式 `10s`）；取消靠 `kill_on_drop(true)`。
-`heavy_lock` 只在 `is_heavy()` 时持有。命令用 `tokio::process::Command`，`.kill_on_drop(true)`，`.output()` 外套 `tokio::time::timeout`。
+`heavy_lock` 只在 `is_heavy()` 时持有，且**先于信号量获取**——否则重活只能在拿到槽位之后才获得互斥，中间那段是敞口。命令用 `tokio::process::Command`，stdin 必须 `null`（否则 `adb shell` 无参时会一直等终端），stdout/stderr 必须 `piped`（否则拿不到输出），`.kill_on_drop(true)` 外套 `tokio::time::timeout(limit, child.wait_with_output())`。
+非零退出码在 `run_program` 内转为 `ExecError::Failed`。
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `cargo test --release --bin wsadash`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add -A

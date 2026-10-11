@@ -46,7 +46,13 @@ pub const GUIDE_LINK: &str = "main.guide_link";
 pub const START_WSA_URI: &str = "wsa://com.android.settings";
 
 /// Where `main.guide_link` points when WSA is not installed at all (R6).
-pub const GUIDE_URL: &str = "https://learn.microsoft.com/en-us/windows/android/";
+///
+/// Verified reachable 2026-10-11: Microsoft's WSA-specific page. It redirects
+/// to the "previous versions" archive because WSA left the Microsoft Store on
+/// 2025-03-05, and it still documents the exact `adb connect
+/// 127.0.0.1:58526` this app uses -- so it is the most useful destination
+/// left, and unlike the current dev-tools hub it is actually about WSA.
+pub const GUIDE_URL: &str = "https://learn.microsoft.com/en-us/windows/android/wsa/";
 
 /// Catppuccin Mocha tints. The reference paints every initial the same grey;
 /// Q29 asks for a stable per-package colour instead.

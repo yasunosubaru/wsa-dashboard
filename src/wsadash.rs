@@ -22,6 +22,13 @@
 mod adb;
 mod wsa;
 
+// The home view model is pure and belongs to `src/ui/`, but the CLI must not
+// pull in `data.rs` / `handlers/`, which need the Slint `AppWindow`. One
+// `#[path]` gives the CLI the file it tests without the rest of the module
+// tree; the GUI bin reaches it through `mod ui;` instead.
+#[path = "ui/home_model.rs"]
+mod home_model;
+
 use adb::path::adb_path;
 use std::io::Write;
 use std::path::Path;

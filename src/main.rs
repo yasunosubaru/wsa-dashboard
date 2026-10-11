@@ -9,7 +9,11 @@
 // Builds src/ui/app.slint and exposes `AppWindow`.
 slint::include_modules!();
 
+mod adb;
 mod app;
+mod i18n;
+mod ui;
+mod wsa;
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;

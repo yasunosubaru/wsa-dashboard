@@ -581,6 +581,28 @@ mod tests {
         assert_eq!(initial_of(""), "");
     }
 
+    /// Every key the model chooses between has to resolve, or the card would
+    /// render the raw key to the user.
+    #[test]
+    fn every_key_this_module_names_is_in_the_i18n_table() {
+        for key in [
+            NO_APPS,
+            STALE,
+            UNAUTHORIZED,
+            OFFLINE,
+            STOPPED,
+            NOT_INSTALLED,
+            START_SUBSYSTEM,
+            GUIDE_LINK,
+        ] {
+            assert_ne!(
+                crate::i18n::t(key),
+                key,
+                "{key} is named by the view model but has no translation"
+            );
+        }
+    }
+
     #[test]
     fn row_of_builds_the_card_from_an_app_info() {
         let info = app("com.topjohnwu.magisk");

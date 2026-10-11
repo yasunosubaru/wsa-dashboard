@@ -29,6 +29,9 @@ mod wsa;
 #[path = "ui/home_model.rs"]
 mod home_model;
 
+#[path = "i18n/mod.rs"]
+mod i18n;
+
 use adb::path::adb_path;
 use std::io::Write;
 use std::path::Path;

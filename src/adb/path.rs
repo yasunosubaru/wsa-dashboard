@@ -7,6 +7,12 @@
 //! it: the CLI resolves it once, the GUI must resolve it too or the three-tier
 //! screenshots cannot point the app at a stand-in adb (docs/MAPPING.md, spec
 //! section 5).
+//!
+//! The CLI calls this at startup; the GUI's own call arrives with `data.rs`
+//! (Task 7), so without an allowance the two bins would disagree about
+//! whether this is used until then.
+
+#![allow(dead_code)]
 
 use std::ffi::OsString;
 use std::path::PathBuf;

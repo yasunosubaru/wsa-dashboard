@@ -1,0 +1,118 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Ported from the reference's src/ui/components/common.slint (wsl-dashboard
+// 0.12.0, GPL-3.0-only).
+//
+// The reference exports four components from this file: SidebarItem,
+// ThemedIcon, ActionIcon, WindowControlButton. Only ActionIcon is used before
+// P3, and the other three need assets that belong to a later page -- SidebarItem
+// and ThemedIcon draw from the bundled icons.ttf, WindowControlButton paints the
+// custom title bar that P3 adds along with the frameless window. Keeping them
+// here would mean importing a font that nothing reads. P3 brings them back
+// wholesale; docs/MAPPING.md records the omission.
+
+import { Theme, LayoutConstants } from "../theme.slint";
+
+export component ActionIcon inherits Rectangle {
+    in property <string> icon;
+    in property <string> icon_type: "action";
+    in property <bool> active: false;
+    in property <image> icon_image;
+    in property <bool> is_font_icon: true;
+    in property <bool> show_shield: false;
+    in property <string> tooltip: "";
+    // ★ added by this project. The reference has no way to grey out a button,
+    // because its cards are never mid-operation; ours are, for as long as any
+    // action is running (spec Q30). `enabled: false` makes the click a no-op
+    // and dims the glyph, which is the whole of what a disabled button needs.
+    in property <bool> enabled: true;
+    in property <brush> icon_color: !Theme.colorful_icons ? Theme.icon_color_action :
+                                   active ? Theme.accent :
+                                   icon_type == "navigation" ? Theme.icon_color_navigation :
+                                   icon_type == "success" ? Theme.icon_color_success :
+                                   icon_type == "danger" ? Theme.icon_color_danger :
+                                   icon_type == "warning" ? Theme.icon_color_warning :
+                                   icon_type == "info" ? Theme.icon_color_info :
+                                   icon_type == "purple" ? Theme.icon_color_purple :
+                                   icon_type == "gold" ? Theme.icon_color_gold :
+                                   icon_type == "cyan" ? Theme.icon_color_cyan :
+                                   icon_type == "pink" ? Theme.icon_color_pink :
+                                   icon_type == "teal" ? Theme.icon_color_teal :
+                                   icon_type == "indigo" ? Theme.icon_color_indigo :
+                                   icon_type == "lime" ? Theme.icon_color_lime :
+                                   icon_type == "orange" ? Theme.icon_color_orange :
+                                   icon_type == "rose" ? Theme.icon_color_rose :
+                                   icon_type == "heart" ? Theme.icon_color_heart :
+                                   icon_type == "violet" ? Theme.icon_color_violet :
+                                   icon_type == "emerald" ? Theme.icon_color_emerald :
+                                   icon_type == "amber" ? Theme.icon_color_amber :
+                                   icon_type == "sky" ? Theme.icon_color_sky :
+                                   icon_type == "fuchsia" ? Theme.icon_color_fuchsia :
+                                   icon_type == "cobalt" ? Theme.icon_color_cobalt :
+                                   icon_type == "mint" ? Theme.icon_color_mint :
+                                   icon_type == "slate" ? Theme.icon_color_slate :
+                                   Theme.icon_color_action;
+    in property <length> icon_size: 14px;
+    callback clicked;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    background: touch.pressed ? Theme.selected_bg : (touch.has-hover ? Theme.hover_bg : transparent);
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    // Tooltip - Use properties instead of conditional creation
+    Rectangle {
+        visible: touch.has-hover && tooltip != "";
+        opacity: (touch.has-hover && tooltip != "") ? 1 : 0;
+        background: Theme.dark_mode ? #2D2D30 : #FFFFFF;
+        border-color: Theme.border_color;
+        border-width: 1px;
+        border-radius: 4px;
+        z: 100;
+
+        // Dynamic Positioning - Reverted to static history behavior
+        x: (parent.width - self.width) / 2;
+        y: -10px;
+        width: tt_text.width + 12px;
+        height: tt_text.height + 6px;
+        tt_text := Text {
+            text: root.tooltip;
+            color: Theme.text_primary;
+            font-size: 11px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    Text {
+        visible: is_font_icon;
+        text: icon;
+        font-size: root.icon_size;
+        font-family: Theme.icon_font;
+        color: root.icon_color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Image {
+        visible: !is_font_icon;
+        source: icon_image;
+        width: 16px;
+        height: 16px;
+        image-fit: contain;
+    }
+
+    // The reference's "Admin Shield Overlay" block is not carried over yet.
+    // `show_shield` is the property that marks a button as needing elevation,
+    // and the mark is a bundled SVG that only the root badge -- a P3 concern --
+    // would set. Dropping the block and keeping the property means P3 restores
+    // two dozen lines instead of re-deriving them. Recorded in MAPPING.
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}

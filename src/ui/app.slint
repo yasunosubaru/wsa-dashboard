@@ -1,43 +1,119 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026
 // SPDX-License-Identifier: GPL-3.0-only
 
-// P0 skeleton window.
+// Root component, ported from the reference's src/ui/app.slint
+// (wsl-dashboard 0.12.0, GPL-3.0-only).
 //
-// Intentionally NOT a copy of the reference's app.slint yet: the reference root
-// component sets `no-frame: true` + `background: transparent` and paints its own
-// TitleBar (docs/reference/src/ui/components/title_bar.slint). Reproducing that
-// in P0 would give an invisible, un-screenshotable window.
+// P0 shipped a placeholder here -- a frameless root window would have had no
+// chrome to draw on and nothing to show, which makes a phase un-screenshotable.
+// This is the first real root, and it is deliberately smaller than the
+// reference's: one tab, no sidebar, no title bar of its own. What the
+// reference has that this file does not yet, and why, so P3 adds it rather
+// than re-derives it:
 //
-// P2 replaces this file with the real root component, ported from
-// docs/reference/src/ui/app.slint (9 tabs, sidebar, modal manager, 127 callbacks).
+//   reference feature        P2 status
+//   -----------------------  ------------------------------------------------
+//   no-frame + transparent   P3. Together with title_bar.slint, which P3 adds
+//   window + TitleBar        along with it. Frameless is not worth having on
+//                            its own; it is only worth having with the
+//                            replacement chrome in the same change.
+//   sidebar + nine tabs      P3. P2 is the first tab on its own.
+//   modal manager            P3, with the dialogs it arbitrates.
+//   AppI18n / theme wiring   P5, when the full i18n table lands.
 //
-// The window TITLE is kept in the reference's exact form because the single-
-// instance handshake matches on it -- see docs/MAPPING.md section 2.1.
+// The window TITLE is kept in the reference's exact form because the
+// single-instance handshake matches on it -- see docs/MAPPING.md section 2.1.
+
+import { Theme, Distro } from "theme.slint";
+import { MainView } from "views/main_view.slint";
+import { TaskStatusToast } from "components/task_status_toast.slint";
 
 export component AppWindow inherits Window {
     title: "WSA_DASHBOARD_WINDOW_UI";
 
     width: 800px;
     height: 600px;
-    background: #1e1e2e;
+    background: Theme.background;
 
-    VerticalLayout {
-        alignment: center;
-        spacing: 8px;
+    // Home-page state. Named for the page rather than for the subsystem,
+    // because the sidebar that would have disambiguated them is P3.
+    in property <[Distro]> distros: [];
+    in property <bool> home_loading: false;
+    in property <string> home_not_found_text: "";
+    in property <string> home_guide_url: "";
+    in property <string> home_guide_link_text: "";
+    in property <bool> home_greyed: false;
+    in property <bool> home_buttons_disabled: false;
 
-        Text {
-            text: "WSA Dashboard";
-            color: #cdd6f4;
-            font-size: 26px;
-            font-weight: 700;
-            horizontal-alignment: center;
+    // The reference calls these task_status_* rather than home_toast_*; the
+    // name is kept because the toast is a window-level overlay in the
+    // reference, above every dialog, and P3 keeps it that way.
+    in property <string> task_status_text: "";
+    in property <bool> task_status_visible: false;
+
+    // ★ Q24. Two-way rather than pushed through a callback: the LineEdit owns
+    // the string, so a callback would report a change that the property has
+    // already recorded. The poll loop reads this back.
+    in-out property <string> search_query: "";
+
+    // Callbacks wired in P2. The reference forwards all sixteen of
+    // MainView's plus its dialogs'; those land with their pages.
+    callback open_url(string);
+    callback start_distro(string);
+    callback stop_distro(string);
+    callback reorder_distros(int, int);
+    callback close_task_status();
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        // The reference paints this surface in the parent of its content
+        // Rectangle rather than in MainView, so the corner radius it applies
+        // there stays unapplied here -- P3 adds the radius together with the
+        // sidebar that needs it.
+        background: Theme.content_bg;
+
+        MainView {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            distros: root.distros;
+            wsl_loading: root.home_loading;
+            distro_not_found: root.home_not_found_text;
+            distro_not_found_text: root.home_not_found_text;
+            wsl_guide_url: root.home_guide_url;
+            guide_link_text: root.home_guide_link_text;
+            greyed: root.home_greyed;
+            buttons_disabled: root.home_buttons_disabled;
+            search_query <=> root.search_query;
+            open_url(url) => {
+                root.open_url(url);
+            }
+            start_distro(n) => {
+                root.start_distro(n);
+            }
+            stop_distro(n) => {
+                root.stop_distro(n);
+            }
+            reorder_distros(from, to) => {
+                root.reorder_distros(from, to);
+            }
         }
+    }
 
-        Text {
-            text: "P0 skeleton - the nine-tab UI lands in P2";
-            color: #a6adc8;
-            font-size: 13px;
-            horizontal-alignment: center;
+    // Toast notification (on top of all dialogs)
+    TaskStatusToast {
+        z: 100;
+        opacity: root.task_status_visible ? 1 : 0;
+        visible: root.task_status_visible;
+        text: root.task_status_text;
+        is_shown: root.task_status_visible;
+        max_container_width: root.width - 40px;
+        x: (root.width - self.width) / 2;
+        y: root.height - self.height - 14px;
+        close => {
+            root.close_task_status();
         }
     }
 }

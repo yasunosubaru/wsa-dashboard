@@ -104,6 +104,13 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("distro.configs", "Configs"),
     ("distro.running", "Running"),
     ("distro.stopped", "Stopped"),
+    // The reference's DistroInfo asks for this as its THIRD state -- anything
+    // that is neither Running nor Stopped -- but never defines it, so the
+    // reference renders the literal string "distro.installing" on screen. The
+    // key name is kept (Q12) and the value is ours: for us the third state is
+    // an app whose state is unknown because the subsystem is unreachable, and
+    // "Installing" would be a claim the data cannot support.
+    ("distro.installing", "Unavailable"),
     // -- operation: the single busy slot -----------------------------------
     ("operation.starting", "Starting ..."),
     ("operation.stopping", "Stopping ..."),
@@ -192,5 +199,94 @@ mod tests {
     fn rtl_and_language_are_stubs_until_p6() {
         assert!(!is_rtl("en"));
         assert_eq!(current_lang(), "en");
+    }
+
+    // -- the .slint side -----------------------------------------------------
+    //
+    // Slint cannot type-check a string, so a typo'd key does not fail the
+    // build: it renders the raw key to the user, on a screen nobody is
+    // watching until someone reports it. This closes that hole from the other
+    // end.
+
+    /// Every `.slint` file under `src/ui`, recursively.
+    fn slint_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut found = Vec::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return found;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(slint_files(&path));
+            } else if path.extension().is_some_and(|ext| ext == "slint") {
+                found.push(path);
+            }
+        }
+        found
+    }
+
+    /// Every key a `.slint` file asks `AppI18n.t` for, in order of appearance.
+    fn keys_asked_for(text: &str) -> Vec<String> {
+        const NEEDLE: &str = "AppI18n.t(\"";
+        let mut keys = Vec::new();
+        let mut offset = 0;
+        while let Some(found) = text[offset..].find(NEEDLE) {
+            let value_start = offset + found + NEEDLE.len();
+            let tail = &text[value_start..];
+            let end = tail
+                .find('"')
+                .expect("a quoted key always has a closing quote");
+            keys.push(tail[..end].to_string());
+            offset = value_start + end;
+        }
+        keys
+    }
+
+    /// A key the UI asks for and the table does not have is the worst version
+    /// of the failure above: the window keeps running and shows the key. This
+    /// test is the only thing that would notice before a user does.
+    #[test]
+    fn every_key_a_slint_file_asks_for_is_in_the_table() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("ui");
+        assert!(
+            root.is_dir(),
+            "{} does not exist; the scan below would pass by finding nothing",
+            root.display()
+        );
+
+        let mut missing = Vec::new();
+        let mut scanned = 0;
+        for path in slint_files(&root) {
+            let text = std::fs::read_to_string(&path).expect("read a .slint file");
+            for key in keys_asked_for(&text) {
+                scanned += 1;
+                if lookup(&key).is_none() {
+                    missing.push(format!("{}: {key}", path.display()));
+                }
+            }
+        }
+
+        // Without this the test is one deleted directory away from asserting
+        // nothing at all, which is worse than not having it.
+        assert!(scanned > 0, "the scan found no AppI18n.t calls");
+
+        assert!(
+            missing.is_empty(),
+            "keys the UI asks for that the table does not have:\n  {}",
+            missing.join("\n  ")
+        );
+    }
+
+    #[test]
+    fn the_key_scanner_reports_what_it_cannot_follow() {
+        // The scanner keys on the literal text `AppI18n.t("`, so an alias for
+        // that function is invisible to it. Nothing here uses one; if someone
+        // introduces one, this documents the hole they opened.
+        assert!(keys_asked_for("t(\"main.loading\")").is_empty());
+
+        // It also stops at the first quote it meets rather than reasoning
+        // about how Slint parses adjacent strings, so a key written in two
+        // pieces would be scanned as only its first piece.
+        assert_eq!(keys_asked_for("AppI18n.t(\"a\" \".b\");"), ["a"]);
     }
 }

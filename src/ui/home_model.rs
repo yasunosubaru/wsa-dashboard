@@ -54,11 +54,12 @@ pub const START_WSA_URI: &str = "wsa://com.android.settings";
 /// left, and unlike the current dev-tools hub it is actually about WSA.
 pub const GUIDE_URL: &str = "https://learn.microsoft.com/en-us/windows/android/wsa/";
 
-/// Catppuccin Mocha tints. The reference paints every initial the same grey;
-/// Q29 asks for a stable per-package colour instead.
-pub const PALETTE: [&str; 8] = [
-    "#f5e0dc", "#f2cdcd", "#f5c2e7", "#cba6f7", "#f38ba8", "#eba0ac", "#fab387", "#f9e2af",
-];
+/// Q29's palette has eight tints. The *colours* are not here -- they live in
+/// `Theme.badge-tint` in `theme.slint`, because which tint a package gets is
+/// data and what that tint looks like on a light or a dark background is
+/// presentation. Slint also has no way to turn a `#rrggbb` string back into a
+/// colour at runtime, so a colour travelling this way could not be painted.
+pub const PALETTE_LEN: usize = 8;
 
 /// How the home page degrades.
 ///
@@ -93,8 +94,10 @@ pub struct AppRow {
     pub version: String,
     /// Q29: first character of `display_name`.
     pub initial: String,
-    /// Q29: `#rrggbb`, stable per package. The reference is a fixed grey.
-    pub initial_color: String,
+    /// Q29: `1..=PALETTE_LEN`, stable per package; `0` means "no opinion", and
+    /// the card falls back to the reference's fixed grey. Index rather than a
+    /// colour, for the reason `PALETTE_LEN` gives.
+    pub initial_color_index: i32,
     pub running: bool,
 }
 
@@ -290,7 +293,7 @@ fn row_of(info: &AppInfo) -> AppRow {
     AppRow {
         package: info.package.clone(),
         initial: initial_of(&display_name),
-        initial_color: initial_color_of(&info.package),
+        initial_color_index: initial_color_of(&info.package),
         version: info.version_name.clone(),
         display_name,
         running: false,
@@ -307,12 +310,16 @@ pub fn initial_of(display_name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// A tint picked from the package name, so the same package is the same
-/// colour on every run and a colour that shuffled per refresh cannot look
-/// like a bug.
-pub fn initial_color_of(package: &str) -> String {
+/// Which of the eight tints a package gets, so the same package is the same
+/// colour on every run -- a colour that shuffled per refresh would look like a
+/// bug, and there is no reason to make it look like one.
+///
+/// Returns `1..=PALETTE_LEN`. Zero is reserved for "no opinion", which is what
+/// a placeholder row has: it stands for an app we cannot see, not for one with
+/// a name worth tinting.
+pub fn initial_color_of(package: &str) -> i32 {
     let sum: usize = package.bytes().map(|byte| byte as usize).sum();
-    PALETTE[sum % PALETTE.len()].to_string()
+    (sum % PALETTE_LEN) as i32 + 1
 }
 
 /// Q24: match either the display name or the package, ignoring case.
@@ -541,10 +548,9 @@ mod tests {
     fn initial_color_is_stable_for_the_same_package() {
         let first = initial_color_of("com.topjohnwu.magisk");
         assert_eq!(first, initial_color_of("com.topjohnwu.magisk"));
-        assert!(first.starts_with('#') && first.len() == 7, "expected #rrggbb, got {first}");
         assert!(
-            PALETTE.contains(&first.as_str()),
-            "{first} is not one of the eight tints"
+            (1..=PALETTE_LEN as i32).contains(&first),
+            "expected 1..={PALETTE_LEN}, got {first}"
         );
     }
 
@@ -562,7 +568,7 @@ mod tests {
             "com.android.chrome",
             "com.whatsapp",
         ];
-        let distinct: std::collections::HashSet<String> = packages
+        let distinct: std::collections::HashSet<i32> = packages
             .iter()
             .map(|package| initial_color_of(package))
             .collect();

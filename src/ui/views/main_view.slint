@@ -1,0 +1,289 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 owu <wqh@live.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { CustomScrollbar } from "../components/scrollbar.slint";
+import { CustomLineEdit } from "../components/form_widgets.slint";
+import { Theme, Distro, AppI18n, LayoutConstants, AppApi } from "../theme.slint";
+import { DistroCard } from "../components/distro_card.slint";
+import { DistroNotFoundView } from "../components/distro_not_found_view.slint";
+
+// Isolated component to hold the Repeater and prevent unnecessary rebuilds
+component DistroList inherits VerticalLayout {
+    in property <[Distro]> distros;
+    in-out property <string> expanded_distro: "";
+    // ★ This project's deltas -- see the notes on DistroCard and on the opacity
+    // binding below.
+    in property <bool> greyed: false;
+    in property <bool> buttons_disabled: false;
+
+    // Callbacks - all must be passed through
+    callback start_distro(string);
+    callback stop_distro(string);
+    callback restart_distro(string);
+    callback terminal_distro(string);
+    callback folder_distro(string);
+    callback vscode_distro(string);
+    callback open_export_dialog(string);
+    callback open_clone_dialog(string);
+    callback open_move_dialog(string);
+    callback edit_bashrc_distro(string);
+    callback information_clicked(string);
+    callback delete_clicked(string);
+    callback settings_clicked(string);
+    callback configs_clicked(string);
+    callback compress_clicked(string);
+    callback sparse_clicked(string);
+    callback reorder_distros(int, int);
+
+    padding-top: 0px;
+    padding-bottom: 0px;
+    padding-left: AppI18n.is-rtl ? 16px : 4px;
+    padding-right: AppI18n.is-rtl ? 4px : 16px;
+    spacing: 12px;
+    alignment: start;
+
+    for d[index] in distros: drop_wrapper := DropArea {
+        width: 100%;
+        height: d.name == root.expanded_distro ? 96px : 48px;
+        animate height { duration: 200ms; easing: ease-out-quad; }
+
+        // Accept only move actions
+        can-drop(event) => {
+            return DragAction.move;
+        }
+        dropped(event) => {
+            let from_idx = AppApi.read-transfer(event.data);
+            if (from_idx != index) {
+                root.reorder_distros(from_idx, index);
+            }
+            return event.proposed-action;
+        }
+
+        // Visual drop indicator: blue left border when a drag hovers here
+        Rectangle {
+            x: AppI18n.is-rtl ? parent.width - 3px : 0px;
+            y: 0;
+            width: 3px;
+            height: 100%;
+            background: drop_wrapper.has-drag ? Theme.main_color : transparent;
+            border-radius: 2px;
+            animate background { duration: 100ms; }
+        }
+
+        DistroCard {
+            x: 0;
+            y: 0;
+            width: 100%;
+            distro: d;
+            sole_distro: distros.length == 1;
+            expanded: root.expanded_distro == d.name;
+            card_index: index;
+            buttons_disabled: root.buttons_disabled;
+            // Dim when a drag is hovering over this slot, or when the grid is
+            // showing a snapshot taken while the subsystem was healthy and it
+            // is not any more -- the data is still the best answer available,
+            // and dimming it is how the reference's visual language says so
+            // without inventing a second meaning for the same cards.
+            opacity: drop_wrapper.has-drag ? 0.6 : (root.greyed ? 0.5 : 1.0);
+            animate opacity { duration: 100ms; }
+
+            expand_clicked => {
+                if (root.expanded_distro == d.name) {
+                    root.expanded_distro = "";
+                } else {
+                    root.expanded_distro = d.name;
+                }
+            }
+            start_clicked => { root.start_distro(d.name); }
+            stop_clicked => { root.stop_distro(d.name); }
+            restart_clicked => { root.restart_distro(d.name); }
+            terminal_clicked => { root.terminal_distro(d.name); }
+            folder_clicked => { root.folder_distro(d.name); }
+            vscode_clicked => { root.vscode_distro(d.name); }
+            export_clicked => { root.open_export_dialog(d.name); }
+            clone_clicked => { root.open_clone_dialog(d.name); }
+            move_clicked => { root.open_move_dialog(d.name); }
+            edit_bashrc_clicked => { root.edit_bashrc_distro(d.name); }
+            information_clicked => { root.information_clicked(d.name); }
+            delete_clicked => { root.delete_clicked(d.name); }
+            settings_clicked => { root.settings_clicked(d.name); }
+            configs_clicked => { root.configs_clicked(d.name); }
+            compress_clicked => { root.compress_clicked(d.name); }
+        }
+    }
+}
+
+export component MainView inherits VerticalLayout {
+    in property <[Distro]> distros;
+    in property <bool> wsl_loading: false;
+    in property <string> distro_not_found: "";
+    in property <string> wsl_guide_url: "";
+    // ★ This project's deltas. See DistroNotFoundView for why the two texts
+    // below have to be supplied rather than looked up, and DistroCard for the
+    // other two. `search_query` is Q24's filter; it is two-way because the
+    // caller owns the query as well as the list it produces.
+    in property <string> distro_not_found_text: "";
+    in property <string> guide_link_text: "";
+    in property <bool> greyed: false;
+    in property <bool> buttons_disabled: false;
+    in-out property <string> search_query: "";
+
+    callback open_url(string);
+    callback start_distro(string);
+    callback stop_distro(string);
+    callback restart_distro(string);
+    callback terminal_distro(string);
+    callback folder_distro(string);
+    callback vscode_distro(string);
+    callback open_export_dialog(string);
+    callback open_clone_dialog(string);
+    callback open_move_dialog(string);
+    callback edit_bashrc_distro(string);
+    callback information_clicked(string);
+    callback delete_clicked(string);
+    callback settings_clicked(string);
+    callback configs_clicked(string);
+    callback compress_clicked(string);
+    callback reorder_distros(int, int);
+
+    in-out property <string> distro_to_delete;
+    in-out property <bool> show_delete_confirmation;
+    private property <string> expanded_distro: "";
+    private property <bool> has_error: distro_not_found != "" && distros.length == 0;
+    vertical-stretch: 1;
+    padding-top: 8px;
+    spacing: 12px;
+
+    // ★ Q24: this project's search box. The reference has none here -- its only
+    // navigation is the sidebar, and a WSL list is short enough that nobody
+    // needed to filter it. An Android install is a different kind of list: it
+    // holds every package the subsystem knows about, and the first ten apps
+    // being useful says nothing about the eleventh.
+    //
+    // The input itself is the reference's own CustomLineEdit rather than
+    // Slint's std LineEdit, because the reference imports no std widgets at
+    // all and its own is themed to Theme.input_bg. A search field that did not
+    // match the forms around it later would be the one control on the page
+    // drawn from a different palette. Recorded in MAPPING.
+    search := CustomLineEdit {
+        enabled: !root.buttons_disabled;
+        text <=> root.search_query;
+        placeholder-text: AppI18n.t("main.search_placeholder", [AppI18n.version]);
+    }
+
+    Rectangle {
+        vertical-stretch: 1;
+        clip: true;
+
+        if (root.has_error): Rectangle {
+            DistroNotFoundView {
+                guide_url: root.wsl_guide_url;
+                text: root.distro_not_found_text;
+                guide_text: root.guide_link_text;
+                open_url(url) => {
+                    root.open_url(url);
+                }
+            }
+        }
+
+        if (!root.has_error): Rectangle {
+            flick := Flickable {
+                interactive: false;
+                viewport-height: distro_list.preferred-height;
+                width: parent.width;
+                height: 100%;
+                distro_list := DistroList {
+                    distros: root.distros;
+                    greyed: root.greyed;
+                    buttons_disabled: root.buttons_disabled;
+                    expanded_distro <=> root.expanded_distro;
+                    start_distro(n) => {
+                        root.start_distro(n);
+                    }
+                    stop_distro(n) => {
+                        root.stop_distro(n);
+                    }
+                    restart_distro(n) => {
+                        root.restart_distro(n);
+                    }
+                    terminal_distro(n) => {
+                        root.terminal_distro(n);
+                    }
+                    folder_distro(n) => {
+                        root.folder_distro(n);
+                    }
+                    vscode_distro(n) => {
+                        root.vscode_distro(n);
+                    }
+                    open_export_dialog(n) => {
+                        root.open_export_dialog(n);
+                    }
+                    open_clone_dialog(n) => {
+                        root.open_clone_dialog(n);
+                    }
+                    open_move_dialog(n) => {
+                        root.open_move_dialog(n);
+                    }
+                    edit_bashrc_distro(n) => {
+                        root.edit_bashrc_distro(n);
+                    }
+                    information_clicked(n) => {
+                        root.information_clicked(n);
+                    }
+                    delete_clicked(n) => {
+                        root.delete_clicked(n);
+                        root.distro_to_delete = n;
+                        root.show_delete_confirmation = true;
+                    }
+                    settings_clicked(n) => {
+                        root.settings_clicked(n);
+                    }
+                    configs_clicked(n) => {
+                        root.configs_clicked(n);
+                    }
+                    compress_clicked(n) => {
+                        root.compress_clicked(n);
+                    }
+                    reorder_distros(from, to) => {
+                        root.reorder_distros(from, to);
+                    }
+                }
+            }
+
+            CustomScrollbar {
+                opacity: (flick.viewport-height > flick.height) ? 1 : 0;
+                visible: flick.viewport-height > flick.height;
+                x: AppI18n.is-rtl ? 2px : parent.width - 8px;
+                y: 0;
+                width: 8px;
+                height: 100%;
+                maximum: flick.viewport-height - flick.height;
+                page_size: flick.height;
+                value: -flick.viewport-y;
+                scroll_to(v) => {
+                    flick.viewport-y = -v;
+                }
+            }
+        }
+
+        if (root.wsl_loading && distros.length == 0 && distro_not_found == ""): Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+                Text {
+                    text: "...";
+                    font-size: 24px * LayoutConstants.font-scale;
+                    color: Theme.accent;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: AppI18n.t("main.loading", [AppI18n.version]);
+                    color: Theme.text_secondary;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+}

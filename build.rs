@@ -9,6 +9,7 @@
 //   block                              this file    reference
 //   ---------------------------------  -----------  -------------------------
 //   slint compilation                  yes          build.rs:13
+//   .slint tree change detection       yes          build.rs:17 (see C3 below)
 //   APP_EXPIRE_TIME from Cargo.toml    yes          build.rs:19-42
 //   icon + icon.rc + embed-resource    P8           build.rs:45-139
 //   verify_translations (i18n)         P5           build.rs:145-223
@@ -28,9 +29,38 @@ fn main() {
     slint_build::compile("src/ui/app.slint").expect("Slint compilation failed");
 
     println!("cargo:rerun-if-changed=Cargo.toml");
-    println!("cargo:rerun-if-changed=src/ui/app.slint");
+
+    // C3. The reference watches only app.slint, which is enough once a project
+    // has stopped growing: every .slint below it is reached by import, and
+    // slint-build recompiles them then anyway. This project is still adding a
+    // dozen of them, and an unwatched edit leaves cargo insisting nothing had
+    // changed while the window keeps showing the old markup. Watching the tree
+    // is the difference between "I changed the file and the build is stale" and
+    // a build that is merely slow to look.
+    watch_tree(Path::new("src/ui"));
 
     emit_expire_time();
+}
+
+/// Emit a `rerun-if-changed` for every `.slint` file at or under `dir`.
+///
+/// Directories are walked rather than listed, because `views/` and
+/// `components/` are both new here and both will keep growing.
+fn watch_tree(dir: &Path) {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // A missing directory is not worth failing the build over: the compile
+        // step above already reported it, and with a better message.
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            watch_tree(&path);
+        } else if path.extension().is_some_and(|ext| ext == "slint") {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
 }
 
 /// Resolve `[package.metadata] expire` into APP_EXPIRE_TIME.

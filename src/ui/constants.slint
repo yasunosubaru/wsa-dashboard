@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Ported from the reference's src/ui/constants.slint (wsl-dashboard 0.12.0,
+// GPL-3.0-only). Structure kept; values emptied, because every one of them is
+// either a link to the reference's own project or a URL only WSL needs
+// (usbipd releases, Ubuntu WSL images). P8's update check fills the repository
+// fields once this project has a remote to point them at (spec Q2: local git
+// only, so there is nothing truthful to put here yet).
+
+export global AppConstants {
+    // --- URLs ---
+    out property <string> project_repository: "";
+    out property <string> project_website: "";
+    out property <string> license_url: "/blob/main/LICENSE";
+}

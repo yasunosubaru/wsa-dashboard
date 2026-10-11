@@ -112,10 +112,52 @@ pub enum SubsystemState {
     /// Spec 1.3 measured this as what killing `WsaClient.exe` leaves behind,
     /// before the entry ages out entirely (spec 1.4). It is deliberately not
     /// folded into [`SubsystemState::Stopped`]: spec 5 puts a stale entry in
-    /// the T2 tier, where the UI offers *reconnect*, while `Stopped` is T3
-    /// and offers *start*. Pressing start on a subsystem that is already
-    /// running does nothing useful, so the two must not render the same.
+    /// the T2 tier while `Stopped` is T3, and pressing start on a subsystem
+    /// that is already running does nothing useful, so the two must not
+    /// render the same. Reconnection is automatic rather than a button —
+    /// `probe()` reconnects an absent entry, and the 5 s poll retries it.
     Offline,
+}
+
+/// spec 5's three tiers.
+///
+/// The reference has no counterpart: it reads a `Running`/`Stopped` column
+/// straight out of `wsl -l -v` and shows nothing when the list empties, so it
+/// only ever has two conditions. We have to name a third, because `Booting`,
+/// `Unauthorized` and `Offline` are all "wait and retry" while `Stopped` is
+/// "start it", and the home page must not render those identically.
+///
+/// The tiers are deliberately *not* one-to-one with [`SubsystemState`]: they
+/// describe how the UI degrades, and three different states degrade the same
+/// way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DegradationTier {
+    /// Usable. The home page renders the app list exactly as the reference
+    /// does, with no degraded element at all.
+    Ready,
+    /// Waiting on something: boot, a key prompt, or a reconnecting endpoint.
+    /// A stale snapshot may still be shown, greyed.
+    Partial,
+    /// Not usable and not going to become usable by waiting: stopped or not
+    /// installed. Offers the start action.
+    Down,
+}
+
+impl SubsystemState {
+    /// Which of spec 5's three tiers this state renders as.
+    ///
+    /// `Offline` is `Partial` rather than `Down` for the reason recorded on
+    /// the variant: a stale entry is still a subsystem that is *running*, and
+    /// pressing start on it does nothing while it ages out.
+    pub fn tier(&self) -> DegradationTier {
+        match self {
+            SubsystemState::Ready => DegradationTier::Ready,
+            SubsystemState::Booting
+            | SubsystemState::Unauthorized
+            | SubsystemState::Offline => DegradationTier::Partial,
+            SubsystemState::Stopped | SubsystemState::NotInstalled => DegradationTier::Down,
+        }
+    }
 }
 
 /// Combined subsystem readiness.
@@ -191,6 +233,38 @@ mod tests {
             apk_size_bytes: 0,
             is_system: false,
         }
+    }
+
+    /// One assertion per state, because a table-driven test that gets the
+    /// expected value wrong hides two mistakes instead of naming one.
+    #[test]
+    fn ready_is_the_only_ready_tier() {
+        assert_eq!(SubsystemState::Ready.tier(), DegradationTier::Ready);
+    }
+
+    #[test]
+    fn booting_is_partial_because_boot_is_not_finished() {
+        assert_eq!(SubsystemState::Booting.tier(), DegradationTier::Partial);
+    }
+
+    #[test]
+    fn unauthorized_is_partial_while_waiting_for_the_key_prompt() {
+        assert_eq!(SubsystemState::Unauthorized.tier(), DegradationTier::Partial);
+    }
+
+    #[test]
+    fn offline_is_partial_not_down_because_a_stale_entry_needs_reconnect() {
+        assert_eq!(SubsystemState::Offline.tier(), DegradationTier::Partial);
+    }
+
+    #[test]
+    fn stopped_is_down() {
+        assert_eq!(SubsystemState::Stopped.tier(), DegradationTier::Down);
+    }
+
+    #[test]
+    fn not_installed_is_down() {
+        assert_eq!(SubsystemState::NotInstalled.tier(), DegradationTier::Down);
     }
 
     #[test]

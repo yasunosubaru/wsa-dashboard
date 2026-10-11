@@ -22,8 +22,9 @@
 mod adb;
 mod wsa;
 
+use adb::path::adb_path;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -186,18 +187,6 @@ async fn connect() -> Result<WsaDashboard, ExitCode> {
         }
     };
     Ok(dashboard_for(adb_path(), paths))
-}
-
-/// Which adb to run.
-///
-/// `WSADASH_ADB` first: platform-tools is not guaranteed on PATH (Review
-/// Focus #1), a machine may carry several, and pointing the CLI at a stand-in
-/// is the only way to exercise it without a real device.
-fn adb_path() -> PathBuf {
-    std::env::var_os("WSADASH_ADB")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("adb"))
 }
 
 /// Turn an operation failure into the message and the number.

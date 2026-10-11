@@ -7,4 +7,5 @@
 //! level; see docs/MAPPING.md.
 
 pub mod decoder;
+pub mod path;
 pub mod port;

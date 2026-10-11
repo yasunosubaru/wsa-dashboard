@@ -35,6 +35,13 @@ pub enum WsaCommand {
     GetProps,
     /// `adb shell pm list packages [-3]`
     ListPackages { include_system: bool },
+    /// `adb shell ps -A` -- per-app running state.
+    ///
+    /// The reference gets this fact for free from the `Running`/`Stopped`
+    /// column of `wsl -l -v`; Android has no equivalent listing, and without
+    /// it the home card's start/stop toggle could only ever say "start".
+    /// Verified against a real device 2026-10-11.
+    ListProcesses,
     /// `adb shell dumpsys package <package>`
     PackageInfo { package: String },
     /// `adb shell am force-stop <package>` -- how an app is actually stopped.
@@ -80,6 +87,7 @@ impl WsaCommand {
             Self::PackageInfo { package } => {
                 vec!["shell".into(), "dumpsys".into(), "package".into(), package.clone()]
             }
+            Self::ListProcesses => vec!["shell".into(), "ps".into(), "-A".into()],
             Self::AmForceStop { package } => {
                 vec!["shell".into(), "am".into(), "force-stop".into(), package.clone()]
             }
@@ -116,6 +124,7 @@ impl WsaCommand {
             Self::ListAdbDevices
             | Self::ProbeReady
             | Self::GetProps
+            | Self::ListProcesses
             | Self::PackageInfo { .. }
             | Self::ListPackages { .. } => false,
             Self::Shell { args } => !args.iter().any(|arg| arg == "--list"),
@@ -148,6 +157,7 @@ impl WsaCommand {
                 }
             }
             Self::PackageInfo { package } => format!("package info {package}"),
+            Self::ListProcesses => "list running processes".into(),
             Self::AmForceStop { package } => format!("force-stop {package}"),
             Self::InstallApk { path } => format!("install {}", squeeze(path)),
             Self::UninstallApk { package } => format!("uninstall {package}"),
@@ -177,6 +187,7 @@ mod tests {
             WsaCommand::ListAdbDevices,
             WsaCommand::ProbeReady,
             WsaCommand::GetProps,
+            WsaCommand::ListProcesses,
             WsaCommand::PackageInfo {
                 package: "com.x".into(),
             },
@@ -361,6 +372,28 @@ mod tests {
         assert_eq!(WsaCommand::Shell { args: vec![] }.argv(), vec!["shell"]);
     }
 
+    // -- per-app process listing: the home card's Running/Stopped ---------
+
+    /// `ps -A` was verified on the local device (2026-10-11): 75 lines
+    /// including the header, and a running app shows up as the last column.
+    /// The reference reads `Running`/`Stopped` out of `wsl -l -v` for free;
+    /// we have to ask Android for the same fact.
+    #[test]
+    fn argv_of_process_listing() {
+        assert_eq!(
+            WsaCommand::ListProcesses.argv(),
+            vec!["shell", "ps", "-A"]
+        );
+    }
+
+    /// A listing is a read, so it gets the 10 s tier rather than 45 s; the
+    /// home page polls it and must not sit for 45 s when adb is wedged.
+    #[test]
+    fn process_listing_is_a_read_not_a_write() {
+        assert!(!WsaCommand::ListProcesses.is_write());
+        assert!(!WsaCommand::ListProcesses.is_heavy());
+    }
+
     // -- display: goes into logs and the operation toast ------------------
 
     #[test]
@@ -376,6 +409,7 @@ mod tests {
             WsaCommand::PackageInfo {
                 package: "com.x".into(),
             },
+            WsaCommand::ListProcesses,
             WsaCommand::AmForceStop {
                 package: "com.x".into(),
             },

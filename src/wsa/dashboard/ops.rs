@@ -40,13 +40,13 @@
 // timeout they alone pull in.
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
 use crate::adb::decoder::{
     is_system_package, listing_is_unparseable, parse_package_info, parse_package_list,
-    subsystem_status,
+    parse_process_list, subsystem_status,
 };
 use crate::wsa::command::WsaCommand;
 use crate::wsa::executor::{run_program, CommandOutput, ExecError};
@@ -417,6 +417,34 @@ impl WsaDashboard {
         Ok(apps)
     }
 
+    /// Which packages are currently running, for the home card's start/stop
+    /// toggle.
+    ///
+    /// The reference reads a `Running`/`Stopped` column straight out of
+    /// `wsl -l -v`; Android publishes no such listing, so `ps -A` is the
+    /// closest equivalent and was verified against a real device
+    /// (2026-10-11).
+    ///
+    /// **Deliberately not fallible.** A subsystem that is booting,
+    /// unauthorized or offline answers nothing useful to `ps -A`, and a
+    /// missing or wedged adb answers nothing at all. Spec 5 says a degraded
+    /// connection must not blank the home page, so "could not read" has to
+    /// become "nothing is running" -- and returning `Result` would leave the
+    /// caller free to turn it into a blank page. The failure is logged while
+    /// the reply is still in hand.
+    pub async fn running_apps(&self) -> HashSet<String> {
+        match self.run(WsaCommand::ListProcesses).await {
+            Ok(reply) => parse_process_list(&reply.stdout),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "`ps -A` was not readable; reporting no running apps so the home page still renders"
+                );
+                HashSet::new()
+            }
+        }
+    }
+
     /// One package with its version, for the detail dialog.
     pub async fn app_info(&self, package: &str) -> Result<AppInfo, OpsError> {
         let out = self
@@ -551,6 +579,16 @@ mod tests {
 
     const PORT: u16 = 58526;
 
+    /// Captured from the local device 2026-10-11 via `adb shell ps -A`, with
+    /// the numeric columns shortened. A colon subprocess is included because
+    /// the decoder has to keep it.
+    const PS: &str = "\
+USER           PID  PPID     VSZ    RSS WCHAN            ADDR S NAME
+u0_a2         7021   247 16053040 240564 0                  0 S com.microsoft.launcher
+u0_a2         7022   247 16053040 240564 0                  0 S com.topjohnwu.magisk
+u0_a2         7023   247 16053040 240564 0                  0 S com.topjohnwu.magisk:daemon
+";
+
     // -- the fake adb --------------------------------------------------------
     //
     // Q8: no test may need a running WSA. A `.cmd` stands in for the adb
@@ -599,11 +637,20 @@ exit /b %CODE%
 
 :shell
 if "%~2"=="getprop" goto getprop
+if "%~2"=="ps" goto ps
 if "%~2"=="pm" goto pm
 if "%~2"=="dumpsys" goto dumpsys
 if "%~2"=="am" goto am
 echo fake-adb: no rule for shell %* 1>&2
 exit /b 1
+
+:ps
+if exist "%S%ps.fail" (
+  echo fake-adb: ps is unavailable 1>&2
+  exit /b 1
+)
+type "%S%processes.txt"
+exit /b 0
 
 :getprop
 if "%~3"=="sys.boot_completed" goto boot
@@ -662,6 +709,7 @@ exit /b 0
             fake.write("boot.txt", "");
             fake.write("props.txt", "");
             fake.write("packages.txt", "");
+            fake.write("processes.txt", "");
             fake.write("dumpsys.txt", "");
             fake.write("op.stdout", "");
             fake.write("op.stderr", "");
@@ -1042,6 +1090,28 @@ List of devices attached\n\
     }
 
     #[tokio::test]
+    async fn running_apps_reports_what_ps_says() {
+        let fake = FakeAdb::new();
+        fake.write("processes.txt", PS);
+        let running = fake.dashboard().running_apps().await;
+        assert!(running.contains("com.microsoft.launcher"));
+        assert!(running.contains("com.topjohnwu.magisk"));
+        assert!(running.contains("com.topjohnwu.magisk:daemon"));
+    }
+
+    /// The degradation anchor for spec 5. A subsystem that is booting,
+    /// unauthorized or offline answers nothing useful to `ps -A`, and a
+    /// missing or wedged adb answers nothing at all. Either way the answer
+    /// must be "nothing is running" -- not an error -- so the home page can
+    /// still draw its cards.
+    #[tokio::test]
+    async fn running_apps_degrades_to_nothing_when_ps_fails() {
+        let fake = FakeAdb::new();
+        fake.write("ps.fail", "");
+        assert!(fake.dashboard().running_apps().await.is_empty());
+    }
+
+    #[tokio::test]
     async fn list_apps_reports_a_missing_adb_rather_than_an_empty_list() {
         // A path that does not exist, with an `.exe` extension: that is what
         // `adb` missing from PATH actually looks like to `CreateProcess`.
@@ -1269,5 +1339,61 @@ List of devices attached\n\
                 );
             }
         }
+    }
+
+    /// `ps -A` against the live subsystem: prove the decoder's shape matches
+    /// what Android actually prints, by launching a real app and watching it
+    /// appear.
+    ///
+    /// Verified by hand first (2026-10-11): the command is supported, prints
+    /// 75 lines including the header, and a launched app shows up as the last
+    /// column.
+    #[tokio::test]
+    #[ignore = "needs a live WSA; run with `cargo test --release --bin wsadash -- --ignored`"]
+    async fn running_apps_sees_a_real_running_app() {
+        let paths = match crate::wsa::app::wsa_path::resolve() {
+            Ok(paths) => paths,
+            Err(err) => {
+                eprintln!("skipping: WSA is not installed ({err:?})");
+                return;
+            }
+        };
+        let dash = dashboard_for(crate::adb::path::adb_path(), paths);
+
+        match dash.probe().await {
+            Err(OpsError::Adb(ExecError::NotFound)) => {
+                eprintln!("skipping: adb is not on PATH");
+                return;
+            }
+            Ok(status) if !status.is_ready() => {
+                eprintln!("skipping: WSA is {:?}", status.state);
+                return;
+            }
+            _ => {}
+        }
+
+        let apps = dash.list_apps(false).await.expect("list apps");
+        let Some(target) = apps.first() else {
+            eprintln!("skipping: no third-party app installed");
+            return;
+        };
+        eprintln!("launching {} to watch it appear in `ps -A`", target.package);
+
+        dash.launch_app(&target.package).await.expect("launch");
+        let mut seen = false;
+        for _ in 0..30 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if dash.running_apps().await.contains(&target.package) {
+                seen = true;
+                break;
+            }
+        }
+        let _ = dash.stop_app(&target.package).await;
+
+        assert!(
+            seen,
+            "`ps -A` never listed {} as running -- the last column is not the process name",
+            target.package
+        );
     }
 }

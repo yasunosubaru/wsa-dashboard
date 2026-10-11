@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::wsa::models::{AppInfo, SubsystemState, SubsystemStatus};
 
@@ -90,6 +90,52 @@ fn package_name_from_entry(entry: &str) -> String {
 ///
 /// Returns as soon as one `package:` line is seen, so extra trailing noise
 /// does not turn an understood reply into a warning.
+/// Process names from `adb shell ps -A`.
+///
+/// The process name is the **last** column; everything before it is user,
+/// pid, ppid, vsz, rss, wchan, addr and state. The header line is dropped by
+/// its first token, which is `USER` on every `ps` that Android ships.
+///
+/// Captured from a real device 2026-10-11, so the shape is measured rather
+/// than assumed.
+pub fn parse_process_list(stdout: &str) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for line in stdout.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        // The header is dropped by its first token, which is `USER` on every
+        // `ps` Android ships.
+        match fields.as_slice() {
+            [] | ["USER", ..] => continue,
+            // A one-column line is not a process row; keep a stray line of
+            // plain text from becoming a "process".
+            [_] => continue,
+            _ => {}
+        }
+        if let Some(name) = fields.last() {
+            names.insert((*name).to_string());
+        }
+    }
+    names
+}
+
+/// Whether a package is running.
+///
+/// Either the main process name is present, or a `<package>:` subprocess is.
+/// The colon matters: matching a bare prefix would report `com.foo` as
+/// running whenever `com.foobar` happened to be open.
+pub fn package_is_running(package: &str, processes: &HashSet<String>) -> bool {
+    if package.is_empty() {
+        return false;
+    }
+    if processes.contains(package) {
+        return true;
+    }
+    let prefix = format!("{package}:");
+    processes
+        .iter()
+        .any(|name| name.starts_with(&prefix))
+}
+
 pub fn listing_is_unparseable(stdout: &str) -> bool {
     let mut saw_other_content = false;
     for line in stdout.lines().map(str::trim).filter(|line| !line.is_empty()) {
@@ -292,7 +338,23 @@ pub fn subsystem_status(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_system_package, listing_is_unparseable, parse_package_list};
+    use super::{is_system_package, listing_is_unparseable, package_is_running, parse_package_list, parse_process_list};
+
+    /// Captured 2026-10-11 from the local device: `adb shell ps -A`.
+    ///
+    /// The header is the real one and it carries a `NAME` column, so a parser
+    /// that takes every line's last field would offer "NAME" as a running
+    /// package. The last row also has a colon subprocess, which must survive
+    /// as its own name.
+    const PS: &str = "\
+USER           PID  PPID     VSZ    RSS WCHAN            ADDR S NAME
+root             1     0 10860180 11480 0                   0 S init
+root             5     1 10838260  8072 0                   0 S init
+prng_seeder     39     0 10865360  4092 0                   0 S prng_seeder
+u0_a2         7021   247 16053040 240564 0                  0 S com.microsoft.launcher
+u0_a2         7022   247 16053040 240564 0                  0 S com.topjohnwu.magisk
+u0_a2         7023   247 16053040 240564 0                  0 S com.topjohnwu.magisk:daemon
+";
 
     /// Captured 2026-10-10 from the local device:
     /// `adb shell pm list packages -3`
@@ -515,6 +577,67 @@ package:/product/overlay/NavigationBarModeGesturalExtraWideBack/NavigationBarMod
 
         let text = "Packages:\n  Package [com.topjohnwu.magisk] (a1):\n    versionName=1.0\n    versionCode=1\n";
         assert!(!parse_package_info(text).unwrap().is_system);
+    }
+
+    // ---- `ps -A`: per-app Running/Stopped for the home card --------------
+
+    /// The header must not be read as a process.
+    #[test]
+    fn parse_process_list_skips_the_header() {
+        let names = parse_process_list(PS);
+        assert!(!names.contains("NAME"), "header leaked in: {names:?}");
+        assert!(names.contains("init"));
+        assert!(names.contains("prng_seeder"));
+    }
+
+    /// Process name is the last column, not any of the numeric ones.
+    #[test]
+    fn parse_process_list_takes_the_last_column() {
+        let names = parse_process_list(PS);
+        assert!(names.contains("com.microsoft.launcher"));
+        assert!(names.contains("com.topjohnwu.magisk"));
+        assert!(!names.contains("com.microsoft.launcher "));
+    }
+
+    /// `com.foo:remote` is a real process name of its own, and the home page
+    /// counts it as evidence that `com.foo` is running.
+    #[test]
+    fn parse_process_list_keeps_colon_subprocesses() {
+        let names = parse_process_list(PS);
+        assert!(names.contains("com.topjohnwu.magisk:daemon"));
+    }
+
+    #[test]
+    fn parse_process_list_of_empty_output_is_empty() {
+        assert!(parse_process_list("").is_empty());
+        assert!(parse_process_list("\n\n").is_empty());
+    }
+
+    /// The prefix test carries a colon on purpose. `com.foo` must not count
+    /// `com.foobar` as running just because one is a prefix of the other.
+    #[test]
+    fn package_is_running_matches_the_process_or_a_colon_subprocess() {
+        let names = parse_process_list(PS);
+        assert!(package_is_running("com.microsoft.launcher", &names));
+        assert!(package_is_running("com.topjohnwu.magisk", &names));
+        assert!(!package_is_running("com.example.app", &names));
+        assert!(!package_is_running("", &names));
+    }
+
+    #[test]
+    fn package_is_running_never_matches_on_a_bare_prefix() {
+        let mut names = std::collections::HashSet::new();
+        names.insert("com.foobar".to_string());
+        assert!(!package_is_running("com.foo", &names), "com.foobar is not com.foo");
+    }
+
+    /// A colon subprocess on its own is enough: the main process may already
+    /// be gone while a `:service` is still alive.
+    #[test]
+    fn package_is_running_counts_a_subprocess_without_the_main_process() {
+        let mut names = std::collections::HashSet::new();
+        names.insert("com.foo:remote".to_string());
+        assert!(package_is_running("com.foo", &names));
     }
 
     // ---- Task 7: `getprop` + subsystem state machine ---------------------

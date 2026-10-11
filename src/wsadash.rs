@@ -29,6 +29,9 @@ mod wsa;
 #[path = "ui/home_model.rs"]
 mod home_model;
 
+#[path = "ui/refresh.rs"]
+mod refresh;
+
 #[path = "i18n/mod.rs"]
 mod i18n;
 

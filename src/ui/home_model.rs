@@ -68,6 +68,13 @@ pub const PALETTE_LEN: usize = 8;
 ///
 /// Each variant is a component the reference already ships. Adding one would
 /// be a defect at review (2026-10-11 ruling).
+/// How many blank cards a grid that has nothing real to show is filled with.
+///
+/// Three rather than one: a single grey card reads as "you have one app", and
+/// a short run of them reads as "these are placeholders" -- which is what they
+/// are.
+pub const PLACEHOLDER_ROWS: usize = 3;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Degraded {
     /// Nothing degraded. The list renders exactly as the reference renders it.
@@ -138,6 +145,20 @@ impl HomeViewModel {
         match &self.degraded {
             Degraded::NotFound { action_url, .. } => action_url.as_str(),
             _ => "",
+        }
+    }
+
+    /// Blank rows to fill the grid with when it would otherwise be empty.
+    ///
+    /// Non-zero only for the one tier that is *asking* for placeholders and has
+    /// no rows to show. A degraded tier that still has a snapshot to grey gets
+    /// its own rows instead -- those are the user's apps, and replacing them
+    /// with blank ones would throw away the only answer the page has.
+    pub fn placeholder_count(&self) -> usize {
+        if self.rows.is_empty() && matches!(self.degraded, Degraded::Skeleton { .. }) {
+            PLACEHOLDER_ROWS
+        } else {
+            0
         }
     }
 }
@@ -278,6 +299,26 @@ fn operation_key(op: &str) -> &'static str {
         op_guard::UNINSTALLING => "operation.deleting",
         _ => "",
     }
+}
+
+/// Whether a new poll has anything the window has not already been told.
+///
+/// The reference compares a per-distro tuple for the same reason and gets it
+/// right about one field in particular: the running state. Comparing package
+/// names alone lets an app start or stop without the card ever changing, which
+/// is the one thing the start and stop buttons are there to show.
+pub fn snapshot_changed(old: &HomeSnapshot, new: &HomeSnapshot) -> bool {
+    if old.running != new.running {
+        return true;
+    }
+    if old.apps.len() != new.apps.len() {
+        return true;
+    }
+    old.apps.iter().zip(&new.apps).any(|(before, after)| {
+        before.package != after.package
+            || before.version_name != after.version_name
+            || before.is_system != after.is_system
+    })
 }
 
 fn rows_of(snap: &HomeSnapshot, query: &str) -> Vec<AppRow> {
@@ -585,6 +626,117 @@ mod tests {
         assert_eq!(initial_of("微信"), "微");
         assert_eq!(initial_of("Magisk"), "M");
         assert_eq!(initial_of(""), "");
+    }
+
+    // -- snapshot_changed ---------------------------------------------------
+
+    fn snap(apps: &[&str], running: &[&str]) -> HomeSnapshot {
+        HomeSnapshot {
+            apps: apps.iter().map(|package| app(package)).collect(),
+            running: running.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn snapshot_changed_sees_a_status_flip_with_identical_package_list() {
+        let before = snap(&["com.example.app"], &[]);
+        let after = snap(&["com.example.app"], &["com.example.app"]);
+        assert!(
+            snapshot_changed(&before, &after),
+            "the same apps and a different answer to 'is it running' is the \
+             exact case the start and stop buttons exist for"
+        );
+    }
+
+    #[test]
+    fn snapshot_changed_sees_a_package_added_or_removed() {
+        assert!(snapshot_changed(
+            &snap(&["com.example.a"], &[]),
+            &snap(&["com.example.a"], &["com.example.b"])
+        ));
+        assert!(snapshot_changed(
+            &snap(&["com.example.a", "com.example.b"], &[]),
+            &snap(&["com.example.a"], &[])
+        ));
+    }
+
+    #[test]
+    fn snapshot_changed_sees_a_version_bump() {
+        let mut after = snap(&["com.example.app"], &[]);
+        after.apps[0].version_name = "2.0".into();
+        assert!(snapshot_changed(&snap(&["com.example.app"], &[]), &after));
+    }
+
+    #[test]
+    fn snapshot_changed_ignores_a_poll_that_changed_nothing() {
+        let before = snap(&["com.example.a", "com.example.b"], &["com.example.a"]);
+        let after = snap(&["com.example.a", "com.example.b"], &["com.example.a"]);
+        assert!(!snapshot_changed(&before, &after));
+    }
+
+    // -- placeholder_count --------------------------------------------------
+
+    /// The tier asking for placeholders and holding nothing is the only one
+    /// that gets blank cards. A user's own apps are never replaced by them.
+    #[test]
+    fn placeholders_are_asked_for_only_when_there_is_nothing_to_show() {
+        // Partial: "wait and retry". The page has no answer and no reason to
+        // say so, so it shows the grid being empty rather than nothing at all.
+        for state in [SubsystemState::Offline, SubsystemState::Unauthorized] {
+            let model = model_of(state, None, None);
+            assert_eq!(
+                model.placeholder_count(),
+                PLACEHOLDER_ROWS,
+                "{state:?} has its own text for why it is waiting; the grid is \
+                 still filled so spec section 5's 'never blank' holds"
+            );
+        }
+
+        // Ready with apps: a real list is never padded.
+        let ready = model_of(
+            SubsystemState::Ready,
+            Some(&snapshot(vec![app("com.a")], &[])),
+            None,
+        );
+        assert_eq!(ready.placeholder_count(), 0);
+
+        // Down renders its own view, which is the better answer than blanks.
+        for state in [SubsystemState::Stopped, SubsystemState::NotInstalled] {
+            assert_eq!(
+                model_of(state, None, None).placeholder_count(),
+                0,
+                "{state:?} says what is wrong and offers to start it; a grey \
+                 row would say less"
+            );
+        }
+
+        // Ready with nothing installed, and Ready with a query that matches
+        // nothing: both render the same view, and a blank row beside its text
+        // would contradict it.
+        assert_eq!(model_of(SubsystemState::Ready, None, None).placeholder_count(), 0);
+
+        let status = status(SubsystemState::Ready);
+        let snap = snapshot(vec![app("com.a")], &[]);
+        let filtered = build(&HomeInputs {
+            status: &status,
+            fresh: Some(&snap),
+            last_good: Some(&snap),
+            active_op: None,
+            query: "nothing-matches-this",
+        });
+        assert!(filtered.rows.is_empty());
+        assert_eq!(filtered.placeholder_count(), 0);
+    }
+
+    /// A subsystem that dropped but still has a snapshot to grey must keep
+    /// showing it -- the row is the user's app, and blanking it would trade a
+    /// stale answer for no answer.
+    #[test]
+    fn placeholders_never_replace_a_surviving_snapshot() {
+        let stale = snapshot(vec![app("com.a"), app("com.b")], &[]);
+        let model = model_of(SubsystemState::Stopped, None, Some(&stale));
+        assert_eq!(model.placeholder_count(), 0);
+        assert!(model.greyed, "and the rows it does keep are drawn dimmed");
     }
 
     /// Every key the model chooses between has to resolve, or the card would

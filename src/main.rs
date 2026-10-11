@@ -15,6 +15,12 @@ mod i18n;
 mod ui;
 mod wsa;
 
+// The reference hangs `AppState` and the generated types off the crate root
+// (`src/main.rs:22`), and every module in the tree refers to them as
+// `crate::AppState` / `crate::AppWindow` / `crate::Distro`. Keeping that shape
+// is what lets a file be diffed against its counterpart line by line.
+pub use app::state::AppState;
+
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     ui.run()

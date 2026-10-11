@@ -3,9 +3,11 @@
 
 //! The UI layer.
 //!
-//! `home_model` is pure and is compiled into **both** bins: the GUI draws
-//! from it, and `wsadash` runs its tests (via `#[path = "ui/home_model.rs"]`,
-//! so the CLI does not get dragged into the Slint UI). `data` and `handlers`
-//! are GUI-only and stay out of the CLI's module tree.
+//! `home_model` and `refresh` are pure and are compiled into **both** bins:
+//! the GUI draws from them, and `wsadash` runs their tests (via `#[path]`, so
+//! the CLI does not get dragged into the Slint UI). `data` and `handlers` are
+//! GUI-only and stay out of the CLI's module tree.
 
+pub mod data;
 pub mod home_model;
+pub mod refresh;

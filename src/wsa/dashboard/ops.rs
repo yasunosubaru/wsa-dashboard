@@ -144,6 +144,48 @@ enum AdbEntry {
     Absent,
 }
 
+/// One row of `adb devices`: what a target is called, and how it answers.
+///
+/// `state` is a `String` and not an enum. Adb invents states -- `authorizing`,
+/// `no permissions`, `recovery` -- and the device page has to show the machine's
+/// own words; collapsing them here would lose the one thing the page exists to
+/// tell you. The three states the *home page* cares about are decided in
+/// [`find_entry`], where that decision already lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdbTarget {
+    pub serial: String,
+    pub state: String,
+}
+
+/// Every target in `adb devices` output, in order.
+///
+/// The filter over the daemon's chatter and the header is the same one
+/// [`find_entry`] has always used, and deliberately shared: two filters over
+/// the same text is how the home page and the device page end up describing
+/// the same machine differently -- `find_entry_agrees_with_parse_targets_about_every_state`
+/// exists to keep that from being a thing that happens quietly.
+///
+/// A malformed row is skipped rather than guessed at. `adb devices` prints the
+/// header, an empty line, and the daemon's `*`-prefixed progress; a line with
+/// fewer than two fields is none of those and not a device either.
+pub fn parse_targets(devices_stdout: &str) -> Vec<AdbTarget> {
+    let mut out = Vec::new();
+    for line in devices_stdout.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('*') || line.starts_with("List of devices") {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let (Some(serial), Some(state)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        out.push(AdbTarget {
+            serial: serial.to_string(),
+            state: state.to_string(),
+        });
+    }
+    out
+}
+
 /// Locate `127.0.0.1:<port>` in `adb devices` output.
 ///
 /// Serial match rather than "any line": `adb devices` lists every host the
@@ -152,28 +194,20 @@ enum AdbEntry {
 fn find_entry(devices_stdout: &str, port: u16) -> AdbEntry {
     let expected = format!("127.0.0.1:{port}");
 
-    for line in devices_stdout.lines().map(str::trim) {
-        // The daemon prefixes its own output (`* daemon started at
-        // tcp:5037`), and neither that nor the header is a device row.
-        if line.is_empty() || line.starts_with('*') || line.starts_with("List of devices") {
-            continue;
-        }
-        let mut fields = line.split_whitespace();
-        let (Some(serial), Some(state)) = (fields.next(), fields.next()) else {
-            continue;
-        };
-        if serial != expected {
-            continue;
-        }
-        return match state {
-            "device" => AdbEntry::Device,
-            "unauthorized" => AdbEntry::Unauthorized,
-            // `offline`, `authorizing` and anything a future platform-tools
-            // invents are all "an entry exists but there is no session".
-            _ => AdbEntry::Offline,
-        };
+    let Some(target) = parse_targets(devices_stdout)
+        .into_iter()
+        .find(|target| target.serial == expected)
+    else {
+        return AdbEntry::Absent;
+    };
+
+    match target.state.as_str() {
+        "device" => AdbEntry::Device,
+        "unauthorized" => AdbEntry::Unauthorized,
+        // `offline`, `authorizing` and anything a future platform-tools
+        // invents are all "an entry exists but there is no session".
+        _ => AdbEntry::Offline,
     }
-    AdbEntry::Absent
 }
 
 /// `sys.boot_completed` from the raw single-key `getprop` line.
@@ -866,6 +900,72 @@ List of devices attached\n\
             find_entry(&devices(&[("127.0.0.1:58525", "device")]), PORT),
             AdbEntry::Absent
         );
+    }
+
+    /// The device page needs *every* target, not just ours.
+    ///
+    /// Adb's own chatter is dropped by the same rule `find_entry` uses, because
+    /// two filters over the same text is how "offline" and "authorizing" start
+    /// being read differently in two places (P4 Review Focus 2).
+    #[test]
+    fn parse_targets_lists_every_target_and_ignores_the_daemons_chatter() {
+        let out = "\
+* daemon not running; starting now at tcp:5037\n\
+* daemon started successfully\n\
+List of devices attached\n\
+127.0.0.1:58526\tdevice product:sdk model:Pixel\n\
+192.168.1.5:5555\toffline\n\
+R5CT30XXXXX\tunauthorized\n\
+\n";
+
+        let targets = parse_targets(out);
+        assert_eq!(
+            targets
+                .iter()
+                .map(|t| (t.serial.as_str(), t.state.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("127.0.0.1:58526", "device"),
+                ("192.168.1.5:5555", "offline"),
+                ("R5CT30XXXXX", "unauthorized"),
+            ]
+        );
+    }
+
+    /// One parser, two callers.
+    ///
+    /// `find_entry` answers the home page ("is *our* endpoint ready") and
+    /// `parse_targets` answers the device page ("what is out there"), and if
+    /// they disagreed about what a line means the two pages would describe the
+    /// same machine differently. So `find_entry` is expressed in terms of
+    /// `parse_targets` and this test pins that: every state adb can report
+    /// classifies the same way whether you arrived at it through either door.
+    #[test]
+    fn find_entry_agrees_with_parse_targets_about_every_state() {
+        for state in ["device", "offline", "unauthorized", "authorizing", "no permissions"] {
+            let out = devices(&[("127.0.0.1:58526", state)]);
+            let from_list = parse_targets(&out)
+                .into_iter()
+                .find(|t| t.serial == format!("127.0.0.1:{}", PORT))
+                .map(|t| t.state);
+            let direct = find_entry(&out, PORT);
+
+            match direct {
+                AdbEntry::Absent => assert_eq!(from_list, None, "absent but the list had it"),
+                AdbEntry::Device => assert_eq!(from_list.as_deref(), Some("device")),
+                AdbEntry::Unauthorized => assert_eq!(from_list.as_deref(), Some("unauthorized")),
+                AdbEntry::Offline => assert!(
+                    from_list.is_some_and(|s| s != "device" && s != "unauthorized"),
+                    "{state} should be 'offline' to find_entry and an unmatched state to the list"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_targets_of_empty_output_is_empty() {
+        assert!(parse_targets("List of devices attached\n\n").is_empty());
+        assert!(parse_targets("").is_empty());
     }
 
     #[test]

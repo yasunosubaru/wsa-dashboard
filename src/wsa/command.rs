@@ -26,6 +26,15 @@
 pub enum WsaCommand {
     /// `adb connect 127.0.0.1:<port>`
     ConnectAdb { port: u16 },
+    /// `adb disconnect <serial>` -- the other half of the device page.
+    ///
+    /// `Shell { args }` could carry these two words, and that is exactly why
+    /// it must not: `Shell` is the escape hatch for commands not worth a
+    /// variant (docs/MAPPING.md section 4.1.1), and a second command written
+    /// through it would mean the command surface had become a list of strings
+    /// in one place and free text everywhere else. Disconnect has an argv and
+    /// goes through the executor, so spec 2.2's test says it belongs here.
+    DisconnectAdb { serial: String },
     /// `adb devices`
     ListAdbDevices,
     /// `adb shell getprop sys.boot_completed` -- the single health truth
@@ -72,6 +81,11 @@ impl WsaCommand {
     pub fn argv(&self) -> Vec<String> {
         match self {
             Self::ConnectAdb { port } => vec!["connect".into(), format!("127.0.0.1:{port}")],
+            // Passed through verbatim, like the apk path below: `Command`
+            // gives each `String` to adb as one argument, so a serial with an
+            // unusual character in it arrives intact and no shell is involved
+            // to get it wrong.
+            Self::DisconnectAdb { serial } => vec!["disconnect".into(), serial.clone()],
             Self::ListAdbDevices => vec!["devices".into()],
             Self::ProbeReady => vec!["shell".into(), "getprop".into(), "sys.boot_completed".into()],
             Self::GetProps => vec!["shell".into(), "getprop".into()],
@@ -146,6 +160,7 @@ impl WsaCommand {
     pub fn display(&self) -> String {
         match self {
             Self::ConnectAdb { port } => format!("connect 127.0.0.1:{port}"),
+            Self::DisconnectAdb { serial } => format!("disconnect {serial}"),
             Self::ListAdbDevices => "list adb devices".into(),
             Self::ProbeReady => "probe readiness".into(),
             Self::GetProps => "read device properties".into(),
@@ -264,6 +279,38 @@ mod tests {
         assert_eq!(
             WsaCommand::ConnectAdb { port: 58526 }.argv(),
             vec!["connect", "127.0.0.1:58526"]
+        );
+    }
+
+    /// Disconnecting a target is an adb command with an argv of its own.
+    ///
+    /// The alternative was `Shell { args: vec!["disconnect", serial] }`, which
+    /// works and is why the test exists: `Shell` is the escape hatch for
+    /// commands not worth a variant (docs/MAPPING.md section 4.1.1), and the
+    /// first convenience variant written through it makes the second one
+    /// follow -- after which the command surface is a list of strings in one
+    /// place and free text everywhere else. Spec 2.2's test for "belongs in the
+    /// enum" is "does it have argv and should it go through the executor";
+    /// disconnect does, and it should.
+    #[test]
+    fn argv_of_disconnect_is_its_own_variant_not_shell() {
+        assert_eq!(
+            WsaCommand::DisconnectAdb {
+                serial: "127.0.0.1:58526".into()
+            }
+            .argv(),
+            vec!["disconnect", "127.0.0.1:58526"]
+        );
+        // The variant, not the escape hatch: a `Shell` that happens to carry
+        // these words would make this assertion pass while the command surface
+        // had already lost its shape.
+        assert_ne!(
+            WsaCommand::DisconnectAdb {
+                serial: "127.0.0.1:58526".into()
+            },
+            WsaCommand::Shell {
+                args: vec!["disconnect".into(), "127.0.0.1:58526".into()]
+            }
         );
     }
 

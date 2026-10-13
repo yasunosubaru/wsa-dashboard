@@ -391,7 +391,7 @@ P2 **没有新增任何 `.slint` 组件文件**。参照首页需要的每一样
 |---|---|
 | **显示缩放 150%** | `GetDpiForMonitor` = **144**。捕获脚本若进程 DPI-unaware，`GetClientRect` 返回**逻辑** 800×600 而窗口实际渲染 **1200×900**，`PrintWindow` 于是**裁剪**而非缩放。首页 toast 在逻辑 y=534＝物理 y=801，落在画面之外，于是每一张截图里它都不存在——不是透明、不是没画，是**在框外**。同一根因也让"放到 (300,200) 的窗口每次都出现在 (464,310)"看起来像窗口拒绝移动。修法：`SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`，必须在碰任何窗口/DC 之前 |
 | **f.lux 常驻** | 用户主动开的暖色滤镜（2300K）。经 DWM/WCS 合成级作用于**整屏**，所以任何走屏幕的截图都会把白底拍成 `#FFA250`。参照的 `Theme.content_bg` 是 `#FFFFFF`，两者差得远 |
-| **Segoe Fluent Icons 未安装** | `theme.slint:98` 的 `icon_font` 指向它（**参照 `theme.slint:256` 同名**，照抄不动），本机没有该字体文件。`E768`（播放）有回退字体可显示，`E769`（停止）显示为豆腐块。**这是环境缺字体，不是移植缺陷**；截图里的豆腐块保留原样，不换图标字符 |
+| **图标字体要自带** | 参照 `components/common.slint:5` 有 `import "../../../assets/font/icons.ttf"`，而 `assets/font/icons.ttf` 是 **微软 Segoe Fluent Icons v1.47 的子集**（读 TTF name 表确认：family = `Segoe Fluent Icons`，© 2025 Microsoft Corporation）。`theme.slint` 写死 `"Segoe Fluent Icons"` 这个 family 名，靠的就是这行 import 去 Slint 的字体库里注册它。**P2 没搬这行**，于是 `Theme.icon_font` 落到系统字体——本机没装该字体，`E769`（停止）显示为豆腐块，`E768`（播放）恰好有回退字体能显示。**这不是环境缺字体，是移植漏了一个 import**，P3 Task 1 补（连同 `assets/font/icons.ttf` 一起拷）。旁边那个 462 KB 的 `segoeicons.ttf` 参照**没有任何文件 import**，是死资源，不搬 |
 
 **截图工具链的两条结论**（`tools/standin-adb/capture.ps1` 重写）：
 

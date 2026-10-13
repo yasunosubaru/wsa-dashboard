@@ -297,7 +297,7 @@ P2 **没有新增任何 `.slint` 组件文件**。参照首页需要的每一样
 | `distro_card.slint` | `enabled` 改由 `buttons_disabled` 驱动；`text` 取本地化后的状态名 | 同上 |
 | `distro_not_found_view.slint` | 文案拆成 `distro_not_found_text` / `guide_text` 两个入参，不再组件内查 i18n | `HomeViewModel` 已经在算文案，查两遍会出现两个真相 |
 | `theme.slint` | `Distro` 结构体新增 `initial_color_index`（`u8`）与 `badge_tints` 数组 | Q29：色号按包名哈希取 8 个 Catppuccin 色之一 |
-| `distro_card.slint` | 删除参照的 `show_shield` 条件块 | 参照的盾牌表示 WSL 发行版来源，WSA 侧无对应概念 |
+| `distro_card.slint` | 删除参照的 `show_shield` 条件块（属性保留） | P2 时写的是"盾牌表示 WSL 发行版来源，WSA 侧无对应概念"——**错了**。量过参照：42 处 `show_shield: true` 全在 `mount_disk_card`/`network_rule_card`/`scheduler_card`/`usb_card`/`port_forwarding` 及其对话框，加上 `mount_disk_view`/`scheduler_view`，都是 P5–P7 的页面；`distro_card` 自己一处也没设。所以理由是"这页不设它"，块随第一个会设它的组件（P5）回来 |
 | `theme.slint` | `GUIDE_URL` 改 `wsa://com.android.settings` | spec §1.2：设置页只能经 `wsa://` 激活 |
 | `form_widgets.slint` | **整文件照抄**，未改一字 | 搜索框直接复用参照的输入控件 |
 | `task_status_toast.slint` | **未改一字**；命名 `task_status_*` 而非 `home_toast_*` 保留 | 参照里 toast 是窗口级浮层（在所有对话框之上），P3 加对话框后仍是 |

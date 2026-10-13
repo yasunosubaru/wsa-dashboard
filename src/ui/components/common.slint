@@ -4,12 +4,12 @@
 // Ported from the reference's src/ui/components/common.slint (wsl-dashboard
 // 0.12.0, GPL-3.0-only).
 //
-// The reference exports four components from this file: SidebarItem,
-// ThemedIcon, ActionIcon, WindowControlButton. Only ActionIcon is used before
-// P3, and the other three need assets that belong to a later page -- SidebarItem
-// and ThemedIcon draw from the bundled icons.ttf, WindowControlButton paints the
-// custom title bar that P3 adds along with the frameless window. P3 brings them
-// back wholesale; docs/MAPPING.md records the omission.
+// The reference exports four components from this file, in this order:
+// SidebarItem, ThemedIcon, ActionIcon, WindowControlButton. ActionIcon came in
+// with P2; P3 adds the other three with the sidebar and the title bar, which is
+// the point at which they are first used. They are copied whole rather than
+// written to fit the components that need them today, because the side bar and
+// the title bar are exactly the components they were written for.
 
 // ★ The font import, and it is load-bearing in a way its one line does not show.
 //
@@ -49,7 +49,194 @@
 // carried over.
 import "../../../assets/font/icons.ttf";
 
-import { Theme, LayoutConstants } from "../theme.slint";
+import { Theme, AppI18n, LayoutConstants } from "../theme.slint";
+
+/// One row of the side bar.
+///
+/// Copied whole from the reference. The part worth understanding is the two
+/// slots: rather than branching the layout on `collapsed`, both the icon and the
+/// label are always present and each slot's width animates between 0 and its
+/// preferred width. That is why collapsing reads as the label sliding away
+/// instead of as the row re-laying-out, and why the same component serves both
+/// a 54px bar and a 200px one without a second layout to keep in sync.
+export component SidebarItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <string> icon_type: "action";
+    in property <bool> selected: false;
+    in property <bool> collapsed: false;
+    callback clicked;
+    // width: 100%; // Ensure full width for alignment
+    height: 36px;
+    border-radius: 4px;
+    background: selected ? Theme.selected_bg : (touch.has-hover ? Theme.hover_bg : transparent);
+
+    property <color> icon_color: selected ? Theme.accent :
+                                 touch.has-hover ? Theme.accent :
+                                 !Theme.colorful_icons ? Theme.text_secondary :
+                                 icon_type == "navigation" ? Theme.icon_color_navigation :
+                                 icon_type == "success" ? Theme.icon_color_success :
+                                 icon_type == "danger" ? Theme.icon_color_danger :
+                                 icon_type == "warning" ? Theme.icon_color_warning :
+                                 icon_type == "info" ? Theme.icon_color_info :
+                                 icon_type == "purple" ? Theme.icon_color_purple :
+                                 icon_type == "gold" ? Theme.icon_color_gold :
+                                 icon_type == "cyan" ? Theme.icon_color_cyan :
+                                 icon_type == "pink" ? Theme.icon_color_pink :
+                                 icon_type == "teal" ? Theme.icon_color_teal :
+                                 icon_type == "indigo" ? Theme.icon_color_indigo :
+                                 icon_type == "lime" ? Theme.icon_color_lime :
+                                 icon_type == "orange" ? Theme.icon_color_orange :
+                                 icon_type == "rose" ? Theme.icon_color_rose :
+                                 icon_type == "heart" ? Theme.icon_color_heart :
+                                 icon_type == "violet" ? Theme.icon_color_violet :
+                                 icon_type == "emerald" ? Theme.icon_color_emerald :
+                                 icon_type == "amber" ? Theme.icon_color_amber :
+                                 icon_type == "sky" ? Theme.icon_color_sky :
+                                 icon_type == "fuchsia" ? Theme.icon_color_fuchsia :
+                                 icon_type == "cobalt" ? Theme.icon_color_cobalt :
+                                 icon_type == "mint" ? Theme.icon_color_mint :
+                                 icon_type == "slate" ? Theme.icon_color_slate :
+                                 Theme.icon_color_action;
+
+    // Tooltip
+    Rectangle {
+        visible: collapsed && touch.has-hover;
+        opacity: (collapsed && touch.has-hover) ? 1 : 0;
+        x: AppI18n.is-rtl ? -self.width - 8px : parent.width + 8px;
+        y: (parent.height - self.height) / 2;
+        width: label.width + 16px;
+        height: 28px;
+        background: #333333;
+        border-radius: 4px;
+        z: 100;
+        label := Text {
+            text: root.text;
+            color: white;
+            font-size: 12px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // Stable HorizontalLayout structure using alignment instead of branching
+    HorizontalLayout {
+        // Match Hamburger menu padding (13px) for perfect vertical alignment
+        padding-left: AppI18n.is-rtl ? 0 : 13px;
+        padding-right: AppI18n.is-rtl ? 13px : 0;
+        spacing: root.collapsed ? 0px : 12px;
+        alignment: AppI18n.is-rtl ? end : start;
+        width: 100%; // Explicitly fill parent
+
+        animate spacing {
+            duration: 200ms;
+            easing: ease-out-quad;
+        }
+
+        // Slot 1 (Icon in LTR, Text in RTL)
+        Rectangle {
+            // Fixed width for icon (20px) in LTR mode.
+            // In RTL mode (Text), width animates between 0 and pref.
+            width: (!AppI18n.is-rtl) ? 20px : (root.collapsed ? 0px : icon_text.preferred-width);
+            visible: !AppI18n.is-rtl || !root.collapsed || self.width > 0px;
+            clip: true;
+            animate width {
+                duration: 200ms;
+                easing: ease-out-quad;
+            }
+            icon_text := Text {
+                width: 100%; // Fill the container
+                text: (!AppI18n.is-rtl) ? icon : root.text;
+                font-size: (!AppI18n.is-rtl) ? 16px : (14px * LayoutConstants.font-scale);
+                font-family: (!AppI18n.is-rtl) ? Theme.icon_font : Theme.default_font;
+                font-weight: selected ? 500 : 400;
+                color: (!AppI18n.is-rtl) ? root.icon_color : ((selected || touch.has-hover) ? Theme.text_primary : Theme.text_secondary);
+                vertical-alignment: center;
+                horizontal-alignment: (!AppI18n.is-rtl) ? center : right; // Text aligns right in RTL
+                overflow: elide;
+                opacity: (AppI18n.is-rtl && root.collapsed && parent.width < 10px) ? 0 : 1;
+                animate opacity { duration: 150ms; }
+            }
+        }
+
+        // Slot 2 (Text in LTR, Icon in RTL)
+        Rectangle {
+            // Fixed width for icon (20px) in RTL mode.
+            // In LTR mode (Text), width animates between 0 and pref.
+            width: (AppI18n.is-rtl) ? 20px : (root.collapsed ? 0px : secondary_text.preferred-width);
+            visible: (AppI18n.is-rtl) || !root.collapsed || self.width > 0px;
+            clip: true;
+            animate width {
+                duration: 200ms;
+                easing: ease-out-quad;
+            }
+            secondary_text := Text {
+                width: 100%; // Fill the container
+                text: (AppI18n.is-rtl) ? icon : root.text;
+                font-size: (AppI18n.is-rtl) ? 16px : (14px * LayoutConstants.font-scale);
+                font-family: (AppI18n.is-rtl) ? Theme.icon_font : Theme.default_font;
+                font-weight: selected ? 500 : 400;
+                color: (AppI18n.is-rtl) ? root.icon_color : ((selected || touch.has-hover) ? Theme.text_primary : Theme.text_secondary);
+                vertical-alignment: center;
+                horizontal-alignment: (AppI18n.is-rtl) ? center : left; // Text aligns left in LTR
+                overflow: elide;
+                opacity: (!AppI18n.is-rtl && root.collapsed && parent.width < 10px) ? 0 : 1;
+                animate opacity { duration: 150ms; }
+            }
+        }
+    }
+
+    Rectangle {
+        visible: selected;
+        opacity: selected ? 1 : 0;
+        x: AppI18n.is-rtl ? parent.width - 3px : 0;
+        width: 3px;
+        height: 16px;
+        background: Theme.accent;
+        border-radius: 1.5px;
+        y: (parent.height - self.height) / 2;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ThemedIcon inherits Text {
+    in property <string> icon_code;
+    in property <string> icon_type: "action"; // "action", "navigation", "success", "danger", "warning", "info", "purple", "gold", "cyan", "pink", "teal", "indigo", "lime", "system"
+    font-family: Theme.icon_font;
+    color: !Theme.colorful_icons ? Theme.icon_color_action :
+           icon_type == "navigation" ? Theme.icon_color_navigation :
+           icon_type == "success" ? Theme.icon_color_success :
+           icon_type == "danger" ? Theme.icon_color_danger :
+           icon_type == "warning" ? Theme.icon_color_warning :
+           icon_type == "info" ? Theme.icon_color_info :
+           icon_type == "purple" ? Theme.icon_color_purple :
+           icon_type == "gold" ? Theme.icon_color_gold :
+           icon_type == "cyan" ? Theme.icon_color_cyan :
+           icon_type == "pink" ? Theme.icon_color_pink :
+           icon_type == "teal" ? Theme.icon_color_teal :
+           icon_type == "indigo" ? Theme.icon_color_indigo :
+           icon_type == "lime" ? Theme.icon_color_lime :
+           icon_type == "orange" ? Theme.icon_color_orange :
+           icon_type == "rose" ? Theme.icon_color_rose :
+           icon_type == "heart" ? Theme.icon_color_heart :
+           icon_type == "violet" ? Theme.icon_color_violet :
+           icon_type == "emerald" ? Theme.icon_color_emerald :
+           icon_type == "amber" ? Theme.icon_color_amber :
+           icon_type == "sky" ? Theme.icon_color_sky :
+           icon_type == "fuchsia" ? Theme.icon_color_fuchsia :
+           icon_type == "cobalt" ? Theme.icon_color_cobalt :
+           icon_type == "mint" ? Theme.icon_color_mint :
+           icon_type == "slate" ? Theme.icon_color_slate :
+           icon_type == "system" ? Theme.icon_color_system :
+           Theme.icon_color_action;
+    text: icon_code;
+}
 
 export component ActionIcon inherits Rectangle {
     in property <string> icon;
@@ -141,13 +328,49 @@ export component ActionIcon inherits Rectangle {
         image-fit: contain;
     }
 
-    // The reference's "Admin Shield Overlay" block is not carried over yet.
-    // `show_shield` is the property that marks a button as needing elevation,
-    // and the mark is a bundled SVG that only the root badge -- a P3 concern --
-    // would set. Dropping the block and keeping the property means P3 restores
-    // two dozen lines instead of re-deriving them. Recorded in MAPPING.
+    // The reference's "Admin Shield Overlay" block is not carried over yet, and
+    // the property that drives it is kept so nothing else has to change. It was
+    // recorded in P2 as a P3 concern; measured instead of remembered, it is not:
+    // nothing in the reference sets `show_shield` on a card that P3 or P4 adds.
+    // The forty-two setters live in mount_disk_card, network_rule_card,
+    // scheduler_card, usb_card, port_forwarding and their dialogs -- the pages
+    // that land in P5 through P7 -- plus `mount_disk_view` and
+    // `scheduler_view`. So the block and `assets/feat/microsoft-shield.svg`
+    // come back with the first of those, not before it.
     touch := TouchArea {
         enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+/// The three window buttons of the custom title bar.
+///
+/// Worth one line: `text` is a *glyph from Theme.icon_font*, not a label --
+/// minimize, maximize and close are `E921`, `E922`, `E8BB` and friends. The
+/// `E8BB` special case in the colour is the close button turning white on its
+/// red hover fill, which is the reference's own detail and comes with it.
+export component WindowControlButton inherits Rectangle {
+    in property <string> text;
+    in property <brush> hover-color: Theme.selected_bg;
+    in property <brush> icon_color: Theme.text_primary;
+    in-out property <bool> has-hover;
+    callback clicked;
+    width: 46px;
+    height: 100%;
+    background: touch.has-hover ? hover-color : transparent;
+    has-hover: touch.has-hover;
+    Text {
+        text: text;
+        font-size: 10px;
+        font-family: Theme.icon_font;
+        color: touch.has-hover ? (text == "\u{E8BB}" ? white : icon_color) : icon_color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
         clicked => {
             root.clicked();
         }

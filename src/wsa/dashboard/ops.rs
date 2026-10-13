@@ -426,8 +426,15 @@ impl WsaDashboard {
         if entry == AdbEntry::Absent {
             // Best effort: a refused connect exits non-zero on some
             // platform-tools builds, and a failed reconnect is exactly the
-            // state this method was going to report anyway.
-            let _ = self.run(WsaCommand::ConnectAdb { port }).await;
+            // state this method was going to report anyway. The prefix is
+            // assembled here rather than in `argv` because *this* caller is
+            // the one that means "our own endpoint"; the device page passes
+            // whatever target it was handed.
+            let _ = self
+                .run(WsaCommand::ConnectAdb {
+                    target: format!("127.0.0.1:{port}"),
+                })
+                .await;
             let again = self.run(WsaCommand::ListAdbDevices).await?;
             entry = find_entry(&again.stdout, port);
         }
@@ -464,6 +471,52 @@ impl WsaDashboard {
                 Ok(subsystem_status(&props, true, port))
             }
         }
+    }
+
+    /// Every target adb knows about, with the state it is answering in.
+    ///
+    /// **Reads nothing else and reconnects nothing.** Spec 1.4 made
+    /// `probe()` reconnect our own endpoint when its row disappears, because
+    /// a stopped WSA takes its row off the list and nothing would ever bring
+    /// it back -- but this method is on the *device* page, which exists so a
+    /// user can see a target and disconnect it. Reconnecting everything the
+    /// list knows about would undo what the user just clicked, on the page
+    /// where they clicked it. `adb_targets_reads_the_list_and_reconnects_nothing`
+    /// grants the fake permission to reconnect and then shows it unused.
+    ///
+    /// The parsing is `parse_targets`, the same function `find_entry` is built
+    /// out of, so the home page and the device page cannot disagree about what
+    /// a row means (P4 Review Focus 2).
+    pub async fn adb_targets(&self) -> Result<Vec<AdbTarget>, OpsError> {
+        let listing = self.run(WsaCommand::ListAdbDevices).await?;
+        Ok(parse_targets(&listing.stdout))
+    }
+
+    /// Drop a connection: `adb disconnect <target>`.
+    ///
+    /// Symmetrical with [`Self::connect_target`] -- both hand adb the target
+    /// exactly as it appeared in the list, which is the only thing that keeps
+    /// "the row the device page is showing" and "the argument adb receives"
+    /// the same string.
+    pub async fn disconnect_target(&self, target: &str) -> Result<(), OpsError> {
+        self.run(WsaCommand::DisconnectAdb {
+            serial: target.to_string(),
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Make a connection: `adb connect <target>`.
+    ///
+    /// Not the same as [`Self::probe`]'s reconnect: that one exists because a
+    /// stopped subsystem has its row removed and no one else would put it
+    /// back (spec 1.4). This one is a user asking for it.
+    pub async fn connect_target(&self, target: &str) -> Result<(), OpsError> {
+        self.run(WsaCommand::ConnectAdb {
+            target: target.to_string(),
+        })
+        .await?;
+        Ok(())
     }
 
     /// Installed packages, with `dumpsys` detail attached.
@@ -693,6 +746,7 @@ set "S=%~dp0"
 
 if "%~1"=="devices" goto devices
 if "%~1"=="connect" goto connect
+if "%~1"=="disconnect" goto disconnect
 if "%~1"=="install" goto op
 if "%~1"=="uninstall" goto op
 if "%~1"=="shell" goto shell
@@ -711,6 +765,12 @@ if exist "%S%connect.allow" (
 )
 echo failed to connect to %~2: Connection refused 1>&2
 exit /b 1
+
+:disconnect
+rem Written rather than acted on: a fake has no connection to drop, and the
+rem thing under test is that the serial reached adb byte for byte.
+echo %~2>"%S%disconnected.txt"
+exit /b 0
 
 :op
 if exist "%S%op.delay" ping -n 2 127.0.0.1 >nul
@@ -966,6 +1026,75 @@ R5CT30XXXXX\tunauthorized\n\
     fn parse_targets_of_empty_output_is_empty() {
         assert!(parse_targets("List of devices attached\n\n").is_empty());
         assert!(parse_targets("").is_empty());
+    }
+
+    /// The device page is for *looking at* targets, and one of the two things
+    /// that must not happen behind the user's back is a reconnect.
+    ///
+    /// `allow_connect()` is deliberately given before the read: permission to
+    /// reconnect is granted and then shown not to be used. Without it the test
+    /// could pass while `adb_targets` still called `adb connect`, because the
+    /// fake would have refused the call for a completely different reason.
+    #[tokio::test]
+    async fn adb_targets_reads_the_list_and_reconnects_nothing() {
+        let adb = FakeAdb::new();
+        adb.write(
+            "devices.txt",
+            &devices(&[
+                ("127.0.0.1:58526", "device"),
+                ("192.168.1.5:5555", "offline"),
+            ]),
+        );
+        adb.allow_connect();
+        let before = std::fs::read_to_string(adb.path().join("devices.txt")).expect("devices");
+
+        let targets = adb.dashboard().adb_targets().await.expect("targets");
+
+        let after = std::fs::read_to_string(adb.path().join("devices.txt")).expect("devices");
+        assert_eq!(before, after, "reading the target list must not add a row to it");
+        assert_eq!(targets.len(), 2, "both targets, in order");
+        assert_eq!(targets[1].serial, "192.168.1.5:5555");
+        assert_eq!(targets[1].state, "offline");
+    }
+
+    /// The other half of that: reconnecting is something the *user* asks for,
+    /// and it has to reach adb verbatim. The fake appends exactly what it was
+    /// handed, so a `127.0.0.1:` prefix added where it was not asked for shows
+    /// up here as a row with the wrong serial.
+    #[tokio::test]
+    async fn connect_target_hands_the_whole_target_to_adb() {
+        let adb = FakeAdb::new();
+        adb.write("devices.txt", &devices(&[]));
+        adb.allow_connect();
+
+        adb.dashboard()
+            .connect_target("192.168.1.5:5555")
+            .await
+            .expect("connect");
+
+        let after = std::fs::read_to_string(adb.path().join("devices.txt")).expect("devices");
+        assert!(after.contains("192.168.1.5:5555\tdevice"), "got: {after}");
+        assert!(
+            !after.contains("127.0.0.1:192.168.1.5"),
+            "the loopback prefix from the home page's endpoint belongs to its caller, not here"
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_target_hands_the_serial_to_adb() {
+        let adb = FakeAdb::new();
+        adb.write(
+            "devices.txt",
+            &devices(&[("192.168.1.5:5555", "offline"), ("R5CT30XXXXX", "device")]),
+        );
+
+        adb.dashboard()
+            .disconnect_target("192.168.1.5:5555")
+            .await
+            .expect("disconnect");
+
+        let asked = std::fs::read_to_string(adb.path().join("disconnected.txt")).expect("record");
+        assert_eq!(asked.trim(), "192.168.1.5:5555");
     }
 
     #[test]

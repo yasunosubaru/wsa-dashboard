@@ -24,8 +24,14 @@
 /// each call site re-derives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WsaCommand {
-    /// `adb connect 127.0.0.1:<port>`
-    ConnectAdb { port: u16 },
+    /// `adb connect <target>` -- the target as it should reach adb.
+    ///
+    /// It used to carry only a port, with `127.0.0.1:` assembled in `argv()`,
+    /// which is exactly the home page's own endpoint and nothing more. P4's
+    /// device page connects to targets the user chose, so the whole string is
+    /// carried here and the loopback prefix moved to that one caller.
+    /// See `argv_of_connect_hands_the_target_to_adb_unprefixed`.
+    ConnectAdb { target: String },
     /// `adb disconnect <serial>` -- the other half of the device page.
     ///
     /// `Shell { args }` could carry these two words, and that is exactly why
@@ -80,7 +86,7 @@ impl WsaCommand {
     /// intact.
     pub fn argv(&self) -> Vec<String> {
         match self {
-            Self::ConnectAdb { port } => vec!["connect".into(), format!("127.0.0.1:{port}")],
+            Self::ConnectAdb { target } => vec!["connect".into(), target.clone()],
             // Passed through verbatim, like the apk path below: `Command`
             // gives each `String` to adb as one argument, so a serial with an
             // unusual character in it arrives intact and no shell is involved
@@ -159,7 +165,7 @@ impl WsaCommand {
     /// two by an argument containing a newline looks broken.
     pub fn display(&self) -> String {
         match self {
-            Self::ConnectAdb { port } => format!("connect 127.0.0.1:{port}"),
+            Self::ConnectAdb { target } => format!("connect {target}"),
             Self::DisconnectAdb { serial } => format!("disconnect {serial}"),
             Self::ListAdbDevices => "list adb devices".into(),
             Self::ProbeReady => "probe readiness".into(),
@@ -218,7 +224,7 @@ mod tests {
     #[test]
     fn mutations_are_writes() {
         for cmd in [
-            WsaCommand::ConnectAdb { port: 58526 },
+            WsaCommand::ConnectAdb { target: "127.0.0.1:58526".into() },
             WsaCommand::AmForceStop {
                 package: "com.x".into(),
             },
@@ -274,11 +280,34 @@ mod tests {
 
     // -- argv: executor prepends the adb exe itself -----------------------
 
+    /// `adb connect` takes whatever target it is given.
+    ///
+    /// The payload was a `u16` port with `127.0.0.1:` baked into `argv()` --
+    /// enough for the home page's own endpoint and for nothing else. P4's
+    /// device page connects to targets the user chose (`192.168.1.5:5555` over
+    /// Wi-Fi, a USB serial), so the command carries the whole string and the
+    /// loopback prefix moves to the one caller that wants it.
+    ///
+    /// The *name* is unchanged: Q12 keeps identifiers as the reference wrote
+    /// them, and what changed is only how much room the argument has. Widening
+    /// beats adding a second `adb connect` variant, which would leave two
+    /// spellings of one command in a file whose whole point is that they are
+    /// spelled once.
     #[test]
-    fn argv_of_connect() {
+    fn argv_of_connect_hands_the_target_to_adb_unprefixed() {
         assert_eq!(
-            WsaCommand::ConnectAdb { port: 58526 }.argv(),
+            WsaCommand::ConnectAdb {
+                target: "127.0.0.1:58526".into()
+            }
+            .argv(),
             vec!["connect", "127.0.0.1:58526"]
+        );
+        assert_eq!(
+            WsaCommand::ConnectAdb {
+                target: "192.168.1.5:5555".into()
+            }
+            .argv(),
+            vec!["connect", "192.168.1.5:5555"]
         );
     }
 
@@ -446,7 +475,7 @@ mod tests {
     #[test]
     fn display_names_every_variant() {
         for cmd in [
-            WsaCommand::ConnectAdb { port: 58526 },
+            WsaCommand::ConnectAdb { target: "127.0.0.1:58526".into() },
             WsaCommand::ListAdbDevices,
             WsaCommand::ProbeReady,
             WsaCommand::GetProps,

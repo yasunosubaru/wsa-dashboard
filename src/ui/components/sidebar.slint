@@ -1,0 +1,229 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Ported from the reference's src/ui/components/sidebar.slint
+// (wsl-dashboard 0.12.0, GPL-3.0-only). Copied whole, with two notes.
+//
+//   * The nine entries and their `show_*` switches are the reference's. This
+//     is what makes the side bar usable before its pages exist: P3 ships the
+//     home entry and switches the other eight off from `app.slint`, and each
+//     later phase turns one on. Nothing about the mechanism is ours -- the
+//     property names, types and defaults are the reference's, so the phases
+//     that follow simply set what they already find here.
+//
+//   * `assets/logo/mini.png` is copied from the reference too. It is drawn at
+//     y: -28px, which is *outside* this component: it is the floating mark that
+//     sits in the title bar above the side bar, and it only looks placed here
+//     because the side bar is where it is anchored.
+//
+// The icons below were checked against `assets/font/icons.ttf`'s own `cmap`
+// before writing this file -- all fourteen are in the 74-glyph subset, so
+// nothing here is a codepoint the bundled font does not carry.
+
+import { Theme, AppI18n } from "../theme.slint";
+import { SidebarItem } from "common.slint";
+
+export component Sidebar inherits Rectangle {
+    in-out property <bool> collapsed: false;
+    in property <int> selected_tab: 0;
+    in property <string> home_text: "";
+    in property <string> add_text: "";
+    in property <string> usb_text: "";
+    in property <string> network_text: "";
+    in property <string> scheduler_text: "";
+    in property <string> mount_text: "";
+    in property <string> settings_text: "";
+    in property <string> about_text: "";
+    in property <string> donate_text: "";
+
+    // Visibility toggles
+    in property <bool> show_add: true;
+    in property <bool> show_usb: true;
+    in property <bool> show_network: true;
+    in property <bool> show_scheduler: true;
+    in property <bool> show_mount: true;
+    in property <bool> show_donate: true;
+    in property <bool> show_about: true;
+    in property <bool> show_toggle: true;
+
+    // Callbacks to bubble up
+    callback tab_selected(int);
+    callback home_clicked();
+    callback toggle_collapsed();
+    width: collapsed ? 54px : 200px;
+    background: Theme.sidebar_bg;
+    animate width {
+        duration: 200ms;
+        easing: ease-out-quad;
+    }
+    VerticalLayout {
+        height: 100%;
+        padding-left: 4px;
+        padding-right: 4px;
+        padding-top: 12px;
+        padding-bottom: 16px;
+        spacing: 4px;
+
+        // Space for floating logo
+        Rectangle {
+            height: 4px;
+        }
+
+        // Hamburger menu button
+        if (root.show_toggle): Rectangle {
+            height: 36px;
+            border-radius: 4px;
+            background: touch_menu.has-hover ? Theme.hover_bg : transparent;
+            HorizontalLayout {
+                padding-left: AppI18n.is-rtl ? 0 : 13px;
+                padding-right: AppI18n.is-rtl ? 13px : 0;
+                alignment: AppI18n.is-rtl ? end : start;
+                Text {
+                    text: "\u{E700}";
+                    font-size: 16px;
+                    font-family: Theme.icon_font;
+                    color: touch_menu.has-hover ? Theme.accent : Theme.icon_color_slate;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    width: 20px;
+                }
+            }
+
+            touch_menu := TouchArea {
+                clicked => {
+                    root.collapsed = !root.collapsed;
+                    root.toggle_collapsed();
+                }
+            }
+        }
+
+        SidebarItem {
+            icon: "\u{E80F}";
+            icon_type: "emerald";
+            text: root.home_text;
+            selected: selected_tab == 0;
+            collapsed: root.collapsed;
+            clicked => {
+                root.tab_selected(0);
+                root.home_clicked();
+            }
+        }
+
+        if (root.show_add): SidebarItem {
+            icon: "\u{E710}";
+            icon_type: "sky";
+            text: root.add_text;
+            selected: selected_tab == 1;
+            collapsed: root.collapsed;
+            clicked => {
+                root.tab_selected(1);
+            }
+        }
+        if (root.show_usb): SidebarItem {
+            icon: "\u{E88E}";
+            icon_type: "amber";
+            text: root.usb_text;
+            selected: selected_tab == 2;
+            collapsed: root.collapsed;
+            clicked => {
+                root.tab_selected(2);
+            }
+        }
+        if (root.show_network): SidebarItem {
+            icon: "\u{EE77}"; // Network icon
+            icon_type: "violet";
+            text: root.network_text;
+            selected: selected_tab == 3;
+            collapsed: root.collapsed;
+            clicked => {
+                root.tab_selected(3);
+            }
+        }
+        if (root.show_scheduler): SidebarItem {
+            icon: "\u{E917}"; // Clock icon
+            icon_type: "orange";
+            text: root.scheduler_text;
+            selected: selected_tab == 4;
+            collapsed: root.collapsed;
+            clicked => {
+                root.tab_selected(4);
+            }
+        }
+        if (root.show_mount): SidebarItem {
+            icon: "\u{e772}"; // Hard drive icon
+            icon_type: "sky";
+            text: root.mount_text;
+            selected: selected_tab == 5;
+            collapsed: root.collapsed;
+            clicked => {
+                root.tab_selected(5);
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+        } // Spacer: Pushes everything below it to the bottom
+
+        // Group of bottom items
+        Rectangle {
+            height: 8px;
+        }
+
+        if (root.show_donate): SidebarItem {
+            icon: "\u{EB51}";
+            icon_type: "heart";
+            text: root.donate_text;
+            selected: selected_tab == 6;
+            collapsed: root.collapsed;
+            clicked => {
+                root.tab_selected(6);
+            }
+        }
+
+        // Divider
+        Rectangle {
+            height: 1px;
+            background: Theme.border_color;
+            width: 100%;
+        }
+
+        Rectangle {
+            height: 4px;
+        }
+
+        SidebarItem {
+            icon: "\u{E713}";
+            icon_type: "indigo";
+            text: root.settings_text;
+            selected: selected_tab == 7;
+            collapsed: root.collapsed;
+            clicked => {
+                root.tab_selected(7);
+            }
+        }
+
+        if (root.show_about): SidebarItem {
+            icon: "\u{E9CE}";
+            icon_type: "cyan";
+            text: root.about_text;
+            selected: selected_tab == 8;
+            collapsed: root.collapsed;
+            clicked => {
+                root.tab_selected(8);
+            }
+        }
+    }
+
+    // Logo - Absolute positioned
+    Rectangle {
+        x: AppI18n.is-rtl ? parent.width - 19px - self.width : 19px;
+        y: -28px;
+        width: 16px;
+        height: 16px;
+        Image {
+            source: @image-url("../../../assets/logo/mini.png");
+            width: 100%;
+            height: 100%;
+            image-fit: contain;
+        }
+    }
+}

@@ -26,7 +26,24 @@ pub fn setup(app: &AppWindow, handle: Weak<AppWindow>, state: Arc<AppState>) {
     app.on_stop_distro(run(handle.clone(), state.clone(), Action::Stop, Busy::No));
     app.on_open_url(open_url(handle.clone()));
     app.on_reorder_distros(reorder(handle.clone()));
-    app.on_close_task_status(clear(handle));
+    app.on_close_task_status(clear(handle.clone()));
+
+    // The side bar's home entry fires this alongside `tab_selected(0)`.
+    //
+    // Clicking the entry you are already on is the reference's "refresh now"
+    // gesture -- its own registration is in `handlers/distro/manage.rs` and
+    // gates on `should_refresh_wsl("manual trigger", ...)`. It returns at once
+    // like every other handler here; the refresh runs on the event loop, not on
+    // this thread.
+    let ah = handle.clone();
+    let st = state.clone();
+    app.on_home_clicked(move || {
+        let _ = slint::spawn_local(crate::ui::data::refresh_home_with(
+            crate::ui::refresh::MANUAL_TRIGGER,
+            ah.clone(),
+            st.clone(),
+        ));
+    });
 }
 
 /// What the button asked for.

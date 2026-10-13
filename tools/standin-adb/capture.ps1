@@ -60,11 +60,23 @@ param(
     # rather than quietly producing a file that looks like the other four.
     [switch]$UseRealAdb,
 
-    # Seconds to wait for the first poll. The monitor refreshes immediately
-    # on start, but a stand-in that spawns six processes still takes a
-    # moment, and a picture of the pre-refresh frame is a picture of the
-    # loading overlay, which says nothing about the tier.
-    [int]$SettleSeconds = 5,
+    # Seconds to wait *after* the window appears, if waiting for the app's own
+    # Seconds to wait *after* the model arrives, for the paint to land.
+    #
+    # The wait for the model itself is not a countdown -- it is the app saying
+    # out loud that it has built a view model and pushed it at the window
+    # (`home model applied`). Guessing instead produced five empty captures in
+    # a row: the stand-in's first poll lands about six seconds after launch, the
+    # fixed sleep was five, and the page's own diversity check could not tell
+    # "shell only" from "shell plus list", because the shell alone is already
+    # more than eight colours. If the line never appears this falls back to the
+    # sleep alone rather than hanging, and says so.
+    [int]$SettleSeconds = 2,
+    [int]$ModelTimeoutSeconds = 45,
+    # Where the app writes. Fixed because the app's directory is fixed
+    # (spec section 6). This script needs the file's *size before launch* to tell
+    # a new line from one left by an earlier run.
+    [string]$LogDir = "$HOME\.wsadashboard\logs",
 
     # The size the four captures share, in the logical units `app.slint` uses.
     # It is multiplied by the monitor's scale before it is compared with the
@@ -73,6 +85,26 @@ param(
     # that took the top two thirds of the page and called it the page.
     [int]$W = 800,
     [int]$H = 600,
+
+    # Two more states of the shell, reached by clicking the shell itself.
+    #
+    # The side bar's collapse and the theme are `in-out` properties with no
+    # persistence until P6/P8, so there is no file to pre-set and no command
+    # line switch to hand -- the only way to reach them is what a user does.
+    # The coordinates are *derived* from the layout rather than typed in:
+    # `Sidebar` is 54px collapsed with its hamburger centred in a 36px row below
+    # the title bar's 40px, and `TitleBar`'s controls are four 46px buttons
+    # right-aligned with the 40px switch first. They are multiplied by the
+    # monitor scale here for the same reason every other number in this script
+    # is.
+    #
+    # A click that lands on nothing produces a picture that looks like the
+    # default state, so each of these is read back from the image it writes
+    # rather than trusted: the collapsed capture must show a 81px-wide bar
+    # (54px at 1.5) and the dark capture must not have #FFFFFF as its dominant
+    # colour.
+    [ValidateSet('none', 'collapse-sidebar', 'dark-theme')]
+    [string]$Act = 'none',
 
     # The home page's flat field: `Theme.content_bg` in light mode, from
     # `src/ui/theme.slint`. In every tier that field reaches the corners, so
@@ -116,8 +148,8 @@ using System.Runtime.InteropServices;
 ///
 /// Everything else here depends on it and nothing says so. A DPI-unaware
 /// process is handed *logical* coordinates by Win32 while the desktop is in
-/// physical pixels, and this machine runs at 150%, so `GetClientRect` answers
-/// 800x600 for a window that is really 1200x900. `PrintWindow` then draws the
+/// physical pixels, and this machine runs at 150%, so 'GetClientRect' answers
+/// 800x600 for a window that is really 1200x900. 'PrintWindow' then draws the
 /// window's physical pixels into a bitmap sized for the logical ones -- it
 /// *crops* rather than scales -- and everything below the bottom 400 logical
 /// pixels falls outside the picture.
@@ -129,7 +161,7 @@ using System.Runtime.InteropServices;
 /// (464,310) in every screenshot -- which looked, for most of a day, like the
 /// window refusing to be moved.
 ///
-/// `SetProcessDpiAwarenessContext` has to run before any window or DC is
+/// 'SetProcessDpiAwarenessContext' has to run before any window or DC is
 /// touched, so it cannot be a helper called next to the capture.
 public static class Dpi {
   [DllImport("user32.dll")]
@@ -181,7 +213,7 @@ using System.Runtime.InteropServices;
 /// Everything this script needs from Win32, in one place.
 ///
 /// The window is *enumerated* rather than taken from
-/// `Process.MainWindowHandle`, which on three of four runs answered with this
+/// 'Process.MainWindowHandle', which on three of four runs answered with this
 /// binary's hidden single-instance handshake window -- an untitled 158x26
 /// shim -- so the capture framed the shim while the real window sat on top of
 /// it. An enumeration with a size floor cannot make that mistake, and needs
@@ -196,17 +228,35 @@ public static class Wsa {
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)]
   static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+  static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out RECT r);
-  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(
+      IntPtr h, IntPtr insertAfter, int x, int y, int w, int ht, uint flags);
+  [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, uint data, IntPtr extra);
+
+  // The screen side: what is *in front of* the window, and a current surface to
+  // read it from. 'GetDC'/'ReleaseDC' are the warm-up described on
+  // 'WarmDesktopSurface' below; 'WindowFromPoint' is the ownership question.
+  [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+  [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr hdc);
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+
+  [StructLayout(LayoutKind.Sequential)]
+  public struct POINT { public int X, Y; }
 
   /// The client area's size in *physical* pixels.
   ///
-  /// Read, never asked for. `app.slint` declares an 800x600 window, so the app
+  /// Read, never asked for. 'app.slint' declares an 800x600 window, so the app
   /// opens at 800x600 whatever it is asked for, and a capture that forced a
   /// size was doing arithmetic on a caption height and a border width to land
-  /// on the number `app.slint` already states. Both numbers come from the
+  /// on the number 'app.slint' already states. Both numbers come from the
   /// window; at 150% they are 1200x900.
   public static Size ClientSize(IntPtr win) {
     RECT cr;
@@ -214,7 +264,7 @@ public static class Wsa {
     return new Size(cr.Right - cr.Left, cr.Bottom - cr.Top);
   }
 
-  /// The largest visible, titled window of a process, at least `minW` x `minH`.
+  /// The largest visible, titled window of a process, at least 'minW' x 'minH'.
   public static IntPtr UiWindowFor(int pid, int minW, int minH) {
     IntPtr best = IntPtr.Zero;
     long bestArea = -1;
@@ -237,29 +287,77 @@ public static class Wsa {
     return best;
   }
 
-  /// Ask a window to draw itself.
+  /// What a window is called, for an error message that names the culprit.
   ///
-  /// `PW_RENDERFULLCONTENT` (0x2) is what makes it work for a window this
-  /// renderer owns; without it the answer is an empty bitmap, which looks
-  /// exactly like a window that has not painted and is the reason this was
-  /// first written off as unusable.
+  /// A refusal that says "another window" and nothing else sends the reader to
+  /// hunt for it; "another window will not stay behind ours: <title> at (x,y)"
+  /// does not.
+  public static string Describe(IntPtr h) {
+    if (h == IntPtr.Zero) return "the desktop itself";
+    var t = new StringBuilder(256);
+    GetWindowText(h, t, 256);
+    var c = new StringBuilder(256);
+    GetClassName(h, c, 256);
+    if (t.Length == 0) return "a titleless window of class " + c;
+    return "'" + t + "' (" + c + ")";
+  }
+
+  /// Click at a point, in physical pixels.
   ///
-  /// The bitmap is sized from the *client* rectangle because that is what the
-  /// window's own layout fills. Anything else -- `GetWindowRect`, DWM's
-  /// extended frame bounds -- brings the caption and the invisible resize
-  /// border along, and those are not the page.
-  public static Bitmap Self(IntPtr win) {
-    RECT cr;
-    GetClientRect(win, out cr);
-    int w = cr.Right - cr.Left, h = cr.Bottom - cr.Top;
-    if (w <= 0 || h <= 0) throw new Exception("the window has no client area");
-    var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
-    using (var g = Graphics.FromImage(bmp)) {
-      IntPtr dc = g.GetHdc();
-      try { PrintWindow(win, dc, 2); }
-      finally { g.ReleaseHdc(dc); }
-    }
-    return bmp;
+  /// Move, press, release -- not `mouse_event` alone, because a button that the
+  /// cursor never arrived at is not a button anyone clicked, and a `TouchArea`
+  /// reading `has-hover` before `pressed` needs the move to have happened.
+  public static void ClickAt(int x, int y) {
+    SetCursorPos(x, y);
+    mouse_event(0x0002, 0, 0, 0, IntPtr.Zero); // left down
+    System.Threading.Thread.Sleep(40);
+    mouse_event(0x0004, 0, 0, 0, IntPtr.Zero); // left up
+  }
+
+  /// Bring this window above whatever is on the desktop.
+  ///
+  /// The check below asks five points whether ours is on top, and it is only a
+  /// fair question once we have *asked* for that. `SetForegroundWindow` on its
+  /// own is routinely refused on Windows -- the foreground lock decides who may
+  /// take it -- so the order matters: raise to topmost, then foreground, then
+  /// read. Raising is a request rather than a result, which is exactly what the
+  /// check is for.
+  public static void Raise(IntPtr h) {
+    const uint SWP_NOMOVE = 0x0002;
+    const uint SWP_NOSIZE = 0x0001;
+    SetWindowPos(h, new IntPtr(-1 /* HWND_TOPMOST */), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    BringWindowToTop(h);
+    SetForegroundWindow(h);
+  }
+
+  /// The window's rectangle on the screen, in physical pixels.
+  ///
+  /// 'GetWindowRect' rather than 'GetClientRect': with 'no-frame: true' there is
+  /// no caption and no invisible resize border, so the two coincide, and the
+  /// screen capture below needs the *screen* coordinates of the window.
+  public static RECT Frame(IntPtr win) {
+    RECT r;
+    GetWindowRect(win, out r);
+    return r;
+  }
+
+  /// Ask DWM for a current frame of the desktop.
+  ///
+  /// Without this 'Graphics.CopyFromScreen' returns a frame from *before* the
+  /// window was last painted -- a clean, correctly sized picture of the desktop
+  /// as it used to be. Touching the screen DC forces the redirection surface to
+  /// be rebuilt. Nothing about the result distinguishes a stale frame from a
+  /// fresh one, which is how three captures ended up being pictures of other
+  /// applications while every check in this script passed.
+  public static void WarmDesktopSurface() {
+    IntPtr dc = GetDC(IntPtr.Zero);
+    ReleaseDC(IntPtr.Zero, dc);
+  }
+
+  /// The top-level window the mouse would hit at a point.
+  public static IntPtr RootAt(int x, int y) {
+    var p = new POINT { X = x, Y = y };
+    return GetAncestor(WindowFromPoint(p), 2 /* GA_ROOT */);
   }
 }
 "@
@@ -300,6 +398,89 @@ function Get-DominantColour($bitmap) {
     return ('#{0}' -f $top.Key)
 }
 
+# Is our window the one that is actually there?
+#
+# Asked of five points, corners included: a check that only looks at the middle
+# of the frame passes a window with a chat client lying across one corner of it,
+# which is what happened four captures in a row on this desktop.
+#
+# It was wrong for a while even after being written, and the reason is the same
+# one that made every capture the wrong shape: `WindowFromPoint` answers in
+# *logical* coordinates to a DPI-unaware process while `CopyFromScreen` reads
+# physical pixels, so the question was being asked at a different place from the
+# one being photographed. `MakeAware()` runs before any of this, and it is what
+# makes the two agree.
+#
+# Returns the point that answered for something else, or nothing.
+function Get-ForeignPoint([IntPtr]$hWnd, $frame) {
+    $inset = 12
+    $points = @(
+        @{ x = $frame.Left + $inset; y = $frame.Top + $inset },
+        @{ x = $frame.Right - $inset - 1; y = $frame.Top + $inset },
+        @{ x = $frame.Left + $inset; y = $frame.Bottom - $inset - 1 },
+        @{ x = $frame.Right - $inset - 1; y = $frame.Bottom - $inset - 1 },
+        @{ x = [int](($frame.Left + $frame.Right) / 2); y = [int](($frame.Top + $frame.Bottom) / 2) }
+    )
+    foreach ($p in $points) {
+        $under = [Wsa]::RootAt($p.x, $p.y)
+        if ($under -ne $hWnd) {
+            $other = 'a window with no title'
+            if ($under -ne [IntPtr]::Zero) {
+                $other = [Wsa]::Describe($under)
+            }
+            return ('{0} at ({1},{2})' -f $other, $p.x, $p.y)
+        }
+    }
+    return ''
+}
+
+# Wait until the app says it has a view model.
+#
+# Not a countdown. The app writes `home model applied` at the moment the poll
+# has built a model and handed it to the window, which is the only thing worth
+# waiting for -- and waiting for it *by name* is what makes the wait the same
+# length regardless of how many processes the stand-in has to spawn or how long
+# adb takes to answer. The capture below is judged on its pixels afterwards, so
+# this is not load-bearing; it exists because guessing the number produced five
+# empty pictures that passed every pixel check the script had.
+#
+# The log line needs debug logging, so the launch sets `RUST_LOG` for the child.
+# If it never appears -- the app was built without the line, or the file is not
+# where it usually is -- this says so and moves on rather than hanging; the
+# pixel checks below are what will refuse the picture if the wait was wrong.
+function Wait-ForModel([string]$dir, [int]$timeoutSeconds, [int]$paintSeconds) {
+    $log = Get-ChildItem $dir -Filter 'wsadashboard.log.*' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $before = if ($log) { $log.Length } else { 0 }
+
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    $sawModel = $false
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 400
+        $log = Get-ChildItem $dir -Filter 'wsadashboard.log.*' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $log) { continue }
+        $stream = [System.IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite')
+        try {
+            $stream.Position = [Math]::Min($before, $stream.Length)
+            $reader = New-Object System.IO.StreamReader($stream)
+            $tail = $reader.ReadToEnd()
+            $reader.Dispose()
+        } finally {
+            $stream.Close()
+        }
+        if ($tail -match 'home model applied') { $sawModel = $true; break }
+    }
+
+    if ($sawModel) {
+        Write-Verbose 'the app reports it has a view model'
+    } else {
+        Write-Output ("note: no 'home model applied' within {0}s; falling back to a {1}s sleep." -f `
+                      $timeoutSeconds, $paintSeconds)
+    }
+    Start-Sleep -Seconds $paintSeconds
+}
+
 # A single instance of the app would take a second launch as "focus the one
 # that is already there" (P7 wires that deliberately), so no launch can be
 # left running from a previous run.
@@ -311,6 +492,10 @@ try {
     # and `Command::new("")` fails in a way that looks like a broken install
     # rather than an unset variable.
     $env:WSADASH_ADB = $adb
+    # Only for the child, and only so that `Wait-ForModel` has a line to read.
+    # This script's own diagnostics are `Write-Verbose`; the child's level is
+    # not otherwise its business, and it is put back below.
+    $env:RUST_LOG = 'wsadashboard=debug'
     $proc = Start-Process -FilePath $exe -PassThru
     if ($UseRealAdb) {
         Write-Output 'note: -UseRealAdb, so this is the real subsystem through adb on PATH.'
@@ -327,10 +512,32 @@ try {
         throw "the window never appeared; see $HOME\.wsadashboard\logs\wsadashboard.log"
     }
 
-    # Let it finish waking up: the first frames of a freshly launched Slint
-    # window are not the page, and the poll refreshes on start, which is what
-    # the stand-in's six subprocesses are being waited for.
-    Start-Sleep -Seconds $SettleSeconds
+    # Wait for the app's own signal, then for the paint to land.
+    Wait-ForModel $LogDir $ModelTimeoutSeconds $SettleSeconds
+
+    if ($Act -ne 'none') {
+        # Logical coordinates first, physical after -- the window's own layout
+        # is in the units `app.slint` declares, and the mouse is in the units the
+        # screen is drawn in. `Sidebar`'s hamburger: 4px of side padding + 13px
+        # of button padding + 10px half an icon, at 40px title + 12px top
+        # padding + 4px spacer + 18px half a 36px row. `TitleBar`'s switch:
+        # four 46px buttons right-aligned, the switch being the first and 40px
+        # wide, so 800 - 46*3 - 20.
+        $actWhere = switch ($Act) {
+            'collapse-sidebar' { @{ x = 27; y = 74 } }
+            'dark-theme'       { @{ x = 642; y = 20 } }
+        }
+        $before = [Wsa]::Frame($hWnd)
+        $px = [int]($before.Left + ($actWhere.x * $scale))
+        $py = [int]($before.Top + ($actWhere.y * $scale))
+        Write-Verbose ("clicking '{0}' at physical ({1},{2})" -f $Act, $px, $py)
+        [Wsa]::Raise($hWnd)
+        [Wsa]::ClickAt($px, $py)
+        # The side bar's width animates over 200ms and the theme switch over
+        # 150ms; waiting past both is cheaper than either animation being
+        # halfway through the shutter.
+        Start-Sleep -Milliseconds 700
+    }
 
     # The size the four captures share: `app.slint`'s 800x600, in the physical
     # pixels this monitor actually has (1200x900 at 150%). If the window opened
@@ -339,17 +546,48 @@ try {
     # produce four pictures that cannot be laid side by side.
     $client = [Wsa]::ClientSize($hWnd)
     if ($client.Width -ne $expectedW -or $client.Height -ne $expectedH) {
-        throw ("the window's client area is {0}x{1}, not the {2}x{3} that app.slint declares at this " +
-               "monitor's scale. The four captures have to be the same shape to be worth comparing, " +
-               "and resizing the window is not this script's business.") -f `
-               $client.Width, $client.Height, $expectedW, $expectedH
+        throw ('the window''s client area is ' + $client.Width + 'x' + $client.Height +
+               ', not the ' + $expectedW + 'x' + $expectedH + ' that app.slint declares at this ' +
+               'monitor''s scale. The four captures have to be the same shape to be worth ' +
+               'comparing, and resizing the window is not this script''s business.')
     }
 
     $bitmap = $null
     $best = 0
     $dominant = ''
+    $blocked = ''
     foreach ($attempt in 1..8) {
-        $cand = [Wsa]::Self($hWnd)
+        # Three things a screen capture has to be sure of, in the order they
+        # can go wrong: is this our window, is anything over it, and is what
+        # comes back the page. All three are asked again on every pass because
+        # each is a question about *this instant* -- a rectangle read before the
+        # shutter opens is a rectangle about something that has since moved.
+        $frame = [Wsa]::Frame($hWnd)
+        $fw = $frame.Right - $frame.Left
+        $fh = $frame.Bottom - $frame.Top
+        if ($fw -ne $expectedW -or $fh -ne $expectedH) {
+            throw ('the window is ' + $fw + 'x' + $fh + ', not the ' + $expectedW + 'x' +
+                   $expectedH + ' that app.slint declares at this monitor''s scale. The four ' +
+                   'captures have to be the same shape to be worth comparing, and resizing the ' +
+                   'window is not this script''s business.')
+        }
+
+        # Raising is separate from the question because the question is not a
+        # way to raise anything: `WindowFromPoint` reports what is in front, and
+        # our own attempt to get in front has to happen first.
+        [Wsa]::Raise($hWnd)
+        $blocked = Get-ForeignPoint $hWnd $frame
+        if ($blocked) {
+            Start-Sleep -Milliseconds 700
+            continue
+        }
+
+        [Wsa]::WarmDesktopSurface()
+        $cand = New-Object System.Drawing.Bitmap($fw, $fh)
+        $g = [System.Drawing.Graphics]::FromImage($cand)
+        try { $g.CopyFromScreen($frame.Left, $frame.Top, 0, 0, (New-Object System.Drawing.Size($fw, $fh))) }
+        finally { $g.Dispose() }
+
         $diversity = Get-ContentDiversity $cand
         if ($diversity -gt $best) { $best = $diversity }
         if ($diversity -lt $MinDiversity) {
@@ -359,9 +597,6 @@ try {
         }
         $dominant = Get-DominantColour $cand
         if ($dominant.ToUpperInvariant() -ne $ExpectedBackground.ToUpperInvariant()) {
-            # The window has something in it that is not the page -- which,
-            # now that nothing can lie over the window, means it is showing
-            # something other than the home page at all.
             $cand.Dispose()
             Start-Sleep -Milliseconds 800
             continue
@@ -371,10 +606,23 @@ try {
     }
 
     if (-not $bitmap) {
+        if ($blocked) {
+            throw ('another window will not stay behind ours: ' + $blocked + '. Photographing it ' +
+                   'would produce a correct-looking file of the wrong application. Raise ours, or ' +
+                   'turn off that window''s "always on top" if it has one, and re-run.')
+        }
         if ($dominant -and $dominant.ToUpperInvariant() -ne $ExpectedBackground.ToUpperInvariant()) {
-            throw ('the window is not showing the home page: its largest area is ' + $dominant +
-                   ', not the flat field of Theme.content_bg (' + $ExpectedBackground + '). ' +
-                   "See $HOME\.wsadashboard\logs\wsadashboard.log for the poll's own account of itself.")
+            $why = if ($Act -eq 'dark-theme') {
+                'the dark theme is on and the expected background is still the light one ' +
+                '(Theme.content_bg is #1E1E1E dark and #FFFFFF light, and the dominant area is ' +
+                'the side bar, #2D2D30). Pass -ExpectedBackground for the theme you are shooting.'
+            } else {
+                "That is the screen's doing rather than the application's: f.lux composes through " +
+                'DWM over the whole desktop on this machine and makes white come back #FFA250. ' +
+                'Turn it off for a moment and re-run.'
+            }
+            throw ('the capture''s dominant colour is ' + $dominant + ' and this run expected ' +
+                   $ExpectedBackground + ' -- ' + $why)
         }
         throw ('the content area never rendered as more than a flat field (best of eight was ' +
                "$best distinct colours, floor was $MinDiversity); see " +
@@ -391,4 +639,5 @@ finally {
     # that dereferenced it would mask the original error.
     if ($proc -and -not $proc.HasExited) { $proc.Kill() }
     $env:WSADASH_ADB = $null
+    Remove-Item Env:RUST_LOG -ErrorAction SilentlyContinue
 }

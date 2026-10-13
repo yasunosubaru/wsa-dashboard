@@ -396,13 +396,126 @@ P2 **没有新增任何 `.slint` 组件文件**。参照首页需要的每一样
 
 **截图工具链的两条结论**（`tools/standin-adb/capture.ps1` 重写）：
 
-1. **用 `PrintWindow` 不用 `CopyFromScreen`。** 后者拍的是桌面，不是窗口：会返回
-   *窗口移动之前*的帧（三张拍成别的应用，首页拍成自己的首帧，而模型说它已经加载完了），
-   还会被置顶窗口和 f.lux 污染。`PrintWindow` 直接向窗口要内容，上面三件事都不存在。
+1. **取图方式在 P3 反过来了，见 §10。** 当时的结论是"用 `PrintWindow` 不用
+   `CopyFromScreen`"，理由成立——`CopyFromScreen` 确实会返回*窗口移动之前*的帧
+   （三张拍成别的应用，首页拍成自己的首帧，而模型说它已经加载完了），
+   还会被置顶窗口和 f.lux 污染。**P3 换成 `no-frame` 之后，`PrintWindow` 变成静默
+   不完整**：标题栏、侧栏、搜索框都在，轮询之后才出现的卡片全没了——dxcam 拍同一窗口
+   卡片齐全，所以不是应用的问题。现在回到屏幕取图，但这次**先 `SetProcessDpiAwarenessContext`**：
+   之前那次"返回旧帧"的怪相里，相当一部分其实是 DPI 坐标错位（窗口被要求移到 (300,200)
+   实际落在 (464,310)），修掉 DPI 之后命中测试和像素才对得上，归属校验也就可信了。
 2. **窗口用枚举 + 尺寸下限选，不用 `Process.MainWindowHandle`。** 本二进制的单实例握手
-   窗口会让后者在多次运行中返回那个 158×26 的隐藏 shim，于是拍的是 shim。
+   窗口会让后者在多次运行中返回那个 158×26 的隐藏 shim，于是拍的是 shim。这条没变。
 
-验证方式：`cargo test --release --bin wsadash` → **189 passed / 0 failed / 3 ignored**；
-GUI `cargo build --release --bin wsadashboard` 零 error 零 warning；
-四态截图 `docs/screenshots/p2-{ready,booting,offline,stopped}.png`（1200×900，
-四张同尺寸可直接并排）。
+---
+
+## 10. P3 外壳阶段的逐组件差异
+
+### 10.1 新增的都是参照里的组件，一个不多
+
+| 新增文件 | 对照参照 | 说明 |
+|---|---|---|
+| `components/sidebar.slint` | 210 行 → 照搬 | 九条目 + `show_*` 开关 + 54/200 折叠 |
+| `components/title_bar.slint` | 257 行 → 照搬 | 无边框窗口的替代标题栏 |
+| `components/common.slint` 补齐 | 参照 318 行 | P2 只搬了 `ActionIcon`，P3 补 `SidebarItem`/`ThemedIcon`/`WindowControlButton` |
+| `assets/font/icons.ttf` `assets/logo/mini.png` | 同 hash | 参照自带的图标字体子集与标题栏左上角的小图标 |
+| `handlers/common.rs` `handlers/window.rs` | 同名保留（spec §3） | |
+| `app/window.rs` | 参照 441 行的**一个切片** | 只有 `find_main_window` + `set_always_on_top`；其余（`set_skip_taskbar`/`hide_window_completely`/`set_window_opacity*`/`show_and_center`/`activate_window_by_hwnd`/`rename_app_windows`）全属托盘与单实例，P7 一并取回 |
+| `ui/tabs.rs` | 参照没有 | **判断**，不是组件。见 10.3 |
+
+### 10.2 九个页签只做了一个：用参照自己的 `show_*` 开关
+
+参照 `sidebar.slint` 每个条目都带 `show_add`/`show_usb`/`show_network`/`show_scheduler`/
+`show_mount`/`show_donate`/`show_about`，入参来自 `app.slint` 的 `in-out property <bool>
+sidebar_*: true`，由设置页 `save_sidebar_state()` 持久化。P3 **不发明任何新机制**：把还没做的
+八个页对应的 `show_*` 置 `false`，每做完一页翻成 `true`。属性名、类型、默认值全与参照一致，
+所以 P4–P7 只是"翻一个已有的开关"。
+
+**注意 Settings 没有开关**：参照里设置项不带 `if (root.show_*)` 守卫（它九页齐备，
+没什么可关的），所以 P3 侧栏**是会显示 Settings 的**，而设置页要到 P6 才有。
+
+### 10.3 于是需要 `ui/tabs.rs`：`select_tab` 的守卫
+
+点一个"条目存在、页不存在"的入口，会把 `selected_tab` 设到没有 `opacity` 绑定匹配的索引上，
+参照的页签切换靠 `x: selected_tab == N ? 0px : 10000px` 把非当前页推出屏幕——**推走之后
+屏幕上什么都没有**，内容区空白，正是 spec §5 禁止的现象。
+
+所以 `handlers/common.rs::on_select_tab` 先问 `has_a_view(tab)` 再切。这个**判断**
+最初写在 `handlers/common.rs` 里，紧接着意识到那是个错误：`handlers` 属于 GUI 树
+（`mod ui;`），`cargo test --bin wsadash` 根本不编译它，**三个测试一次都不会跑，
+却在 diff 里和真能跑的测试长得一模一样**。项目已在 `data.rs` 和 `handlers/home.rs`
+记过这条规则，这次又踩到同一处。挪到 `src/ui/tabs.rs` 并用 `#[path]` 挂进 CLI 后
+测试数从 190 变 195。
+
+### 10.4 一处明知的偏离：标题栏的邮件图标
+
+参照 `title_bar.slint` 的 `mail_icon_always` 默认 `true`，标题栏左侧有一个信封，
+点开是参照自己的系统消息面板（`mail_messages`/`show_mail_popup`，wslui.com 用来公告）。
+WSA 侧**永远不会有**这个数据源，所以 `app.slint` 传 `mail_icon_always: false`：
+属性、回调、分支全在组件里一字未动，缺的只是一个点了没反应的按钮。
+
+这是 P3 全阶段唯一一处"参照有、我们没有"，与 P9 的硬裁定方向相反（P9 禁的是**多出**参照
+没有的东西），记在这里供对照时认领。
+
+### 10.5 拖动窗口：计划写错了，按参照做
+
+P3 计划的 Review Focus #6 写着"必须走 `start_drag()`，不能自己 `set_position`"。
+**那是错的**。参照 `handlers/window.rs:51-59` 就是 `app.window().set_position(pos + delta)`，
+而且必须如此：`start_drag()` 会把鼠标事件交给操作系统吞掉，标题栏 `TouchArea` 的
+`moved` 此后不再触发。参照的 `TitleBar` 报的是**相对按下点的位移**，窗口跟着光标走会让
+这个位移每次回到常量附近，累加式地 `pos + delta` 因此不会发散。照抄参照的写法。
+
+### 10.6 顺带补上 P2 计划里漏掉的 `home_clicked`
+
+侧栏的 Home 条目同时发 `tab_selected(0)` 和 `home_clicked`。参照把后者注册在
+`handlers/distro/manage.rs`，语义是**手动刷新**（`should_refresh_wsl("manual trigger")`，
+绕过 4 秒闸门）。P2 计划列了它但没实现——`data.rs` 里 `MANUAL_TRIGGER` 常量和测试都在，
+`refresh_home` 却写死 `PERIODIC_TRIGGER`。这次把入口拆成
+`refresh_home_with(reason, ...)`，`refresh_home` 成为周期触发的包装。
+
+### 10.7 i18n 新增 9 键（键名照参照 `en.toml`，文案按 spec §3 换）
+
+`sidebar.{home,add,usb,network,scheduler,mount,settings,about,donate}`。
+`add` 参照是 "Add an instance"（加个 WSL 实例）→ 我们是 **Install APK**；
+`usb` 参照 "USB devices" → 我们是 **Devices**（adb 目标）；
+`mount` 参照 "Mount disk" → 我们是 **Storage**（spec §3 语义重定义）。其余同参照。
+`common.app_name` P2 已有，值为 "WSA Dashboard"。
+
+### 10.8 截图脚本这一阶段的三处改动
+
+1. **`PrintWindow` → 屏幕取图**（§9 已记原因）。换回屏幕取图要重新解决遮挡，
+   于是加了 `Raise()`（每次取图前 `HWND_TOPMOST` + `BringWindowToTop` + `SetForegroundWindow`）
+   和 `Get-ForeignPoint()`（四角 + 中心五点问 `WindowFromPoint`）。P2 曾因只查中心而连拍四张
+   压着 QQ 的图——**只有 DPI 修好之后，命中测试才和像素在同一个坐标系里，这条校验才可信**。
+2. **等待从倒计时改成等应用自己的信号**：脚本设 `RUST_LOG=wsadashboard=debug` 给子进程，
+   轮询 `~/.wsadashboard/logs/` 新增的 `home model applied` 行。改之前连拍五张空图——
+   替身首轮轮询落在约 6 秒，而固定睡 5 秒，**页面自己的多样性判据又分不出来**，
+   因为光是外壳（标题栏 + 侧栏 + 搜索框）就已经超过 8 种颜色。
+3. **新增 `-Act collapse-sidebar | dark-theme`**：折叠和主题都是 `in-out` 属性、
+   要到 P6/P8 才落盘，没有文件可预设，只能像用户那样点一下。坐标从布局推导
+   （`Sidebar` 汉堡 4+13+10px 宽、标题栏四按钮 46px 右对齐、开关 40px）再乘显示器倍率。
+   深色态还要把 `-ExpectedBackground` 一起改（`Theme.content_bg` 亮 #FFFFFF 暗 #1E1E1E，
+   而主面积其实是侧栏 `#2D2D30`）——首次报错信息把"主题变了"误判成 f.lux 染色，
+   文案已分开这两种可能。
+
+### 10.9 验证
+
+`cargo test --release --bin wsadash` → **195 passed / 0 failed / 3 ignored**；
+`-- --ignored --nocapture` 三项真机全过；GUI `cargo build --release --bin wsadashboard`
+零 error 零 warning。
+
+截图（均 1200×900，可并排）：
+
+| 文件 | 内容 |
+|---|---|
+| `docs/screenshots/p2-ready.png` | P2 四态之一，**在 P3 外壳下重拍** |
+| `docs/screenshots/p2-booting.png` | 同上，加载覆盖层 |
+| `docs/screenshots/p2-offline.png` | 同上，骨架行 + toast |
+| `docs/screenshots/p2-stopped.png` | 同上，`DistroNotFoundView` |
+| `docs/screenshots/p3-sidebar-collapsed.png` | 侧栏折叠到 54px（图中 81px），只剩图标 |
+| `docs/screenshots/p3-theme-dark.png` | 深色主题，全外壳生效 |
+| `docs/screenshots/p3-real.png` | `-UseRealAdb`，真 adb 与真 WSA |
+| `docs/screenshots/p2-real.png` | 上一条的 P2 外壳版本，保留作对照 |
+
+**P2 的四张仍在 `p2-*` 名下**：它们记的是 spec §5 的四个渲染态，P3 只是换了外壳，
+改名会让 P2 计划里的引用断掉。重拍日期见 git。

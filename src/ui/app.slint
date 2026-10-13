@@ -4,35 +4,40 @@
 // Root component, ported from the reference's src/ui/app.slint
 // (wsl-dashboard 0.12.0, GPL-3.0-only).
 //
-// P0 shipped a placeholder here -- a frameless root window would have had no
-// chrome to draw on and nothing to show, which makes a phase un-screenshotable.
-// This is the first real root, and it is deliberately smaller than the
-// reference's: one tab, no sidebar, no title bar of its own. What the
-// reference has that this file does not yet, and why, so P3 adds it rather
-// than re-derives it:
+// P0 shipped a placeholder -- a frameless root would have had no chrome to draw
+// on and nothing to show, which makes a phase un-screenshotable. P2 added the
+// first tab on its own. **P3 is the shell**: `no-frame` + `TitleBar` +
+// `Sidebar` + the opacity tab switch, all together, because they only make
+// sense together -- a frameless window with no replacement title bar is a
+// window you cannot move or close.
 //
-//   reference feature        P2 status
-//   -----------------------  ------------------------------------------------
-//   no-frame + transparent   P3. Together with title_bar.slint, which P3 adds
-//   window + TitleBar        along with it. Frameless is not worth having on
-//                            its own; it is only worth having with the
-//                            replacement chrome in the same change.
-//   sidebar + nine tabs      P3. P2 is the first tab on its own.
-//   modal manager            P3, with the dialogs it arbitrates.
-//   AppI18n / theme wiring   P5, when the full i18n table lands.
+//   reference feature        status
+//   -----------------------  ---------------------------------------------
+//   no-frame + transparent   this change
+//   window + TitleBar        this change
+//   sidebar + nine tabs      this change; eight of the nine have no page yet
+//   modal manager            P5, with the first dialog that uses it. Measured,
+//                            not remembered: every reference call site is in
+//                            components/dialogs/**, and the earliest of those
+//                            (move/compress) is P5.
+//   AppI18n / theme wiring   P6, with the full i18n table.
 //
-// The window TITLE is kept in the reference's exact form because the
-// single-instance handshake matches on it -- see docs/MAPPING.md section 2.1.
+// The window TITLE stays in the reference's exact form because the
+// single-instance handshake matches on it (docs/MAPPING.md section 2.1).
+// `no-frame` hides the caption but does not change `GetWindowText`, so the
+// string still answers a second instance asking who is already open -- which is
+// why `runner` keeps overriding it with the application name.
 
 import { Theme, Distro, AppInfo, AppI18n, AppApi } from "theme.slint";
 // ★ The reference re-exports its globals from the root (reference
 //    `src/ui/app.slint:43`) -- that is what puts `AppI18n` / `AppInfo` in the
 //    generated Rust re-export list, and therefore what makes
-//    `app.global::<AppI18n>()` in `app::runner` resolve. P2 only needs these
-//    three; the rest return with the pages that use them.
+//    `app.global::<AppI18n>()` in `app::runner` resolve.
 export { Theme, Distro, AppInfo, AppI18n, AppApi }
 import { MainView } from "views/main_view.slint";
 import { TaskStatusToast } from "components/task_status_toast.slint";
+import { TitleBar } from "components/title_bar.slint";
+import { Sidebar } from "components/sidebar.slint";
 
 export component AppWindow inherits Window {
     // ★ The reference writes `title: "WSA_DASHBOARD_WINDOW_UI"` literally, and
@@ -40,22 +45,22 @@ export component AppWindow inherits Window {
     //    because Slint 1.17 gives no setter for a `Window`'s title -- only a
     //    getter -- so the only way to name the window from `app::runner` is to
     //    route it through something the component owns.
-    //
-    //    P2 has the system frame, so the literal would be a caption a user
-    //    reads; `runner` therefore overrides it with the application name.
-    //    P3 goes frameless, the override goes away, and the string returns to
-    //    being one of the candidates `single_instance` scans for when it looks
-    //    for a window to focus (reference `single_instance.rs:28` keeps both
-    //    spellings in that list, so keeping this one costs nothing).
     in-out property <string> window_title: "WSA_DASHBOARD_WINDOW_UI";
     title: window_title;
 
     width: 800px;
     height: 600px;
-    background: Theme.background;
 
-    // Home-page state. Named for the page rather than for the subsystem,
-    // because the sidebar that would have disambiguated them is P3.
+    // The reference's window is frameless and transparent, and the *rounded*
+    // rectangle you actually see is the main-layout Rectangle below, not this
+    // window. Frameless without the replacement chrome would have been a
+    // window with no way to move, close or minimise it, which is why P0 and P2
+    // kept the system frame and why this turns on in the same change as
+    // `TitleBar`.
+    background: transparent;
+    no-frame: true;
+
+    // ---- home-page state (P2) ------------------------------------------------
     in property <[Distro]> distros: [];
     in property <bool> home_loading: false;
     in property <string> home_not_found_text: "";
@@ -66,7 +71,7 @@ export component AppWindow inherits Window {
 
     // The reference calls these task_status_* rather than home_toast_*; the
     // name is kept because the toast is a window-level overlay in the
-    // reference, above every dialog, and P3 keeps it that way.
+    // reference, above every dialog, and it stays that way here.
     in property <string> task_status_text: "";
     in property <bool> task_status_visible: false;
 
@@ -75,48 +80,176 @@ export component AppWindow inherits Window {
     // already recorded. The poll loop reads this back.
     in-out property <string> search_query: "";
 
-    // Callbacks wired in P2. The reference forwards all sixteen of
+    // ---- shell state (P3) ----------------------------------------------------
+    // All names, types and defaults are the reference's (app.slint:56-74).
+    in property <int> selected_tab: 0;
+    in-out property <bool> sidebar_collapsed: false;
+    in-out property <bool> is_maximized: false;
+    in-out property <bool> is_pinned: false;
+
+    // Which side-bar entries are offered.
+    //
+    // The reference defaults all of these to `true`, because it ships all nine
+    // pages. Ours ships one. Turning the rest off from here -- rather than
+    // inventing a "coming soon" entry or a second kind of disabled row -- is
+    // the same switch the reference's settings page flips, so each later phase
+    // turns one on and nothing about the mechanism changes. See MAPPING §8.
+    in-out property <bool> sidebar_add: false;
+    in-out property <bool> sidebar_usb: false;
+    in-out property <bool> sidebar_network: false;
+    in-out property <bool> sidebar_scheduler: false;
+    in-out property <bool> sidebar_mount: false;
+    in-out property <bool> sidebar_donate: false;
+    in-out property <bool> sidebar_about: false;
+    in-out property <bool> sidebar_toggle: true;
+
+    // ---- callbacks -----------------------------------------------------------
+    // P2's four, plus the shell's. The reference forwards sixteen of
     // MainView's plus its dialogs'; those land with their pages.
     callback open_url(string);
     callback start_distro(string);
     callback stop_distro(string);
     callback reorder_distros(int, int);
     callback close_task_status();
+    callback select_tab(int);
+    callback home_clicked();
+    callback save_sidebar_state();
+    callback window_pin_toggle();
+    callback window_minimize();
+    callback window_maximize();
+    callback window_close();
+    callback window_drag_delta(float, float);
+    callback toggle_theme();
 
+    // The mail icon is suppressed in `TitleBar` (`mail_icon_always: false`):
+    // the reference's is its own system-message inbox, and there is no
+    // equivalent here. The property and `mail_clicked` both stay so the
+    // component is untouched; nothing connects it while there is nothing to
+    // connect. MAPPING §8 records the one place P3 sets "the reference has it,
+    // so we have it" aside.
+
+    // ---- Main Layout (reference app.slint:578-1056, P3's part of it) ---------
     Rectangle {
         width: 100%;
         height: 100%;
-        // The reference paints this surface in the parent of its content
-        // Rectangle rather than in MainView, so the corner radius it applies
-        // there stays unapplied here -- P3 adds the radius together with the
-        // sidebar that needs it.
-        background: Theme.content_bg;
+        background: Theme.background;
+        border-radius: 8px;
+        clip: true;
+        border-width: 1px;
+        border-color: Theme.main_color;
+        VerticalLayout {
+            TitleBar {
+                title: AppI18n.t("common.app_name", [AppI18n.version]);
+                is_maximized: root.is_maximized;
+                is_pinned: root.is_pinned;
+                // No message source, so no icon: see above.
+                mail_icon_always: false;
+                pin_toggle => {
+                    root.window_pin_toggle();
+                }
+                close => {
+                    root.window_close();
+                }
+                minimize => {
+                    root.window_minimize();
+                }
+                toggle_theme => {
+                    Theme.dark_mode = !Theme.dark_mode;
+                    root.toggle_theme();
+                }
+                drag_delta(dx, dy) => {
+                    root.window_drag_delta(dx, dy);
+                }
+            }
 
-        MainView {
-            x: 0;
-            y: 0;
-            width: 100%;
-            height: 100%;
-            distros: root.distros;
-            wsl_loading: root.home_loading;
-            distro_not_found: root.home_not_found_text;
-            distro_not_found_text: root.home_not_found_text;
-            wsl_guide_url: root.home_guide_url;
-            guide_link_text: root.home_guide_link_text;
-            greyed: root.home_greyed;
-            buttons_disabled: root.home_buttons_disabled;
-            search_query <=> root.search_query;
-            open_url(url) => {
-                root.open_url(url);
-            }
-            start_distro(n) => {
-                root.start_distro(n);
-            }
-            stop_distro(n) => {
-                root.stop_distro(n);
-            }
-            reorder_distros(from, to) => {
-                root.reorder_distros(from, to);
+            Rectangle {
+                sidebar := Sidebar {
+                    x: AppI18n.is-rtl ? parent.width - self.width : 0;
+                    height: 100%;
+                    collapsed <=> root.sidebar_collapsed;
+                    selected_tab: root.selected_tab;
+                    home_text: AppI18n.t("sidebar.home", [AppI18n.version]);
+                    add_text: AppI18n.t("sidebar.add", [AppI18n.version]);
+                    usb_text: AppI18n.t("sidebar.usb", [AppI18n.version]);
+                    network_text: AppI18n.t("sidebar.network", [AppI18n.version]);
+                    scheduler_text: AppI18n.t("sidebar.scheduler", [AppI18n.version]);
+                    mount_text: AppI18n.t("sidebar.mount", [AppI18n.version]);
+                    settings_text: AppI18n.t("sidebar.settings", [AppI18n.version]);
+                    about_text: AppI18n.t("sidebar.about", [AppI18n.version]);
+                    donate_text: AppI18n.t("sidebar.donate", [AppI18n.version]);
+                    show_add: root.sidebar_add;
+                    show_toggle: root.sidebar_toggle;
+                    show_usb: root.sidebar_usb;
+                    show_network: root.sidebar_network;
+                    show_scheduler: root.sidebar_scheduler;
+                    show_mount: root.sidebar_mount;
+                    show_donate: root.sidebar_donate;
+                    show_about: root.sidebar_about;
+                    tab_selected(idx) => {
+                        root.select_tab(idx);
+                    }
+                    home_clicked => {
+                        root.home_clicked();
+                    }
+                    toggle_collapsed => {
+                        root.save_sidebar_state();
+                    }
+                }
+
+                Rectangle {
+                    x: AppI18n.is-rtl ? 0 : sidebar.width;
+                    width: parent.width - sidebar.width;
+                    height: 100%;
+                    background: Theme.content_bg;
+                    border-top-left-radius: AppI18n.is-rtl ? 0 : 8px;
+                    border-top-right-radius: AppI18n.is-rtl ? 8px : 0;
+                    clip: true;
+                    VerticalLayout {
+                        padding: 16px;
+                        padding-top: 8px;
+                        padding-right: AppI18n.is-rtl ? 16px : 6px;
+                        padding-left: AppI18n.is-rtl ? 6px : 16px;
+                        Rectangle {
+                            // The tab switch.
+                            //
+                            // Not `if selected_tab == 0`: every page is kept in the
+                            // tree and the *inactive* one is moved out of the way
+                            // with opacity and an x far off the left edge. Two
+                            // reasons, both the reference's -- the page keeps its
+                            // scroll position and its half-typed search box, and a
+                            // `TouchArea` at x:10000px cannot catch a click that
+                            // belongs to the page that is showing. `visible: true`
+                            // is deliberate: turning it off would defeat both.
+                            MainView {
+                                visible: true;
+                                z: 3;
+                                opacity: selected_tab == 0 ? 1 : 0;
+                                x: selected_tab == 0 ? 0px : 10000px;
+                                distros: root.distros;
+                                wsl_loading: root.home_loading;
+                                distro_not_found: root.home_not_found_text;
+                                distro_not_found_text: root.home_not_found_text;
+                                wsl_guide_url: root.home_guide_url;
+                                guide_link_text: root.home_guide_link_text;
+                                greyed: root.home_greyed;
+                                buttons_disabled: root.home_buttons_disabled;
+                                search_query <=> root.search_query;
+                                open_url(url) => {
+                                    root.open_url(url);
+                                }
+                                start_distro(n) => {
+                                    root.start_distro(n);
+                                }
+                                stop_distro(n) => {
+                                    root.stop_distro(n);
+                                }
+                                reorder_distros(from, to) => {
+                                    root.reorder_distros(from, to);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

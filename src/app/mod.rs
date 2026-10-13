@@ -13,3 +13,4 @@ pub mod launcher;
 pub mod runner;
 pub mod state;
 pub mod tasks;
+pub mod window;

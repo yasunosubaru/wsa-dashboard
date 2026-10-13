@@ -77,6 +77,24 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Safe to call far more often than it does anything: [`should_refresh`] is the
 /// gate, and it refuses most calls.
 pub async fn refresh_home(weak: Weak<AppWindow>, state: Arc<AppState>) {
+    refresh_home_with(PERIODIC_TRIGGER, weak, state).await;
+}
+
+/// [`refresh_home`] with a reason attached.
+///
+/// The timer passes [`PERIODIC_TRIGGER`] and is refused until four seconds have
+/// passed; a click on the home entry in the side bar passes
+/// [`MANUAL_TRIGGER`] and skips that wait but not the others -- a manual
+/// refresh during an uninstall is refused for the same reason the timer would
+/// have been, because it is not better informed than the timer.
+///
+/// The reference reaches the same place differently: its side bar's home entry
+/// calls `should_refresh_wsl("manual trigger", ...)` directly and then
+/// `dashboard.refresh_distros()`. The reason string is what is being carried
+/// over -- this project's gate lives in one function with one signature, and
+/// giving it a second entry point that skips the single-flight guard would be
+/// two truths about the same invariant.
+pub async fn refresh_home_with(reason: &'static str, weak: Weak<AppWindow>, state: Arc<AppState>) {
     if IS_REFRESHING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -100,7 +118,7 @@ pub async fn refresh_home(weak: Weak<AppWindow>, state: Arc<AppState>) {
     let busy = state.wsa_dashboard.get_active_op().is_some();
     let visible = state.is_visible.load(Ordering::SeqCst);
     let elapsed = lock(&LAST_REFRESH).map(|at| at.elapsed());
-    if !should_refresh(PERIODIC_TRIGGER, visible, busy, elapsed) {
+    if !should_refresh(reason, visible, busy, elapsed) {
         return;
     }
     *lock(&LAST_REFRESH) = Some(Instant::now());

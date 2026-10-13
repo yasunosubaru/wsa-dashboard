@@ -32,6 +32,12 @@ mod home_model;
 #[path = "ui/refresh.rs"]
 mod refresh;
 
+// Same reason as `home_model`: `tabs` is a decision with tests, and it was
+// written inside `handlers/common.rs` first -- where it would have compiled
+// into nothing, because `handlers` is GUI-only. See `src/ui/tabs.rs`.
+#[path = "ui/tabs.rs"]
+mod tabs;
+
 #[path = "i18n/mod.rs"]
 mod i18n;
 

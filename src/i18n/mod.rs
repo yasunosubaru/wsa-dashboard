@@ -77,6 +77,25 @@ fn lookup(key: &str) -> Option<&'static str> {
 /// `docs/MAPPING.md` section 4.1 records.
 pub static ENGLISH: &[(&str, &str)] = &[
     ("common.app_name", "WSA Dashboard"),
+    // -- sidebar: the nine entries (P3) -------------------------------------
+    // Key names are the reference's; the three whose page means something else
+    // here carry our words, which is Q12's whole rule:
+    //   add      -> spec 3 maps the reference's "Add an instance" (a WSL distro)
+    //               onto "install an APK"
+    //   usb      -> mapped onto a device page; it lists adb targets, not WSL USB
+    //   mount    -> the reference mounts physical disks into WSL; ours is
+    //               storage management (spec 3), so "Storage"
+    // `home` and `settings` are the two P3 actually shows; the rest are here so
+    // the phases that turn their `show_*` on find them already written.
+    ("sidebar.home", "Home"),
+    ("sidebar.add", "Install APK"),
+    ("sidebar.usb", "Devices"),
+    ("sidebar.network", "Network"),
+    ("sidebar.scheduler", "Task scheduler"),
+    ("sidebar.mount", "Storage"),
+    ("sidebar.settings", "Settings"),
+    ("sidebar.about", "About"),
+    ("sidebar.donate", "Donate"),
     // -- main: the home page ---------------------------------------------
     ("main.loading", "Loading..."),
     // The reference names a WSL distribution; we list Android packages, so

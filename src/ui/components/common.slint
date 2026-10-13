@@ -8,9 +8,46 @@
 // ThemedIcon, ActionIcon, WindowControlButton. Only ActionIcon is used before
 // P3, and the other three need assets that belong to a later page -- SidebarItem
 // and ThemedIcon draw from the bundled icons.ttf, WindowControlButton paints the
-// custom title bar that P3 adds along with the frameless window. Keeping them
-// here would mean importing a font that nothing reads. P3 brings them back
-// wholesale; docs/MAPPING.md records the omission.
+// custom title bar that P3 adds along with the frameless window. P3 brings them
+// back wholesale; docs/MAPPING.md records the omission.
+
+// ★ The font import, and it is load-bearing in a way its one line does not show.
+//
+// `theme.slint` names `"Segoe Fluent Icons"`, which is the *family of this
+// file*, not a font the machine is expected to have -- it is a 74-glyph subset
+// of Microsoft's Segoe Fluent Icons v1.47, cut by the reference's
+// `assets/font/subset_font.js` from the codepoints its own `.slint` files use.
+// So the reference ships the font rather than asking for it.
+//
+// Measured, because P2's screenshots showed `\u{E769}` (stop) as a tofu box and
+// the first conclusion -- "this machine lacks the font" -- did not survive being
+// checked:
+//   * the subset's `cmap` does map U+E769 (glyph 9), and U+E768 (glyph 8);
+//   * its `name` table says family = "Segoe Fluent Icons", 74 glyphs, which is
+//     exactly what `Theme.icon_font` asks for;
+//   * the file loads cleanly as a font (GDI `PrivateFontCollection` accepts it
+//     and reports that family);
+//   * importing it in `app.slint` as well changes nothing;
+//   * and neither does writing it out and registering it with
+//     `AddFontResourceExW(FR_PRIVATE)` -- that call *succeeds* and the glyph is
+//     still tofu, which is the measurement that identifies the cause.
+//
+// Slint's Skia backend resolves font families through DirectWrite, and
+// DirectWrite's system collection is built independently of the GDI font table,
+// so neither an embedded font nor a privately registered one reaches it. The
+// reference has no runtime registration at all and the same `renderer-skia`
+// features, so it behaves identically: **this is a property of the renderer, not
+// a difference between the two programs.** With Segoe Fluent Icons installed,
+// both draw the icon; without it, both draw a box.
+//
+// The line stays because it is what the reference has. MAPPING section 9 has
+// the measurements and the one action that makes the icons appear on a machine
+// that lacks the font.
+//
+// `assets/font/segoeicons.ttf` sits next to this one in the reference at 462 KB
+// -- the full font the subsetter cuts from -- and nothing imports it. It is not
+// carried over.
+import "../../../assets/font/icons.ttf";
 
 import { Theme, LayoutConstants } from "../theme.slint";
 

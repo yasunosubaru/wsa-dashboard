@@ -94,21 +94,29 @@ component DistroList inherits VerticalLayout {
                     root.expanded_distro = d.name;
                 }
             }
-            start_clicked => { root.start_distro(d.name); }
-            stop_clicked => { root.stop_distro(d.name); }
-            restart_clicked => { root.restart_distro(d.name); }
-            terminal_clicked => { root.terminal_distro(d.name); }
-            folder_clicked => { root.folder_distro(d.name); }
-            vscode_clicked => { root.vscode_distro(d.name); }
-            export_clicked => { root.open_export_dialog(d.name); }
-            clone_clicked => { root.open_clone_dialog(d.name); }
-            move_clicked => { root.open_move_dialog(d.name); }
-            edit_bashrc_clicked => { root.edit_bashrc_distro(d.name); }
-            information_clicked => { root.information_clicked(d.name); }
-            delete_clicked => { root.delete_clicked(d.name); }
-            settings_clicked => { root.settings_clicked(d.name); }
-            configs_clicked => { root.configs_clicked(d.name); }
-            compress_clicked => { root.compress_clicked(d.name); }
+            // ★ `d.distro_display_name` rather than `d.name`, at every action.
+            //    The reference can pass `d.name` because in WSL a distro's
+            //    display name *is* its identity; here `name` is the friendly
+            //    label drawn as the card title (`Magisk`) and the package is
+            //    what `distro_display_name` carries for the tooltip
+            //    (`com.topjohnwu.magisk`) -- and the package is what every one
+            //    of these operations actually takes. Passing the title would
+            //    hand `launch_app` a name `pm` has never heard of.
+            start_clicked => { root.start_distro(d.distro_display_name); }
+            stop_clicked => { root.stop_distro(d.distro_display_name); }
+            restart_clicked => { root.restart_distro(d.distro_display_name); }
+            terminal_clicked => { root.terminal_distro(d.distro_display_name); }
+            folder_clicked => { root.folder_distro(d.distro_display_name); }
+            vscode_clicked => { root.vscode_distro(d.distro_display_name); }
+            export_clicked => { root.open_export_dialog(d.distro_display_name); }
+            clone_clicked => { root.open_clone_dialog(d.distro_display_name); }
+            move_clicked => { root.open_move_dialog(d.distro_display_name); }
+            edit_bashrc_clicked => { root.edit_bashrc_distro(d.distro_display_name); }
+            information_clicked => { root.information_clicked(d.distro_display_name); }
+            delete_clicked => { root.delete_clicked(d.distro_display_name); }
+            settings_clicked => { root.settings_clicked(d.distro_display_name); }
+            configs_clicked => { root.configs_clicked(d.distro_display_name); }
+            compress_clicked => { root.compress_clicked(d.distro_display_name); }
         }
     }
 }

@@ -303,6 +303,35 @@ where
     }
 }
 
+/// What "adb has no entry for our port" means.
+///
+/// It is two situations, and they want opposite things from the page:
+///
+///  * the subsystem is not running, so the page offers to start it, and
+///  * the subsystem **is** running and Android has not opened the endpoint
+///    yet, so the page should wait and offering to start it is wrong.
+///
+/// Measured 2026-10-12 on this machine with WSA genuinely running:
+/// `WsaClient.exe` and `vmmemWSA` both alive, nothing listening on 58526, and
+/// `adb connect` refused with "the target machine actively refused". The page
+/// said "WSA is not running" and showed a Start WSA button for a subsystem
+/// that was mid-boot. Spec 1.3 measured the same thing from the other side --
+/// after a stop the entry disappears entirely and nothing reconnects it -- which
+/// is why the reconnect above exists, and why the absence alone cannot be read
+/// as "down".
+///
+/// Getting it wrong the other way is the safe way: a subsystem that has just
+/// died can still have a `vmmemWSA` for a moment, and one poll of `Booting` is
+/// a spinner, whereas one poll of a wrong `Stopped` tells the user to start
+/// something they have already started.
+fn state_for_absent_endpoint(vm_worker_alive: bool) -> SubsystemState {
+    if vm_worker_alive {
+        SubsystemState::Booting
+    } else {
+        SubsystemState::Stopped
+    }
+}
+
 /// Is the VM worker process still there?
 ///
 /// A helper that answers nothing counts as "still there": concluding "gone"
@@ -342,6 +371,20 @@ impl WsaDashboard {
     /// does `getprop sys.boot_completed` read back `1`. Nothing else counts --
     /// spec 1.4 measured `mCurrentFocus` as `null` long after boot finished.
     pub async fn probe(&self) -> Result<SubsystemStatus, OpsError> {
+        self.probe_with(vm_worker_present).await
+    }
+
+    /// `probe` with the "is the hypervisor still there" question supplied.
+    ///
+    /// It is a parameter because the stand-in tests cannot answer it: it is a
+    /// `tasklist` against the *reader's* machine, so a test that called it
+    /// would be asserting about whatever Windows happens to be running when the
+    /// suite runs. Here the answer is a fact the test owns.
+    pub async fn probe_with<F, Fut>(&self, vm_worker_alive: F) -> Result<SubsystemStatus, OpsError>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
         let port = self.adb_port();
         let devices = self.run(WsaCommand::ListAdbDevices).await?;
 
@@ -358,8 +401,16 @@ impl WsaDashboard {
         match entry {
             // Reaching `subsystem_status` keeps "absent is Stopped, and never
             // NotInstalled" in the one place that owns it and tests it
-            // (Review Focus #2).
-            AdbEntry::Absent => Ok(subsystem_status(&HashMap::new(), false, port)),
+            // (Review Focus #2) -- except when the subsystem is demonstrably
+            // up, which is `state_for_absent_endpoint`'s whole reason to exist.
+            AdbEntry::Absent => {
+                let state = state_for_absent_endpoint(vm_worker_alive().await);
+                Ok(SubsystemStatus {
+                    state,
+                    adb_port: port,
+                    boot_completed: false,
+                })
+            }
             AdbEntry::Offline => Ok(self.status(SubsystemState::Offline, false)),
             AdbEntry::Unauthorized => Ok(self.status(SubsystemState::Unauthorized, false)),
             AdbEntry::Device => {
@@ -978,9 +1029,37 @@ List of devices attached\n\
         let adb = FakeAdb::new();
         adb.write("devices.txt", &devices(&[]));
 
-        let status = adb.dashboard().probe().await.expect("probe");
+        let status = adb
+            .dashboard()
+            .probe_with(|| async { false })
+            .await
+            .expect("probe");
 
         assert_eq!(status.state, SubsystemState::Stopped);
+        assert!(!status.is_ready());
+    }
+
+    /// Measured 2026-10-12 on this machine, with WSA genuinely running:
+    /// `WsaClient.exe` and `vmmemWSA` both alive, nothing listening on 58526,
+    /// `adb connect` refused outright. The page answered "WSA is not running"
+    /// with a Start WSA button -- for a subsystem that was already starting,
+    /// because Android had not opened its adb endpoint yet.
+    ///
+    /// "Absent entry" is therefore not one state but two, and only the
+    /// hypervisor's process tells them apart.
+    #[tokio::test]
+    async fn an_absent_endpoint_is_booting_when_the_vm_worker_is_alive() {
+        let adb = FakeAdb::new();
+        adb.write("devices.txt", &devices(&[]));
+
+        let status = adb
+            .dashboard()
+            .probe_with(|| async { true })
+            .await
+            .expect("probe");
+
+        assert_eq!(status.state, SubsystemState::Booting);
+        assert!(!status.boot_completed);
         assert!(!status.is_ready());
     }
 

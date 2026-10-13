@@ -275,3 +275,133 @@ stdout"同样是实测。定论是 **stderr 在前、stdout 跟在后面，两�
 
 **结论**：Q3 的"只要 release exe"成立；Q14 的"发现 DLL 就破例做 zip"**不触发**——
 那两个 DLL 是文档化的前置依赖，不是打包问题。P8 做 winget / 安装器清单时把这条依赖写进去。
+
+---
+
+## 8. P2 首页页面的逐组件差异
+
+### 8.1 零新增组件（P9 裁定）
+
+P2 **没有新增任何 `.slint` 组件文件**。参照首页需要的每一样东西，参照都已有对应组件，
+差异只在属性和取值，逐条列在 8.2。"参照没有的组件"按 P9 的硬裁定算缺陷，
+所以三态降级全部**复用**参照的现有组件：`LoadingOverlay` 用参照 `main_view.slint:277`
+的加载覆盖层，`NotFound` 用 `DistroNotFoundView`，`Skeleton` 用空 `Distro` 行。
+`StatusCard` / `GridMode` 两个中间产物在 Task 8 前废弃。
+
+### 8.2 组件 delta（对照参照同名文件）
+
+| 组件 | 差异 | 依据 |
+|---|---|---|
+| `main_view.slint` | 新增**搜索框**（`CustomLineEdit`），`search_query` 双向绑定 | 参照靠侧栏导航，Android 应用列表长得多，Q24 |
+| `main_view.slint` | 新增 `greyed` / `buttons_disabled` 两个入参，透传到卡片 | 三态降级要有"有旧快照但非 Ready"的置灰态 |
+| `distro_card.slint` | `enabled` 改由 `buttons_disabled` 驱动；`text` 取本地化后的状态名 | 同上 |
+| `distro_not_found_view.slint` | 文案拆成 `distro_not_found_text` / `guide_text` 两个入参，不再组件内查 i18n | `HomeViewModel` 已经在算文案，查两遍会出现两个真相 |
+| `theme.slint` | `Distro` 结构体新增 `initial_color_index`（`u8`）与 `badge_tints` 数组 | Q29：色号按包名哈希取 8 个 Catppuccin 色之一 |
+| `distro_card.slint` | 删除参照的 `show_shield` 条件块 | 参照的盾牌表示 WSL 发行版来源，WSA 侧无对应概念 |
+| `theme.slint` | `GUIDE_URL` 改 `wsa://com.android.settings` | spec §1.2：设置页只能经 `wsa://` 激活 |
+| `form_widgets.slint` | **整文件照抄**，未改一字 | 搜索框直接复用参照的输入控件 |
+| `task_status_toast.slint` | **未改一字**；命名 `task_status_*` 而非 `home_toast_*` 保留 | 参照里 toast 是窗口级浮层（在所有对话框之上），P3 加对话框后仍是 |
+| `app.slint` | 新增 `window_title` 入参属性，`title: window_title` | Slint 1.17 的 `Window` **只有 title 的 getter 没有 setter**，从 Rust 命名窗口的唯一通路 |
+| `app.slint` | `export { Theme, Distro, AppInfo, AppI18n, AppApi }` | 参照 `src/ui/app.slint:43` 同样从根重导出；没有它 `app.global::<AppI18n>()` 解析不了 |
+| `main_view.slint` | `start_distro` / `stop_distro` 的 action 参数由 `d.name` 改 `d.distro_display_name` | 参照 `name` 是 WSL 发行版名，本项目 `name` 是包名而显示名另存 |
+| `refresh.rs` | `repush_needed(previous: Option<(Option<&HomeSnapshot>, &str, usize)>, …, placeholders: usize)` | 见 8.3 |
+
+### 8.3 `repush_needed` 多出的 `placeholders` 维度
+
+`repush_needed` 原本只比较"上次的快照 / 这次的快照 / 上次的查询串"。**有快照时的离线态**
+能正确重推（快照变了），但**两侧都没有快照**时（首次轮询、adb 从来没通过），
+它判定"没什么可推"→ `set_distros` 从不执行 → 列表空、`has_error` 假 → **整页空白**，
+违反 P9。三态里 `Skeleton` 恰恰就是"无快照 + 有占位行"，所以占位行数必须是一个独立维度：
+两个相邻维度（快照、查询串）都不能因为快照缺失而消失，否则占位行的数量记不住，
+下一轮又会被判成"没变"。先写三个红测试再改实现。
+
+### 8.4 `handlers/home.rs` 为什么没有测试
+
+参照是 bin-only crate，`#[cfg(test)] mod tests` 内联。带 `AppWindow` 的模块测试跑不到
+（GUI 的 `mod ui` 不进 `wsadash` 这条测试链），所以可测的判断逻辑一律上移到纯模块：
+`build()` / `busy_text()` / `placeholder_count()` / `repush_needed()` 都在 `home_model.rs`
+或 `refresh.rs` 里，`data.rs` 与 `handlers/*.rs` 按 `data.rs` 的先例只写一行注释说明
+"本文件无测试"。`home.rs` 的两个测试因此改测 `home_model::busy_text`——抽它出来是因为
+忙碌文案本来就是模型的一部分，不该埋在 handler 里。
+
+### 8.5 三态降级的实测取值
+
+| `SubsystemState` | `Degraded` | 渲染 |
+|---|---|---|
+| `Ready` | `None` | 参照的列表 |
+| `Booting` | `LoadingOverlay` | 参照的加载覆盖层（`main_view.slint:277`） |
+| `Unauthorized` / `Offline` | `Skeleton` | 空 `Distro` 行骨架 + toast |
+| `Stopped` / `NotInstalled` | `NotFound` | `DistroNotFoundView` + `wsa://com.android.settings` 链接 |
+| 非 `Ready` 但有 `last_good` | `Skeleton` | 行非空 + `greyed = true` + toast |
+
+**两处对 spec §5 的放宽**（计划 `2026-10-11-p2-home-page.md` 已记）：
+①骨架占位与状态卡进度互斥，取"不空白"这个实质；②"重连"按钮取消——
+`probe()` 在条目缺失时自动 `adb connect` 一次并由 5 秒轮询复查（§4.1.2 已记实测依据）。
+
+**`ps -A` 保留**：spec §1.3 只说 `ps` 在 WSA 上"输出格式与 WSL 一致"，实机确认可用，
+所以 `running_apps()` 保留该命令面，返回 `HashSet<String>`（不返回 `Result`——
+它只是过滤条件，失败时视为"没有运行中的应用"更接近真值）。
+
+### 8.6 真机跑出来的缺陷：`Stopped` 与 `Booting` 被合并了
+
+**实测**（2026-10-12，本机，WSA 确实在跑）：`WsaClient.exe` 与 `vmmemWSA` 两个进程都在，
+但 58526 端口**无人监听**，`adb connect` 被直接拒绝（"目标计算机积极拒绝"）。
+此时 `probe()` 报 `Stopped`，首页于是显示 `DistroNotFoundView`：
+**"WSA is not running" + 一个 "Start WSA" 按钮**——对一台正在启动的机器说它没在运行，
+还让用户去启动它。
+
+根因："adb 里没有我们这个端口的条目"是**两种**情况：
+
+| 情形 | 该报 | 该渲染 |
+|---|---|---|
+| 子系统没跑 | `Stopped` | `DistroNotFoundView` + 启动链接 |
+| 子系统在跑，Android 还没开 adb 端点 | `Booting` | 加载覆盖层 |
+
+§4.1.2 记的"停止后条目被整个清掉"只覆盖了第一种（所以才需要自动 `adb connect`），
+**没有覆盖第二种**。两者的区别只能问 hypervisor 的进程，也就是 `stop_subsystem`
+已经用着的那个 `vm_worker_present()`。
+
+改法：抽出 `state_for_absent_endpoint(vm_worker_alive: bool)`，并把
+`WsaDashboard::probe()` 拆成 `probe()`（真实现）与 `probe_with(vm_worker_alive)`
+（供替身测试注入答案）。**必须是参数**：那个判断是一次跑在**读者机器**上的
+`tasklist`，测试直接调它就是在断言"跑测试时 Windows 正在跑什么"。
+
+**方向是刻意选错的**：刚死的子系统可能还有 `vmmemWSA` 残留一瞬，那一跳报 `Booting`
+只是转圈；反过来报一次错的 `Stopped` 会让用户去启动一个已经启动过的子系统。
+
+先写红测试（`an_absent_endpoint_is_booting_when_the_vm_worker_is_alive`）再改实现。
+改完真机复跑：`probe` 从 `Stopped`（exit 3）变成 `Booting`（exit 2，hint "still booting"），
+`wsadash start` 冷启动后到 `Ready`。
+
+### 8.7 真机截图
+
+`capture.ps1 -UseRealAdb` 走**真 adb**（不设 `WSADASH_ADB`，让它落到 PATH），
+产出 `docs/screenshots/p2-real.png`：Magisk / Ham / Launcher 三张真卡，
+首字母色块按包名哈希取色。替身只能证明替身自己，**这一张才证明 `WSADASH_ADB`
+这条通路和真实 adb 都工作**。
+
+---
+
+## 9. 构建/验收环境实测（本机，2026-10-12）
+
+这三条不是代码问题，是"在这台机器上截图"的问题，但每一条都曾被误判成代码缺陷，
+所以写下来：
+
+| 事项 | 事实 |
+|---|---|
+| **显示缩放 150%** | `GetDpiForMonitor` = **144**。捕获脚本若进程 DPI-unaware，`GetClientRect` 返回**逻辑** 800×600 而窗口实际渲染 **1200×900**，`PrintWindow` 于是**裁剪**而非缩放。首页 toast 在逻辑 y=534＝物理 y=801，落在画面之外，于是每一张截图里它都不存在——不是透明、不是没画，是**在框外**。同一根因也让"放到 (300,200) 的窗口每次都出现在 (464,310)"看起来像窗口拒绝移动。修法：`SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`，必须在碰任何窗口/DC 之前 |
+| **f.lux 常驻** | 用户主动开的暖色滤镜（2300K）。经 DWM/WCS 合成级作用于**整屏**，所以任何走屏幕的截图都会把白底拍成 `#FFA250`。参照的 `Theme.content_bg` 是 `#FFFFFF`，两者差得远 |
+| **Segoe Fluent Icons 未安装** | `theme.slint:98` 的 `icon_font` 指向它（**参照 `theme.slint:256` 同名**，照抄不动），本机没有该字体文件。`E768`（播放）有回退字体可显示，`E769`（停止）显示为豆腐块。**这是环境缺字体，不是移植缺陷**；截图里的豆腐块保留原样，不换图标字符 |
+
+**截图工具链的两条结论**（`tools/standin-adb/capture.ps1` 重写）：
+
+1. **用 `PrintWindow` 不用 `CopyFromScreen`。** 后者拍的是桌面，不是窗口：会返回
+   *窗口移动之前*的帧（三张拍成别的应用，首页拍成自己的首帧，而模型说它已经加载完了），
+   还会被置顶窗口和 f.lux 污染。`PrintWindow` 直接向窗口要内容，上面三件事都不存在。
+2. **窗口用枚举 + 尺寸下限选，不用 `Process.MainWindowHandle`。** 本二进制的单实例握手
+   窗口会让后者在多次运行中返回那个 158×26 的隐藏 shim，于是拍的是 shim。
+
+验证方式：`cargo test --release --bin wsadash` → **189 passed / 0 failed / 3 ignored**；
+GUI `cargo build --release --bin wsadashboard` 零 error 零 warning；
+四态截图 `docs/screenshots/p2-{ready,booting,offline,stopped}.png`（1200×900，
+四张同尺寸可直接并排）。

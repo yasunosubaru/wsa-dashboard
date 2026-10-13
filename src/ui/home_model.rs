@@ -21,8 +21,11 @@
 use std::collections::HashSet;
 
 use crate::adb::decoder::package_is_running;
+use crate::i18n;
 use crate::wsa::dashboard::op_guard;
-use crate::wsa::models::{AppInfo, DegradationTier, SubsystemStatus, SubsystemState};
+use crate::wsa::models::{
+    AppInfo, DegradationTier, SubsystemStatus, SubsystemState, display_name_of,
+};
 
 // -- i18n keys, kept under the reference's names -----------------------------
 //
@@ -285,12 +288,15 @@ fn offer_start(state: SubsystemState) -> Degraded {
     }
 }
 
-/// Task 12's op names, rendered as the reference's `operation.*` keys.
-///
 /// `Launching` and `Installing` have no counterpart in the reference's table
 /// -- it never launches or installs a distro from the UI -- so both are new
-/// keys under the reference's naming scheme (MAPPING 4.1).
-fn operation_key(op: &str) -> &'static str {
+/// keys under the reference's naming scheme (MAPPING 4.1). `Uninstalling`
+/// borrows `operation.deleting` rather than adding a sixth: the reference
+/// already deletes a distro from the UI, and its wording is the same act.
+///
+/// Public because the home handler needs the same answer for the busy toast;
+/// two mappings is two things to keep in step.
+pub fn operation_key(op: &str) -> &'static str {
     match op {
         op_guard::STARTING => "operation.starting",
         op_guard::LAUNCHING => "operation.launching",
@@ -299,6 +305,28 @@ fn operation_key(op: &str) -> &'static str {
         op_guard::UNINSTALLING => "operation.deleting",
         _ => "",
     }
+}
+
+/// The sentence the home page shows when an operation is refused because
+/// another one holds the slot.
+///
+/// Here rather than in the handler that assembles it because the handler
+/// names `AppWindow`, and `cargo test --release --bin wsadash` compiles no
+/// `AppWindow` at all -- a sentence only the GUI could test is a sentence
+/// nobody tests.
+///
+/// The template is the reference's (`toast.distro_busy` = `"{0} is busy
+/// ({1})"`), and `{1}` is the operation's *label*, not its name: `Starting`
+/// is what the guard records, `Starting ...` is what the UI has been saying
+/// about the same work everywhere else. An operation with no `operation.*`
+/// key falls back to the bare word rather than to the key's own text, which
+/// would read `operation.deleting` at the user.
+pub fn busy_text(package: &str, op: &str) -> String {
+    let label = match operation_key(op) {
+        "" => op.to_string(),
+        key => i18n::tr(key, &[]),
+    };
+    i18n::tr("toast.distro_busy", &[display_name_of(package), label])
 }
 
 /// Whether a new poll has anything the window has not already been told.
@@ -397,6 +425,44 @@ mod tests {
             version_code: 1,
             apk_size_bytes: 1024,
             is_system: false,
+        }
+    }
+
+    /// The busy sentence is the reference's template, and `{1}` takes the
+    /// operation's *label*, not the name the guard records. `Starting`
+    /// where `Starting ...` belongs is the kind of half-substitution that
+    /// survives review, because it still reads as a sentence.
+    #[test]
+    fn a_busy_refusal_names_both_the_app_and_the_operation() {
+        assert_eq!(
+            busy_text("com.topjohnwu.magisk", op_guard::LAUNCHING),
+            "Magisk is busy (Launching ...)"
+        );
+        assert_eq!(
+            busy_text("org.mozilla.firefox", op_guard::STARTING),
+            "Firefox is busy (Starting ...)"
+        );
+    }
+
+    /// Every operation that can be refused must resolve to a label that is
+    /// not the key itself: a key that prints verbatim is a string that
+    /// leaked into the UI, and `busy_text` falls back to the bare word
+    /// precisely so that one never can.
+    #[test]
+    fn every_operation_that_can_be_refused_has_a_label() {
+        for op in op_guard::OPS {
+            let key = operation_key(op);
+            assert!(!key.is_empty(), "{op} has no operation.* key");
+            let label = i18n::tr(key, &[]);
+            assert_ne!(
+                label, key,
+                "{op} resolves to its own key, which would render verbatim"
+            );
+            // And the fallback is exercised rather than assumed: an op
+            // outside the table must still produce a sentence naming it.
+            if key.is_empty() {
+                assert!(busy_text("com.example.app", op).contains(op));
+            }
         }
     }
 

@@ -9,5 +9,6 @@
 //! GUI-only and stay out of the CLI's module tree.
 
 pub mod data;
+pub mod handlers;
 pub mod home_model;
 pub mod refresh;

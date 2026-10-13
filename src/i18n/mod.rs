@@ -53,6 +53,18 @@ pub fn current_lang() -> String {
     "en".into()
 }
 
+/// Every language this build can render, in the order the picker shows them.
+///
+/// One entry until P6. The list is declared beside `ENGLISH` rather than
+/// derived from it: a table scan would have to guess at a language from a key
+/// prefix, and a wrong guess is a picker option that resolves to nothing.
+pub fn available_languages() -> Vec<String> {
+    LANGUAGES.iter().map(|lang| (*lang).to_string()).collect()
+}
+
+/// P6 adds a row per `.toml` file it finds.
+const LANGUAGES: &[&str] = &["en"];
+
 fn lookup(key: &str) -> Option<&'static str> {
     ENGLISH
         .iter()

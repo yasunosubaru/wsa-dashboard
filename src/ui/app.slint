@@ -24,12 +24,31 @@
 // The window TITLE is kept in the reference's exact form because the
 // single-instance handshake matches on it -- see docs/MAPPING.md section 2.1.
 
-import { Theme, Distro } from "theme.slint";
+import { Theme, Distro, AppInfo, AppI18n, AppApi } from "theme.slint";
+// ★ The reference re-exports its globals from the root (reference
+//    `src/ui/app.slint:43`) -- that is what puts `AppI18n` / `AppInfo` in the
+//    generated Rust re-export list, and therefore what makes
+//    `app.global::<AppI18n>()` in `app::runner` resolve. P2 only needs these
+//    three; the rest return with the pages that use them.
+export { Theme, Distro, AppInfo, AppI18n, AppApi }
 import { MainView } from "views/main_view.slint";
 import { TaskStatusToast } from "components/task_status_toast.slint";
 
 export component AppWindow inherits Window {
-    title: "WSA_DASHBOARD_WINDOW_UI";
+    // ★ The reference writes `title: "WSA_DASHBOARD_WINDOW_UI"` literally, and
+    //    so does this default. It reaches the Rust side through a property
+    //    because Slint 1.17 gives no setter for a `Window`'s title -- only a
+    //    getter -- so the only way to name the window from `app::runner` is to
+    //    route it through something the component owns.
+    //
+    //    P2 has the system frame, so the literal would be a caption a user
+    //    reads; `runner` therefore overrides it with the application name.
+    //    P3 goes frameless, the override goes away, and the string returns to
+    //    being one of the candidates `single_instance` scans for when it looks
+    //    for a window to focus (reference `single_instance.rs:28` keeps both
+    //    spellings in that list, so keeping this one costs nothing).
+    in-out property <string> window_title: "WSA_DASHBOARD_WINDOW_UI";
+    title: window_title;
 
     width: 800px;
     height: 600px;

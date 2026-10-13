@@ -77,6 +77,29 @@ impl WsaPaths {
         })
     }
 
+    /// Paths for a machine with no WSA at all.
+    ///
+    /// The CLI refuses to run without one, because a script asking for a
+    /// subsystem that is not there should be told so. The GUI must not: its
+    /// home page has a whole view for this state (spec section 5 / T3), and
+    /// failing before the window opens would trade that view for a dialog.
+    ///
+    /// Every value here is one that will not be reached. `resolve` failing is
+    /// what produces this, and the first thing `probe` does is report
+    /// `NotInstalled` from the Appx registry lookup -- which touches none of
+    /// these fields -- before any adb command could use them. `adb_port` is
+    /// the fallback rather than a placeholder so that anything reading it
+    /// early gets a plausible number instead of 0.
+    pub fn absent() -> Self {
+        Self {
+            install_location: PathBuf::new(),
+            manifest_path: PathBuf::new(),
+            client_exe: PathBuf::new(),
+            settings_aumid: String::new(),
+            adb_port: FALLBACK_PORT,
+        }
+    }
+
     /// Read the manifest from an install directory.
     ///
     /// Any read failure is `NotInstalled`: to the caller, a package whose

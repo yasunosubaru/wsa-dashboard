@@ -48,8 +48,14 @@ pub fn poll_interval() -> Duration {
 static LAST_REFRESH: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// The last list the window was given: the snapshot its rows came from (none,
-/// when the page was showing placeholders) and the query it was filtered with.
-static LAST_PUSHED: Mutex<Option<(Option<HomeSnapshot>, String)>> = Mutex::new(None);
+/// when the page was showing placeholders), the query it was filtered with,
+/// and how many placeholder rows were padded on the end.
+///
+/// The count is part of the record because the placeholders exist *without* a
+/// snapshot, and a gate that only compared snapshots would call a degraded page
+/// with an empty cache "unchanged" forever. What it would leave on screen is
+/// the empty rectangle the home page must never become.
+static LAST_PUSHED: Mutex<Option<(Option<HomeSnapshot>, String, usize)>> = Mutex::new(None);
 
 /// The best snapshot seen while the subsystem was still answerable. It only
 /// ever grows, which is the whole point: a tier that drops keeps its rows.
@@ -165,6 +171,32 @@ async fn probe(state: &AppState) -> SubsystemStatus {
 }
 
 fn apply(app: &AppWindow, model: &HomeViewModel, source: Option<&HomeSnapshot>, query: &str) {
+    // Which tier produced this page, and what it asked the window to draw. The
+    // question is worth asking out loud: a `Booting` tier that produced an
+    // empty list and no overlay looks on screen exactly like an app whose
+    // first poll has not arrived yet, and the two are told apart here rather
+    // than by squinting at a screenshot.
+    tracing::debug!(
+        degraded = ?model.degraded,
+        rows = model.rows.len(),
+        placeholders = model.placeholder_count(),
+        source = source.is_some(),
+        query = %query,
+        "home model applied"
+    );
+
+    // ★ The toast is the one element of a tier that is not visible in the
+    // list, so a screenshot that is *missing* it is ambiguous between "the
+    // tier has no toast" and "the toast did not render". These three numbers
+    // are what tell the two apart, read back off the window rather than off
+    // the model that was just built.
+    tracing::debug!(
+        toast_key = model.toast_key,
+        toast_text = %app.get_task_status_text(),
+        toast_visible = app.get_task_status_visible(),
+        "toast on the window"
+    );
+
     // The scalars below are cheap, and some of them move with state the list
     // cannot see -- an operation starting, the subsystem dropping a tier -- so
     // they are set every time. The list is not. `repush_needed` decides that.
@@ -184,14 +216,23 @@ fn apply(app: &AppWindow, model: &HomeViewModel, source: Option<&HomeSnapshot>, 
         let pushed = lock(&LAST_PUSHED);
         let previous = pushed
             .as_ref()
-            .and_then(|(source, query)| source.as_ref().map(|source| (source, query.as_str())));
-        repush_needed(previous, source, query)
+            .map(|(source, query, placeholders)| (source.as_ref(), query.as_str(), *placeholders));
+        repush_needed(
+            previous,
+            source.as_ref().copied(),
+            query,
+            model.placeholder_count(),
+        )
     };
 
     if changed {
         let rows = to_slint_rows(model);
         app.set_distros(ModelRc::from(Rc::new(VecModel::from(rows))));
-        *lock(&LAST_PUSHED) = Some((source.cloned(), query.to_string()));
+        *lock(&LAST_PUSHED) = Some((
+            source.cloned(),
+            query.to_string(),
+            model.placeholder_count(),
+        ));
     }
 }
 

@@ -82,28 +82,51 @@ pub fn should_refresh(reason: &str, is_visible: bool, busy: bool, elapsed: Optio
 /// Whether a new list should replace the one the window already has.
 ///
 /// `previous` is what the window was last given -- the snapshot its rows were
-/// built from, and the query they were filtered with. `current` is this poll's.
+/// built from, the query they were filtered with, and how many placeholder rows
+/// were padded on the end. `current` is this poll's snapshot, and `placeholders`
+/// is this poll's placeholder count.
 ///
-/// Two inputs because either alone is insufficient: a new snapshot behind the
-/// same query is a new list, and the same snapshot behind a changed query is a
-/// new list too. Replacing a model that would be identical is what this
-/// exists to prevent -- `set_distros` re-renders every card, and doing it four
-/// times a minute for no reason is a flicker nobody asked for.
+/// Three inputs because either alone is insufficient: a new snapshot behind the
+/// same query is a new list, the same snapshot behind a changed query is a new
+/// list too, and a changed placeholder count is a new list *most of all* --
+/// those rows exist precisely because there is no snapshot, so a gate that only
+/// looked at snapshots would conclude there was nothing to say and leave the
+/// page blank. That is not a hypothetical: `Offline` reached `Skeleton` with an
+/// empty cache, `repush_needed(None, None, "")` answered false, `set_distros`
+/// never ran, and the home page rendered as an empty rectangle.
+///
+/// The placeholder count is checked first and separately. It is not a function
+/// of the snapshot's shape, so folding it into `match (previous, current)` would
+/// have to invent a rule for a case that has no opinion about it.
 pub fn repush_needed(
-    previous: Option<(&HomeSnapshot, &str)>,
+    previous: Option<(Option<&HomeSnapshot>, &str, usize)>,
     current: Option<&HomeSnapshot>,
     query: &str,
+    placeholders: usize,
 ) -> bool {
-    match (previous, current) {
+    // What the window was last told, in the only two terms that can change it:
+    // the snapshot behind its rows -- `None` when it was showing placeholders,
+    // which is why neither half may be allowed to vanish on its own -- and how
+    // many placeholder rows were padded on the end.
+    let (previous_snapshot, previous_query, previous_placeholders) =
+        previous.unwrap_or((None, "", 0));
+
+    // Checked first and separately: placeholders exist *without* a snapshot, so
+    // a gate that only looked at snapshots would call a degraded page with an
+    // empty cache "unchanged" forever. That is the empty rectangle the home
+    // page must never become.
+    if placeholders != previous_placeholders {
+        return true;
+    }
+
+    match (previous_snapshot, current) {
         // Nothing pushed, nothing to push. The window already starts with an
         // empty model, so writing one again would be a no-op -- which is why
         // the query does not get a vote here: with no rows there is nothing for
         // a filter to change.
         (None, None) => false,
         (Some(_), None) | (None, Some(_)) => true,
-        (Some((prev, prev_query)), Some(now)) => {
-            prev_query != query || snapshot_changed(prev, now)
-        }
+        (Some(prev), Some(now)) => previous_query != query || snapshot_changed(prev, now),
     }
 }
 
@@ -215,43 +238,68 @@ mod tests {
     #[test]
     fn first_push_of_an_empty_list_is_skipped() {
         assert!(
-            !repush_needed(None, None, ""),
+            !repush_needed(None, None, "", 0),
             "the window already starts with an empty model; writing one again \
              would be a no-op that costs a model rebuild"
         );
+    }
+
+    /// A degraded tier has no snapshot to draw from, but it is not nothing: the
+    /// model asks for placeholder rows, and those are the only thing keeping
+    /// the page off white. The snapshot gate cannot see them -- they exist
+    /// precisely because there is no snapshot -- so the placeholder count is
+    /// part of what decides whether the window has been told anything.
+    ///
+    /// This was blank in practice: `Offline` reached `Skeleton` with an empty
+    /// cache, `repush_needed(None, None, "")` answered false, `set_distros`
+    /// never ran, and the home page rendered as an empty rectangle.
+    #[test]
+    fn placeholders_are_pushed_even_with_no_snapshot_on_either_side() {
+        assert!(repush_needed(None, None, "", 3));
+    }
+
+    /// The same placeholders a second time is the same page -- and that is the
+    /// half that keeps this honest. A gate that forgot the count while the
+    /// snapshot was `None` would re-push every four seconds for the whole time
+    /// the subsystem was unreachable, which is a flicker nobody asked for.
+    #[test]
+    fn an_unchanged_placeholder_count_twice_is_not_pushed() {
+        let source = snap(&["com.a"], &[]);
+        assert!(repush_needed(None, Some(&source), "", 3));
+        assert!(!repush_needed(Some((None, "", 3)), None, "", 3));
+        // Still not pushed when the cache comes back with the same rows.
+        assert!(repush_needed(Some((None, "", 3)), Some(&source), "", 0));
+        assert!(!repush_needed(Some((Some(&source), "", 0)), Some(&source), "", 0));
+    }
+
+    /// Placeholders arriving, or going away again, both change the page.
+    #[test]
+    fn the_placeholder_count_changing_is_pushed() {
+        let source = snap(&["com.a"], &[]);
+        // Degraded with a cache: greyed rows behind the placeholders' absence.
+        assert!(repush_needed(Some((Some(&source), "", 0)), Some(&source), "", 3));
+        // Recovered: placeholders leave and real rows take their place.
+        assert!(repush_needed(Some((Some(&source), "", 3)), Some(&source), "", 0));
     }
 
     #[test]
     fn a_status_flip_is_pushed_even_though_the_packages_are_identical() {
         let before = snap(&["com.a"], &[]);
         let after = snap(&["com.a"], &["com.a"]);
-        assert!(repush_needed(Some((&before, "")), Some(&after), ""));
+        assert!(repush_needed(Some((Some(&before), "", 0)), Some(&after), "", 0));
     }
 
     #[test]
     fn the_same_snapshot_behind_a_new_query_is_pushed() {
         let source = snap(&["com.a", "com.b"], &[]);
-        assert!(repush_needed(
-            Some((&source, "com.a")),
-            Some(&source),
-            "com.b"
-        ));
+        assert!(repush_needed(Some((Some(&source), "com.a", 0)), Some(&source), "com.b", 0));
     }
 
     #[test]
     fn an_unchanged_snapshot_behind_the_same_query_is_not_pushed() {
         let source = snap(&["com.a"], &[]);
-        assert!(repush_needed(None, Some(&source), ""));
-        assert!(!repush_needed(
-            Some((&source, "")),
-            Some(&source),
-            ""
-        ));
-        assert!(!repush_needed(
-            Some((&source, "")),
-            Some(&source),
-            ""
-        ));
+        assert!(repush_needed(None, Some(&source), "", 0));
+        assert!(!repush_needed(Some((Some(&source), "", 0)), Some(&source), "", 0));
     }
 
     #[test]
@@ -259,14 +307,14 @@ mod tests {
         let source = snap(&["com.a"], &[]);
 
         // Nothing to draw from, then something: the list is appearing.
-        assert!(repush_needed(None, Some(&source), ""));
+        assert!(repush_needed(None, Some(&source), "", 0));
 
         // Before there was a snapshot and now there is none: rows are being
         // withdrawn, and the window must be told or it keeps showing cards
         // nobody can vouch for.
-        assert!(repush_needed(Some((&source, "")), None, ""));
+        assert!(repush_needed(Some((Some(&source), "", 0)), None, "", 0));
 
         // ...and the poll after that, still nothing, changes nothing.
-        assert!(!repush_needed(None, None, ""));
+        assert!(!repush_needed(None, None, "", 0));
     }
 }

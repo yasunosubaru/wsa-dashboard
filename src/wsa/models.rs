@@ -44,13 +44,22 @@ impl AppInfo {
     /// This name also seeds the Q29 placeholder block: its first letter is drawn
     /// on a solid colour chosen by hashing the full package name.
     pub fn display_name(&self) -> String {
-        let last = self.package.rsplit('.').next().unwrap_or("");
-        last.split(['_', '.'])
-            .filter(|word| !word.is_empty())
-            .map(capitalize_first)
-            .collect::<Vec<_>>()
-            .join(" ")
+        display_name_of(&self.package)
     }
+}
+
+/// [`AppInfo::display_name`] as a function of the one field it reads.
+///
+/// Pulled out because the handler that names the app in a busy toast has a
+/// package string, not an `AppInfo`, and building a five-field struct to read
+/// one of them back out is a shape that invites getting the others wrong.
+pub fn display_name_of(package: &str) -> String {
+    let last = package.rsplit('.').next().unwrap_or("");
+    last.split(['_', '.'])
+        .filter(|word| !word.is_empty())
+        .map(capitalize_first)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Uppercase only the first character; the remainder is left untouched so that

@@ -622,7 +622,15 @@ try {
         $actWhere = switch ($step) {
             'collapse-sidebar' { @{ x = 27; y = 74 } }
             'dark-theme'       { @{ x = 642; y = 20 } }
-            'go-device-page'   { @{ x = 27; y = 154 } }
+            # The install page opened a row between the hamburger and the
+            # device entry this phase, so both moved: 114 for Home, +40 for
+            # install, +40 again for device. The numbers come from the layout
+            # rather than being measured off a picture, which is exactly why
+            # they have to be recomputed when a row is inserted -- copying the
+            # old value would have silently clicked the next entry down, which
+            # is what happened.
+            'go-install-page'  { @{ x = 27; y = 154 } }
+            'go-device-page'   { @{ x = 27; y = 194 } }
             'device-expand'    { @{ x = 756; y = 80 } }
             default {
                 throw ("no coordinates known for -Act '{0}'; add it beside the others in " +

@@ -26,6 +26,7 @@ use slint::Weak;
 use crate::AppWindow;
 use crate::app::state::AppState;
 
+pub mod app;
 pub mod common;
 pub mod device;
 pub mod home;
@@ -35,6 +36,7 @@ pub mod window;
 /// awaits here yet; the pages that do will.
 pub async fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppState>) {
     home::setup(app, app_handle.clone(), app_state.clone());
+    app::setup(app, app_handle.clone(), app_state.clone());
     device::setup(app, app_handle.clone(), app_state.clone());
     common::setup(app, app_handle.clone(), app_state.clone());
     window::setup(app, app_handle.clone());

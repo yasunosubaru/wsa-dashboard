@@ -118,6 +118,24 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("usb.subsystem", "Windows Subsystem for Android"),
     ("usb.device_info", "Device properties"),
     ("usb.detail", "Properties"),
+    // -- add: the install-APK page (P4) -------------------------------------
+    // The reference's `[add]` block is a *dotted* section, so these are named
+    // `add.<key>` rather than `add.<key>` nested under a table -- same thing
+    // here. Keys are its; values are ours where its name an object we do not
+    // have (see the four rows below and MAPPING section 11).
+    ("add.select_file", "Select File"),
+    // Ours: the reference's path field is an install *directory* for a WSL
+    // instance, and ours is a file to install from. Nothing to reuse.
+    ("add.apk_file", "APK file"),
+    ("add.no_file", "No file selected"),
+    ("add.create", "Install APK"),
+    ("add.installing", "Installing..."),
+    ("add.note", "The package is installed on the connected target, which can take a moment."),
+    // Ours: the reference's page reports progress by streaming into
+    // `terminal_output`, and `adb install` streams nothing, so these are the
+    // two things it can say when it comes back.
+    ("add.installed", "Installed"),
+    ("add.file_missing", "That file does not exist."),
     // -- main: the home page ---------------------------------------------
     ("main.loading", "Loading..."),
     // The reference names a WSL distribution; we list Android packages, so

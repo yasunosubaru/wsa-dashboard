@@ -1,0 +1,174 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// The install page. The file and the component name are the reference's -- spec
+// section 3 keeps `add_view.slint` as `add_view.slint`, unlike `usb_view` which
+// it renames -- and the *content* is what changed: that page creates a WSL
+// instance from a distro, a rootfs file or a mirror, and this one installs an
+// APK that already exists on disk.
+//
+// Kept, because it is the interaction spec section 3 asks for ("对照'添加
+// 实例'的位置与交互"): the form stacked in the same order -- a labelled field
+// with a browse button beside it, the primary action under it, an error line
+// under that -- and the result area where that page shows its `terminal_output`.
+//
+// Not kept, and listed so nothing looks merely forgotten (MAPPING section 11):
+//
+//   * the source picker and its four `[add.sources]` entries, the Linux mirror
+//     block, `mirror_help`, `mirror_count` -- an APK has exactly one source,
+//     "a file", so a combobox with one choice would be a control that cannot be
+//     used;
+//   * `instance_name` and `install_dir` -- nothing is being created in a
+//     directory, `adb install` takes a path to a package;
+//   * `name_error` -- there is one field, so there is one error, and the
+//     reference's `path_error` is the one that means it;
+//   * the four-argument `install_distro` -- its signature is the shape of the
+//     picker (source index, name, path, ...) and ours is the path alone. The
+//     reference's *name* for this page's action is kept in spirit but not
+//     literally: see `install_clicked` and MAPPING section 11.
+//
+// Progress is not a log. `adb install` is one synchronous round trip with a 45s
+// write budget (spec 2.2) and nothing streams from it, so the pre-flight busy
+// toast from P2 carries the wait and `terminal_output` carries the result.
+
+import { CustomButton, CustomLineEdit } from "../components/form_widgets.slint";
+import { Theme, AppI18n, LayoutConstants } from "../theme.slint";
+
+export component AddInstanceView inherits VerticalLayout {
+    spacing: 12px;
+    // Padding is the reference's, to the pixel: the page has to sit in the
+    // same place it does there for a side-by-side comparison to mean anything.
+    padding-left: AppI18n.is-rtl ? 16px : 4px;
+    padding-right: AppI18n.is-rtl ? 4px : 16px;
+    padding-top: 6px;
+    padding-bottom: 8px;
+
+    // Properties passed from AppWindow. The four `install_*` names are the
+    // reference's and mean the same thing here; `path_error` is its field
+    // error, for the one field this page has.
+    in-out property <string> install_file_path;
+    in property <bool> is_installing;
+    in property <string> install_status;
+    in property <bool> install_success;
+    in property <string> terminal_output;
+    in property <string> path_error;
+
+    callback select_install_file(int);
+    callback install_clicked(string);
+
+    // -- the form -----------------------------------------------------------
+    // Every child gets an explicit height, and the label block a spacing of
+    // zero -- which is what the reference does throughout this page, and not
+    // for tidiness. A `VerticalLayout` hands its free space to children by
+    // `vertical-stretch`, so a row with no height of its own absorbs the
+    // page's spare pixels and centres inside them: the label sat at the top
+    // and the input 230px below it, with the gap belonging to nobody. Explicit
+    // heights pin each row and leave the space at the bottom, where it is
+    // invisible and where the result block can grow into it.
+    VerticalLayout {
+        spacing: 0px;
+        horizontal-stretch: 1;
+
+        Text {
+            text: AppI18n.t("add.apk_file", [AppI18n.version]);
+            height: 18px;
+            font-size: 12px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_secondary;
+            horizontal-alignment: AppI18n.is-rtl ? right : left;
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            height: 32px;
+
+            // The path is read-only through the field rather than edited: a
+            // hand-typed path that is wrong fails in adb with a message about
+            // a file the user did not mean, while a picker cannot produce one.
+            path-input := CustomLineEdit {
+                text <=> root.install_file_path;
+                placeholder-text: AppI18n.t("add.no_file", [AppI18n.version]);
+                enabled: !root.is_installing;
+            }
+
+            if (!AppI18n.is-rtl): CustomButton {
+                text: AppI18n.t("add.select_file", [AppI18n.version]);
+                enabled: !root.is_installing;
+                clicked => {
+                    root.select_install_file(0);
+                }
+            }
+            if (AppI18n.is-rtl): CustomButton {
+                text: AppI18n.t("add.select_file", [AppI18n.version]);
+                enabled: !root.is_installing;
+                clicked => {
+                    root.select_install_file(0);
+                }
+            }
+        }
+
+        if (path_error != ""): Text {
+            text: path_error;
+            font-size: 12px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.icon_color_danger;
+            wrap: word-wrap;
+            horizontal-alignment: AppI18n.is-rtl ? right : left;
+        }
+    }
+
+    // -- the action ---------------------------------------------------------
+    HorizontalLayout {
+        spacing: 8px;
+        height: 32px;
+        CustomButton {
+            // The button says what it does now and what it is doing while it
+            // does it, rather than disappearing: a control that vanishes for
+            // forty-five seconds leaves a hole whose cause is nowhere on
+            // screen. The toast says the same thing, which is why this is not
+            // the only place it appears.
+            text: root.is_installing
+                ? AppI18n.t("add.installing", [AppI18n.version])
+                : AppI18n.t("add.create", [AppI18n.version]);
+            primary: true;
+            enabled: !root.is_installing && root.install_file_path != "";
+            clicked => {
+                root.install_clicked(root.install_file_path);
+            }
+        }
+    }
+
+    Text {
+        text: AppI18n.t("add.note", [AppI18n.version]);
+        font-size: 11px * LayoutConstants.font-scale;
+        font-family: Theme.default_font;
+        color: Theme.text_secondary;
+        wrap: word-wrap;
+        horizontal-alignment: AppI18n.is-rtl ? right : left;
+    }
+
+    // -- the result ---------------------------------------------------------
+    // Where the reference puts `terminal_output`: a block under the form. The
+    // content differs for the reason above -- there is no running log -- so
+    // this carries the last outcome, kept on screen until something replaces
+    // it, so a failure does not vanish into a toast that has already timed out.
+    if (root.terminal_output != ""): Rectangle {
+        height: output-text.preferred-height + 20px;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: root.install_success ? Theme.icon_color_success : Theme.border_color;
+        background: Theme.dark_mode ? #00000033 : #FFFFFF33;
+
+        output-text := Text {
+            x: 10px;
+            y: 10px;
+            width: parent.width - 20px;
+            text: root.terminal_output;
+            font-size: 12px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: root.install_success ? Theme.icon_color_success : Theme.text_primary;
+            wrap: word-wrap;
+            horizontal-alignment: AppI18n.is-rtl ? right : left;
+        }
+    }
+}

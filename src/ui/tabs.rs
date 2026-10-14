@@ -36,7 +36,7 @@
 //! | P7 | 4 | task scheduler |
 //! | — | 6 | donate: spec section 3 maps it 1:1, but section 10 assigns it to no
 //! phase, so it stays out until something does |
-pub const TABS_WITH_A_VIEW: &[i32] = &[0, 2];
+pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2];
 
 /// The nine entries a `SidebarItem` can select, whatever has a page.
 ///
@@ -67,32 +67,31 @@ mod tests {
     use super::{TABS_WITH_A_VIEW, has_a_view, is_sidebar_entry};
 
     /// The state of P4's first half: two pages exist behind nine entries, and
-    /// the guard is what keeps the other seven from blanking the screen.
+    /// The state of P4: three pages exist behind nine entries, and the guard
+    /// is what keeps the other six from blanking the screen.
     ///
-    /// The test's name changed when P4 landed the device page. It used to say
-    /// `p3_has_exactly_one_tab_with_a_page`, which was true and then wasn't;
-    /// a test named after a phase goes stale every phase, so this one is named
-    /// after the fact it actually pins -- how many entries have pages *and*
-    /// which they are -- and the count is asserted rather than inferred.
-    #[test]
-    fn exactly_two_tabs_have_a_page_and_they_are_home_and_device() {
-        assert_eq!(TABS_WITH_A_VIEW, &[0, 2]);
-        assert!(has_a_view(0), "home must be reachable");
-        assert!(has_a_view(2), "the device page is the one P4 lands first");
-    }
-
-    /// P4's other half is install APK at index 1, and it is not here yet.
+    /// The test's name has changed twice (P3 then P4), because a test named
+    /// after a phase goes stale every phase. This one names the fact it pins:
+    /// how many entries have pages, and which. Six of the nine still open onto
+    /// nothing, which is expected rather than a gap -- see the table on
+    /// `TABS_WITH_A_VIEW`.
+    /// Three pages behind nine entries, and exactly which three.
     ///
-    /// The side bar's `show_add` switch is still off in `app.slint`, so this
-    /// and that flag are the two things that have to move together when it
-    /// lands (P4 Review Focus 4). Asserted so that landing *half* of it -- the
-    /// switch flipped without the guard, or the guard without the switch --
-    /// fails here rather than producing a page that cannot be opened or one
-    /// that opens onto nothing.
+    /// The count is asserted rather than inferred, and the loop over all nine
+    /// is what ties it to `is_sidebar_entry` -- a value that reached `has_a_view`
+    /// for an index no sidebar item can select would pass an `assert_eq` on the
+    /// list and still be wrong.
     #[test]
-    fn the_install_page_is_not_yet_available() {
-        assert!(is_sidebar_entry(1));
-        assert!(!has_a_view(1));
+    fn home_install_and_device_have_a_page_and_the_rest_do_not() {
+        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2]);
+        for tab in 0..=8 {
+            assert_eq!(
+                has_a_view(tab),
+                tab <= 2,
+                "tab {tab} disagrees with the sidebar switch that shows it"
+            );
+        }
+        assert!(is_sidebar_entry(0) && is_sidebar_entry(1) && is_sidebar_entry(2));
     }
 
     /// Everything in the list is something the side bar can select. An

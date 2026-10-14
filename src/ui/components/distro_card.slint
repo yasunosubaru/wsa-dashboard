@@ -242,8 +242,15 @@ component ExpandedActionIcons inherits VerticalLayout {
         // compress / export / move / configs describe a distro's disk image,
         // which a package does not have.
         //
-        // information and delete are shown but not wired until P3, when the
-        // dialog manager lands; both need a modal this phase does not have.
+        // information and delete are shown but **not wired**, and settings with
+        // them. All three need a modal, and `modal_manager.slint` is not ported
+        // yet -- it is the first thing P5 brings, with the network and disk
+        // pages, which are the reference's other two dialog-backed pages. Until
+        // it exists these three buttons render and do nothing, so a reader who
+        // clicks one sees a dead control rather than an error.
+        //
+        // This note used to say "until P3". P3 delivered the shell, not a dialog
+        // manager, and nothing wired these three then or since.
         ActionIcon {
             icon: "\u{E946}";
             icon_type: "info";

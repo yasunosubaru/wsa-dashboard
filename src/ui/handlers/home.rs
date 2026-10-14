@@ -6,8 +6,14 @@
 //! The counterpart of the reference's `src/ui/handlers/distro.rs`. Five of
 //! the reference's callbacks are declared on `AppWindow` for P2 --
 //! `start_distro`, `stop_distro`, `open_url`, `reorder_distros` and
-//! `close_task_status`. The rest arrive in P3, with the expanded action strip
-//! they belong to.
+//! `close_task_status`.
+//!
+//! Of the expanded action strip, only the three buttons spec Q22 keeps for WSA
+//! render (`information`, `delete`, `settings`), and **none of the three is
+//! wired**: `MainView` is instantiated binding only the five above, and all
+//! three kept buttons want a modal, which arrives with `modal_manager.slint` in
+//! P5. This note used to say they arrive in P3; P3 delivered the shell and
+//! wired none of them. See `components/distro_card.slint` for the same fact.
 
 use std::rc::Rc;
 use std::sync::Arc;

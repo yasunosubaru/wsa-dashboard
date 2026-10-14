@@ -15,5 +15,6 @@ pub mod data;
 pub mod disk_model;
 pub mod handlers;
 pub mod home_model;
+pub mod network_model;
 pub mod refresh;
 pub mod tabs;

@@ -28,7 +28,7 @@
 // string still answers a second instance asking who is already open -- which is
 // why `runner` keeps overriding it with the application name.
 
-import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Information, StorageImageUI } from "theme.slint";
+import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Information, StorageImageUI, PortProxyRuleUI } from "theme.slint";
 // ★ The reference re-exports its globals from the root (reference
 //    `src/ui/app.slint:43`) -- that is what puts `AppI18n` / `AppInfo` in the
 //    generated Rust re-export list, and therefore what makes
@@ -100,6 +100,46 @@ export component AppWindow inherits Window {
     /// What the bottom bar's primary button opens.
     in property <string> disk_folder_to_open: "";
 
+    // ---- network page (P5b) -------------------------------------------------
+    // Property names are the reference's own block (`app.slint` lines 212-237),
+    // kept so a diff against it lines up (Q12). Three of the *values* are ours,
+    // because three of the things they describe do not exist on this side:
+    //
+    //   `network_is_helper_installed: true`  the reference's is `false`, and
+    //                         `false` renders "Auto-Start Forwarding". That
+    //                         button installs the elevated helper `netsh
+    //                         interface portproxy` needs. `adb forward` needs
+    //                         no helper, so there is nothing to install and the
+    //                         button is correctly absent. P7's task scheduler
+    //                         is what gives that button a real job here --
+    //                         re-adding mappings after a boot, which adb does
+    //                         not do by itself -- and it is then set from
+    //                         whether a task exists.
+    //   `network_distro_names` / `network_local_ips`  declared, never read. The
+    //                         reference resolves a distro's IP to forward to;
+    //                         `adb forward` takes no address. They stay because
+    //                         the properties are part of the reference's
+    //                         `NetworkView` signature.
+    //
+    // `network_networking_mode` stays `"NAT"`: `adb forward` has no mode, and
+    // the reference's own non-NAT branch is unreachable on a NAT system.
+    in-out property <bool> network_is_admin: false;
+    in-out property <bool> network_is_helper_installed: true;
+    in-out property <string> network_networking_mode: "NAT";
+    in-out property <[string]> network_distro_names: [];
+    in-out property <[string]> network_local_ips: [];
+    in-out property <[PortProxyRuleUI]> network_rules: [];
+    in-out property <bool> network_proxy_is_enabled: false;
+    in-out property <string> network_proxy_host: "";
+    in-out property <string> network_proxy_port: "";
+    in-out property <bool> network_proxy_auth_enabled: false;
+    in-out property <string> network_proxy_username: "";
+    in-out property <string> network_proxy_password: "";
+    in-out property <string> network_proxy_no_proxy: "";
+    in property <string> network_proxy_default_host: "";
+    in property <string> network_proxy_default_port: "";
+    in property <string> network_proxy_default_no_proxy: "";
+
     // ---- install page (P4) -------------------------------------------------
     // All six are the reference's own names for the same six things on its
     // AddInstanceView, so nothing has to be translated between the two.
@@ -137,7 +177,9 @@ export component AppWindow inherits Window {
     // turns one on and nothing about the mechanism changes. See MAPPING §8.
     in-out property <bool> sidebar_add: true;
     in-out property <bool> sidebar_usb: true;
-    in-out property <bool> sidebar_network: false;
+    // The network page's entry, on from the start: P5b writes it, and an entry
+    // that leads nowhere is the state P3 spent its own task avoiding.
+    in-out property <bool> sidebar_network: true;
     in-out property <bool> sidebar_scheduler: false;
     in-out property <bool> sidebar_mount: true;
     in-out property <bool> sidebar_donate: false;
@@ -191,6 +233,39 @@ export component AppWindow inherits Window {
     // page has no dialog. Both are "open something in Explorer".
     callback disk_refresh_list();
     callback disk_open_folder(string);
+    // ---- network page (P5b) -------------------------------------------------
+    // The reference's names (`app.slint` lines 415-424), all of them, because
+    // P9 asks the page to line up with the reference component for component.
+    //
+    // Three groups by what handles them:
+    //
+    //   wired        `delete_network_rule`, `save_proxy_settings`, and the
+    //                refresh that runs when tab 3 is opened.
+    //   P5b's Task 5 `open_add_rule_dialog` / `add_network_rule` (the add
+    //                dialog) and `check_proxy_connection` / the help dialog.
+    //   **no handler, deliberately** `process_network_rule`,
+    //                `cancel_network_rule`, `apply_all_network_rules`,
+    //                `cancel_all_network_rules`, `initialize_task_clicked`.
+    //
+    // The last group is not an unfinished wiring. Each names a step in the
+    // reference's staging model, which exists because its mechanism is
+    // `netsh` and needs an elevated helper: a rule is edited, sits pending, and
+    // is applied afterwards in a batch. `adb forward` is an ordinary command
+    // against a table that already exists -- there is no pending state to apply
+    // or cancel, and `is_helper_installed: true` hides the helper button. A
+    // Slint callback with no handler is a no-op, which is what these are; the
+    // alternative, teaching "Cancel all rules" to do something it does not
+    // name, would mislead the reader in a way silence does not. MAPPING 14.
+    callback initialize_task_clicked();
+    callback open_add_rule_dialog();
+    callback add_network_rule(string, string, string, string, bool);
+    callback delete_network_rule(string);
+    callback process_network_rule(string);
+    callback cancel_network_rule(string);
+    callback apply_all_network_rules();
+    callback cancel_all_network_rules();
+    callback save_proxy_settings(bool, string, string, string, bool, string, string);
+    callback check_proxy_connection(string);
     callback save_sidebar_state();
     callback window_pin_toggle();
     callback window_minimize();
@@ -414,27 +489,46 @@ export component AppWindow inherits Window {
                             // `views/network/{mod,components,port_forwarding,
                             // http_proxy}.slint` plus `components/
                             // network_rule_card.slint`, all carried over from
-                            // the reference.
+                            // the reference. `z` follows the same rule as the
+                            // disk page's -- tab index + 3.
                             //
-                            // `z` follows the same rule as the disk page's --
-                            // tab index + 3.
-                            //
-                            // Instantiated in the same change that wrote the
-                            // views, for the reason the disk view's comment
-                            // gives: Slint only parses files reachable from
-                            // `app.slint`, so an unreferenced view would not
-                            // fail to compile at all until something happened to
-                            // mention it. This task stops at instantiation
-                            // deliberately; the data binding, the callbacks and
-                            // the `sidebar_network` switch are the next task's,
-                            // which is why `is_helper_installed` and
-                            // `networking_mode` are not set yet and fall back to
-                            // their own defaults.
+                            // The view was instantiated in the task that wrote
+                            // it and bound in this one, because Slint only
+                            // parses files reachable from `app.slint`: an
+                            // unreferenced view would not fail to compile
+                            // *wrong*, it would not fail at all until something
+                            // happened to mention it. Binding it now is the
+                            // rest -- and everything the reference binds is
+                            // bound, including the four callbacks with no
+                            // handler, for why those are a deliberate no-op
+                            // rather than missing wiring see their declaration.
                             NetworkView {
                                 visible: true;
                                 z: 6;
                                 opacity: selected_tab == 3 ? 1 : 0;
                                 x: selected_tab == 3 ? 0px : 10000px;
+                                is_admin: root.network_is_admin;
+                                is_helper_installed: root.network_is_helper_installed;
+                                networking_mode: root.network_networking_mode;
+                                distro_names: root.network_distro_names;
+                                local_ips: root.network_local_ips;
+                                rules: root.network_rules;
+                                proxy_is_enabled <=> root.network_proxy_is_enabled;
+                                proxy_host <=> root.network_proxy_host;
+                                proxy_port <=> root.network_proxy_port;
+                                proxy_auth_enabled <=> root.network_proxy_auth_enabled;
+                                proxy_username <=> root.network_proxy_username;
+                                proxy_password <=> root.network_proxy_password;
+                                proxy_no_proxy <=> root.network_proxy_no_proxy;
+                                proxy_default_host: root.network_proxy_default_host;
+                                proxy_default_port: root.network_proxy_default_port;
+                                proxy_default_no_proxy: root.network_proxy_default_no_proxy;
+                                delete_rule(id) => {
+                                    root.delete_network_rule(id);
+                                }
+                                save_proxy_settings(enabled, host, port, no, auth, u, p) => {
+                                    root.save_proxy_settings(enabled, host, port, no, auth, u, p);
+                                }
                             }
                         }
                     }

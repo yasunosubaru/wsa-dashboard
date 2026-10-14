@@ -343,6 +343,18 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("network.rules_apply_success", "Port {0} successfully mapped to {1}"),
     ("network.rules_apply_all_failed", "Apply all failed: {0}"),
     ("network.rules_cancel_all_failed", "Cancel all failed: {0}"),
+    // Ours, and necessarily so: the card's title line is `rule.distro_name`,
+    // which in the reference holds a *distro's* name -- there is nothing to
+    // name here, because a rule belongs to no instance. What distinguishes a
+    // forward from a reverse is what the reader cannot get from the address
+    // alone (both sides are ports), so the slot carries the direction. `usb`
+    // got its own two extra keys the same way in P4.
+    //
+    // Deliberately phrased as a direction rather than as a port: the line under
+    // it already prints `address:port -> port`, so repeating the numbers there
+    // would buy no information.
+    ("network.dir_forward", "Host -> WSA"),
+    ("network.dir_reverse", "WSA -> Host"),
     ("dialog.save", "Save"),
 ];
 

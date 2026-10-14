@@ -60,6 +60,20 @@ mod i18n;
 #[path = "ui/disk_model.rs"]
 mod disk_model;
 
+// The network page's view model, for the third time the same reason: it turns
+// adb's two `forward` / `reverse` listings into rows, and the decision worth
+// testing -- what a rule's `id` must carry for `delete_network_rule` to be able
+// to address a rule at all -- is pure. `handlers/network.rs` is GUI-only, so a
+// module that named `AppWindow` or `PortProxyRuleUI` would put these eleven
+// tests in the one place they can never run.
+//
+// `cfg(test)`, and for `disk_model`'s reason rather than a different one: the
+// CLI's `wsadash` verbs call `storage`, never this, so a non-test build would
+// compile three functions nothing calls and warn about each.
+#[cfg(test)]
+#[path = "ui/network_model.rs"]
+mod network_model;
+
 use adb::path::adb_path;
 use std::io::Write;
 use std::path::Path;

@@ -35,7 +35,7 @@
 //! | P7 | 4 | task scheduler |
 //! | — | 6 | donate: spec section 3 maps it 1:1, but section 10 assigns it to no
 //! phase, so it stays out until something does |
-pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2, 5];
+pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2, 3, 5];
 
 /// The nine entries a `SidebarItem` can select, whatever has a page.
 ///
@@ -65,17 +65,22 @@ pub fn has_a_view(tab: i32) -> bool {
 mod tests {
     use super::{TABS_WITH_A_VIEW, has_a_view, is_sidebar_entry};
 
-    /// Four pages behind nine entries, and exactly which four.
+    /// Five pages behind nine entries, and exactly which five.
     ///
     /// The list is asserted rather than inferred, and the loop over all nine
     /// is what ties it to `is_sidebar_entry` -- a value that reached `has_a_view`
     /// for an index no sidebar item can select would pass an `assert_eq` on the
-    /// list and still be wrong. Five of the nine still open onto nothing, which
-    /// is the planned state of P5a rather than a gap; see the table on
+    /// list and still be wrong. Four of the nine still open onto nothing, which
+    /// is the planned state of P6/P7 rather than a gap; see the table on
     /// `TABS_WITH_A_VIEW`.
+    ///
+    /// Renamed each time an index is added, because the old name *is* the
+    /// assertion: a test called `..._and_storage_...` that also has a page for
+    /// network is a test whose name is now a partial statement, and a partial
+    /// statement in a test name is read as the whole truth.
     #[test]
-    fn home_install_device_and_storage_have_a_page_and_the_rest_do_not() {
-        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2, 5]);
+    fn home_install_device_network_and_storage_have_a_page_and_the_rest_do_not() {
+        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2, 3, 5]);
         for tab in 0..=8 {
             assert_eq!(
                 has_a_view(tab),

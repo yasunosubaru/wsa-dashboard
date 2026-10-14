@@ -4,11 +4,15 @@
 //! Wiring between the window's callbacks and the rest of the program.
 //!
 //! The counterpart of the reference's `src/ui/handlers/mod.rs`, which
-//! registers thirteen page modules' worth of callbacks. Three exist here:
+//! registers thirteen page modules' worth of callbacks. Seven exist here:
 //!
 //!   `home`    the home page's actions (P2)
 //!   `common`  side-bar clicks and the collapse (P3)
 //!   `window`  the title bar's own: close, minimise, drag, pin (P3)
+//!   `device`  the adb-targets page (P4)
+//!   `app`     the install-APK page (P4)
+//!   `disk`    the storage page (P5a)
+//!   `network` the port-forwarding and proxy page (P5b)
 //!
 //! The rest arrive with the pages that own them. The reference's `setup`
 //! signature is kept so that adding one is one line rather than a rethink.
@@ -17,7 +21,12 @@
 //! not a gap -- a Slint callback with no handler is a no-op, which is what
 //! `toggle_theme` is in P3: the switch already flips `Theme.dark_mode` in
 //! `.slint`, and the *persistence* of that choice is P6's `settings.rs`, which
-//! is where the reference registers it too.
+//! is where the reference registers it too. The largest group of them arrived
+//! with P5b: five of the network page's eleven callbacks name steps in a
+//! staging model `adb` does not have, four more wait on its add and proxy
+//! dialogs, and only two are wired in that task -- because P9 asks the page to
+//! line up with the reference component for component. `network.rs` and MAPPING
+//! 14 say which are which.
 
 use std::sync::Arc;
 
@@ -31,6 +40,7 @@ pub mod common;
 pub mod device;
 pub mod disk;
 pub mod home;
+pub mod network;
 pub mod window;
 
 /// `async` to match the reference's signature (`handlers/mod.rs:23`). Nothing
@@ -40,6 +50,7 @@ pub async fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<
     app::setup(app, app_handle.clone(), app_state.clone());
     device::setup(app, app_handle.clone(), app_state.clone());
     disk::setup(app, app_handle.clone(), app_state.clone());
+    network::setup(app, app_handle.clone(), app_state.clone());
     common::setup(app, app_handle.clone(), app_state.clone());
     window::setup(app, app_handle.clone());
 }

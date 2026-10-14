@@ -55,6 +55,18 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppSta
         if tab == 2 {
             crate::ui::handlers::device::refresh(ah.clone(), app_state.clone());
         }
+        // Tab 3 is the network page, and it reads two things: adb's forwarding
+        // tables and the proxy globals. Neither needs a live subsystem -- adb
+        // keeps a forwarding table whether or not the device is up, and
+        // `settings get` answers `null` rather than erroring when the value was
+        // never written -- so the page is useful with the subsystem stopped,
+        // which is the same criterion the storage page is held to. What it does
+        // need is to be asked when it is opened: a list read once at startup
+        // would show whatever was forwarded *then*, and a mapping added from a
+        // terminal since would be missing from it.
+        if tab == 3 {
+            crate::ui::handlers::network::refresh(ah.clone(), app_state.clone());
+        }
     });
 
     // The reference persists this through `ConfigManager`, and each of its

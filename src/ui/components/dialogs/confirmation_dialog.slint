@@ -1,0 +1,144 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Ported from the reference's
+// src/ui/components/dialogs/confirmation_dialog.slint (wsl-dashboard 0.12.0,
+// GPL-3.0-only), unchanged apart from one dropped import.
+//
+// That import is `Button` from `std-widgets.slint`, which the reference never
+// uses -- its buttons are hand-rolled `Rectangle` + `TouchArea` so they can take
+// the accent and danger colours the theme defines. Keeping it would drag
+// std-widgets into the build for nothing.
+//
+// Everything else is the reference's: the 400px card, the `#00000080` mask, the
+// mask and the close button both meaning "cancel", the 200px default height, the
+// red confirm-only footer with its LTR/RTL pair.
+//
+// Note the mask is *this component's* own, not ModalManager's. ModalManager
+// instantiates each dialog at `width: 100%; height: 100%;` and lets the dialog
+// carry its own backdrop -- which is why it has to be here and not in the
+// manager.
+
+import { Theme, AppI18n, LayoutConstants } from "../../theme.slint";
+
+export component ConfirmationDialog inherits Rectangle {
+    in property <string> title_text: AppI18n.t("dialog.delete_title", [AppI18n.version]);
+    in property <string> message;
+    in property <length> dialog_height: 200px;
+    callback confirm;
+    callback cancel;
+
+    // Background mask
+    background: #00000080;
+    TouchArea {
+        clicked => { root.cancel(); }
+    }
+
+    // Dialog Box
+    Rectangle {
+        width: 400px;
+        height: root.dialog_height;
+        background: Theme.card_bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border_color;
+        TouchArea { /* prevent click through */ }
+        VerticalLayout {
+            padding: 24px;
+            spacing: 8px; // matches information_dialog
+
+            // Header: title + close button
+            Rectangle {
+                height: 24px;
+                Text {
+                    x: AppI18n.is-rtl ? 32px : 0;
+                    width: parent.width - 32px;
+                    text: root.title_text;
+                    font-size: 18px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    x: AppI18n.is-rtl ? 0 : parent.width - self.width;
+                    width: 24px;
+                    height: 24px;
+                    clicked => { root.cancel(); }
+                    Rectangle {
+                        background: parent.has-hover ? Theme.hover_bg : transparent;
+                        border-radius: 4px;
+                        Text {
+                            text: "\u{E8BB}";
+                            font-family: Theme.icon_font;
+                            font-size: 14px;
+                            color: Theme.text_primary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Divider
+            Rectangle {
+                height: 1px;
+                background: Theme.border_color;
+            }
+
+            // Message (stretch to fill remaining space)
+            Text {
+                text: root.message;
+                font-size: 14px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                color: Theme.text_primary;
+                wrap: word-wrap;
+                vertical-stretch: 1;
+                vertical-alignment: center;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+            }
+
+            // Footer: confirm (red) button only
+            HorizontalLayout {
+                alignment: AppI18n.is-rtl ? start : end;
+
+                if (AppI18n.is-rtl): Rectangle {
+                    width: 80px;
+                    height: 32px;
+                    border-radius: 4px;
+                    background: touch_confirm_rtl.has-hover ? #C42B1C : #E81123;
+                    Text {
+                        text: AppI18n.t("dialog.confirm", [AppI18n.version]);
+                        font-size: 13px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: white;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    touch_confirm_rtl := TouchArea {
+                        clicked => { root.confirm(); }
+                    }
+                }
+
+                if (!AppI18n.is-rtl): Rectangle {
+                    width: 80px;
+                    height: 32px;
+                    border-radius: 4px;
+                    background: touch_confirm.has-hover ? #C42B1C : #E81123;
+                    Text {
+                        text: AppI18n.t("dialog.confirm", [AppI18n.version]);
+                        font-size: 13px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: white;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    touch_confirm := TouchArea {
+                        clicked => { root.confirm(); }
+                    }
+                }
+            }
+        }
+    }
+}

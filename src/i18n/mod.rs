@@ -164,6 +164,40 @@ pub static ENGLISH: &[(&str, &str)] = &[
         "mount_disk.no_mounted",
         "No WSA storage images in the data folder:",
     ),
+    // -- dialog: the shared shells (P5a) -------------------------------------
+    // Key names are the reference's `[dialog]` block (Q12). The delete pair is
+    // ours in wording only: the reference deletes a WSL *distribution* and this
+    // uninstalls an Android *package*, and it is worth saying so in the one
+    // dialog whose confirm button destroys something.
+    ("dialog.confirm", "Confirm"),
+    ("dialog.delete_title", "Uninstall {0}"),
+    (
+        "dialog.delete_msg",
+        "Uninstall {0}? Its app data is deleted too, and this cannot be undone.",
+    ),
+    // Ours: the reference's title is the distro's display name, which we cannot
+    // get for an Android app (spec line 122 -- `pm list` and `dumpsys` both
+    // refuse), so the package name is all there is to show.
+    ("dialog.info_title", "{0}"),
+    // Ours, all six. The reference's information dialog reports a WSL
+    // distribution -- wsl_version, install_location, vhdx_path, vhdx_size,
+    // actual_used, ip, is_sparse -- none of which means anything for a package.
+    // `package_kind_system` / `package_kind_user` replace its single `status`
+    // row, which said whether a *distro* was running; the question that matters
+    // about a package is whether Android shipped it, since that decides whether
+    // "uninstall" is even offered anywhere.
+    ("dialog.package_version", "Version"),
+    // Ours. Android leaves `versionName` empty for plenty of installed packages,
+    // and `AppInfo`'s own test (`app_info_without_a_version_is_an_error_not_a_
+    // fabricated_one`) pins that we do not invent one. So the dialog says the
+    // value was not reported -- which is a fact about the package, and is not
+    // the same claim as "version 0".
+    ("dialog.unknown_version", "not reported"),
+    ("dialog.version_code", "Version code"),
+    ("dialog.package_size", "APK size"),
+    ("dialog.package_kind", "Source"),
+    ("dialog.package_kind_system", "Android system app"),
+    ("dialog.package_kind_user", "Installed by user"),
     // -- main: the home page ---------------------------------------------
     ("main.loading", "Loading..."),
     // The reference names a WSL distribution; we list Android packages, so
@@ -214,7 +248,14 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("operation.starting", "Starting ..."),
     ("operation.stopping", "Stopping ..."),
     ("operation.restarting", "Restarting ..."),
-    ("operation.deleting", "Deleting ..."),
+    // Ours in wording only: the reference's `operation.deleting` fires while a
+    // WSL *distribution* is being removed from disk. Q12 keeps the key so the
+    // line back to theirs survives; the sentence is the honest one for what this
+    // program does, which is `adb uninstall`.
+    //
+    // Edited in place rather than added as a second row: `lookup` is a `find`,
+    // so the first match wins and a duplicate would silently keep the old text.
+    ("operation.deleting", "Uninstalling ..."),
     ("operation.fetching_info", "Fetching information..."),
     // The reference never launches or installs from its UI, so it has no key
     // for either; both follow its naming and its trailing spaces.

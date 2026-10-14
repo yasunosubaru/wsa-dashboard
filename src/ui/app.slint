@@ -28,7 +28,7 @@
 // string still answers a second instance asking who is already open -- which is
 // why `runner` keeps overriding it with the application name.
 
-import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, StorageImageUI } from "theme.slint";
+import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Information, StorageImageUI } from "theme.slint";
 // ★ The reference re-exports its globals from the root (reference
 //    `src/ui/app.slint:43`) -- that is what puts `AppI18n` / `AppInfo` in the
 //    generated Rust re-export list, and therefore what makes
@@ -40,6 +40,7 @@ import { AddInstanceView } from "views/add_view.slint";
 import { DeviceView } from "views/device_view.slint";
 import { DiskView } from "views/disk_view.slint";
 import { TaskStatusToast } from "components/task_status_toast.slint";
+import { ModalManager } from "components/modal_manager.slint";
 import { TitleBar } from "components/title_bar.slint";
 import { Sidebar } from "components/sidebar.slint";
 
@@ -163,6 +164,28 @@ export component AppWindow inherits Window {
     callback install_clicked(string);
     callback select_tab(int);
     callback home_clicked();
+
+    // ---- modal state (P5a) -------------------------------------------------
+    // The reference's names, with the one exception noted. `show_delete_confirmation`
+    // and `show_information` / `information` are its own; `package_to_delete` is
+    // its `distro_to_delete`, renamed because what it holds is an Android package
+    // rather than a WSL distribution -- the same substitution spec section 3 makes
+    // for `usb.rs` -> `device.rs`, and recorded the same way in MAPPING.
+    in-out property <bool> show_delete_confirmation: false;
+    in-out property <string> package_to_delete: "";
+    in property <Information> information;
+    in-out property <bool> show_information: false;
+    callback confirm_delete();
+    callback cancel_delete();
+    callback close_information();
+    // The expanded action strip's three surviving buttons (spec Q22). The
+    // reference declares these on `AppWindow` for its WSL cards and this program
+    // had not declared them at all -- `main_view.slint` was calling callbacks
+    // that nothing on the window could receive, which Slint accepts silently and
+    // which is exactly why the buttons looked alive and did nothing.
+    callback information_clicked(string);
+    callback settings_clicked(string);
+    callback delete_clicked(string);
     // Ours, not the reference's: it names a disk-mount dialog's result, and this
     // page has no dialog. Both are "open something in Explorer".
     callback disk_refresh_list();
@@ -300,6 +323,15 @@ export component AppWindow inherits Window {
                                 reorder_distros(from, to) => {
                                     root.reorder_distros(from, to);
                                 }
+                                information_clicked(n) => {
+                                    root.information_clicked(n);
+                                }
+                                settings_clicked(n) => {
+                                    root.settings_clicked(n);
+                                }
+                                delete_clicked(n) => {
+                                    root.delete_clicked(n);
+                                }
                             }
 
                             // Tab 3 in spec section 3's table (index 2 here).
@@ -381,6 +413,28 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // Modal host, mounted once over every page (reference `app.slint` line 1059).
+    // `z: 200` is the reference's own number, and it matters: a dialog has to be
+    // above the toast as well as above the pages, or a toast raised while a
+    // confirmation is up would be painted under it and look like it never fired.
+    ModalManager {
+        z: 200;
+        show_delete: root.show_delete_confirmation;
+        delete_target_name: root.package_to_delete;
+        show_information: root.show_information;
+        information: root.information;
+        confirm_delete => {
+            root.confirm_delete();
+        }
+        cancel_delete => {
+            root.show_delete_confirmation = false;
+        }
+        close_information => {
+            root.show_information = false;
+            root.close_information();
         }
     }
 

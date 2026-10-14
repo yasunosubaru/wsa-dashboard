@@ -1,0 +1,241 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Ported from the reference's
+// src/ui/components/dialogs/information_dialog.slint (wsl-dashboard 0.12.0,
+// GPL-3.0-only).
+//
+// What is the reference's and stays: the `InfoRow` component down to its 110px
+// label column, the two-row shape (plain value, or a pill), the clickable row's
+// hover treatment, the 440px card, the `#00000080` mask, the close-on-mask and
+// close-on-button behaviour, and the confirm-button footer whose only job is to
+// close.
+//
+// What changes is what it reports. The reference's `Information` struct holds a
+// WSL distribution: `wsl_version`, `status`, `install_location`, `vhdx_path`,
+// `vhdx_size`, `actual_used`, `ip`, `is_sparse`. This program's `Information`
+// holds a package -- the same name per Q12, five fields out of `AppInfo`
+// instead of eight about a distro, because a package has a version and a size
+// and that is all `dumpsys package` will say about one. Three of the reference's
+// rows are gone with it rather than left empty: an empty "WSL version: " on an
+// Android app is not a neutral placeholder, it is a question the dialog cannot
+// answer.
+
+import {
+    Theme,
+    Information,
+    AppI18n,
+    LayoutConstants,
+} from "../../theme.slint";
+
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> value_color: Theme.text_primary;
+    in property <bool> clickable: false;
+    in property <bool> is_pill: false;
+    callback clicked;
+    height: 24px;
+    Text {
+        x: AppI18n.is-rtl ? parent.width - self.width : 0;
+        text: root.label + ":" + (AppI18n.is-rtl ? "\u{200F}" : "");
+        width: 110px;
+        color: Theme.text_secondary;
+        font-size: 13px * LayoutConstants.font-scale;
+        font-family: Theme.default_font;
+        vertical-alignment: center;
+        horizontal-alignment: AppI18n.is-rtl ? right : left;
+    }
+
+    if (!is_pill): touch_area := TouchArea {
+        x: AppI18n.is-rtl ? 0 : 122px;
+        width: parent.width - 122px;
+        mouse-cursor: root.clickable ? pointer : default;
+        clicked => {
+            if (root.clickable) {
+                root.clicked();
+            }
+        }
+        Rectangle {
+            background: (root.clickable && touch_area.has-hover) ? (Theme.dark_mode ? #2D2D30 : #F0F0F0) : transparent;
+            border-radius: 4px;
+            Text {
+                text: root.value;
+                color: (root.clickable && touch_area.has-hover) ? Theme.accent : root.value_color;
+                font-size: 13px * LayoutConstants.font-scale;
+                font-family: Theme.default_font;
+                font-weight: 500;
+                vertical-alignment: center;
+                horizontal-alignment: left; // Keep values left-aligned for consistency
+                overflow: elide;
+                width: 100%;
+            }
+        }
+    }
+    if (is_pill): Rectangle {
+        x: AppI18n.is-rtl ? 0 : 122px;
+        width: pill_text.width + 16px;
+        height: 20px;
+        y: (parent.height - self.height) / 2;
+        background: Theme.dark_mode ? #1E1E1E : #F3F3F3;
+        border-radius: 4px;
+        pill_text := Text {
+            text: root.value;
+            color: Theme.accent;
+            font-family: Theme.default_font;
+            font-size: 12px * LayoutConstants.font-scale;
+            font-weight: 500;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+export component InformationDialog inherits Rectangle {
+    in property <Information> info;
+    callback close;
+    callback open_path(string);
+
+    // Background mask
+    background: #00000080;
+
+    // Close on mask click
+    TouchArea {
+        clicked => {
+            root.close();
+        }
+    }
+
+    // Dialog Box
+    Rectangle {
+        width: 440px;
+        height: 285px;
+        background: Theme.card_bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border_color;
+        TouchArea { /* prevent click through */ }
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 8px;
+
+            // Header
+            Rectangle {
+                height: 24px;
+                Text {
+                    x: AppI18n.is-rtl ? 32px : 0;
+                    width: parent.width - 32px;
+                    text: AppI18n.t("dialog.info_title", [root.info.package, AppI18n.version]);
+                    font-size: 18px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    x: AppI18n.is-rtl ? 0 : parent.width - self.width;
+                    width: 24px;
+                    height: 24px;
+                    clicked => {
+                        root.close();
+                    }
+                    Rectangle {
+                        background: parent.has-hover ? Theme.hover_bg : transparent;
+                        border-radius: 4px;
+                        Text {
+                            text: "\u{E8BB}";
+                            font-family: Theme.icon_font;
+                            font-size: 14px;
+                            color: Theme.text_primary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 1px;
+                background: Theme.border_color;
+            }
+
+            // Content
+            VerticalLayout {
+                spacing: 4px;
+                alignment: start;
+
+                // Two pills, matching the reference's two `is_pill` rows: the
+                // size is the number a reader came for, and the version code is
+                // the one that distinguishes two builds of the same version
+                // name.
+                InfoRow {
+                    label: AppI18n.t("dialog.package_version", [AppI18n.version]);
+                    value: root.info.version_name;
+                    is_pill: true;
+                }
+
+                InfoRow {
+                    label: AppI18n.t("dialog.version_code", [AppI18n.version]);
+                    value: root.info.version_code;
+                }
+
+                InfoRow {
+                    label: AppI18n.t("dialog.package_size", [AppI18n.version]);
+                    value: root.info.apk_size;
+                    is_pill: true;
+                }
+
+                // No row for the package name. The title already is it -- the
+                // reference does the same, using `info.distro_name` in the
+                // header and nowhere else -- and a second row saying the same
+                // string is a row a reader has to look past to find the numbers.
+                //
+                // That also leaves `Information.package` with one reader, the
+                // title, which is exactly how `distro_name` is used there.
+
+                // Not a row of its own: a system app reads differently in every
+                // row above it, so a label would only be a place to forget to
+                // change the others. `is_system` answers it here instead, as a
+                // bool rather than as a string the caller had to spell exactly
+                // -- the reference's own `status` row compares against the
+                // literal "Running", which is one typo away from silently
+                // showing the stopped copy.
+                InfoRow {
+                    label: AppI18n.t("dialog.package_kind", [AppI18n.version]);
+                    value: root.info.is_system
+                        ? AppI18n.t("dialog.package_kind_system", [AppI18n.version])
+                        : AppI18n.t("dialog.package_kind_user", [AppI18n.version]);
+                }
+            }
+
+            // Footer
+            HorizontalLayout {
+                alignment: AppI18n.is-rtl ? start : end;
+                Rectangle {
+                    width: 90px;
+                    height: 32px;
+                    background: Theme.accent;
+                    border-radius: 6px;
+                    Text {
+                        text: AppI18n.t("dialog.confirm", [AppI18n.version]);
+                        color: white;
+                        font-size: 13px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            root.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -8,12 +8,12 @@
 //! `start_distro`, `stop_distro`, `open_url`, `reorder_distros` and
 //! `close_task_status`.
 //!
-//! Of the expanded action strip, only the three buttons spec Q22 keeps for WSA
-//! render (`information`, `delete`, `settings`), and **none of the three is
-//! wired**: `MainView` is instantiated binding only the five above, and all
-//! three kept buttons want a modal, which arrives with `modal_manager.slint` in
-//! P5. This note used to say they arrive in P3; P3 delivered the shell and
-//! wired none of them. See `components/distro_card.slint` for the same fact.
+//! Of the expanded action strip, the three buttons spec Q22 keeps for WSA
+//! (`information`, `delete`, `settings`) are wired as of P5a, which is also the
+//! phase that brought `modal_manager.slint`. This note used to say they arrive
+//! in P3; P3 delivered the shell and wired none of them, and the gap sat open
+//! for two phases with a comment claiming otherwise. See
+//! `components/distro_card.slint` for the same fact.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -33,6 +33,9 @@ pub fn setup(app: &AppWindow, handle: Weak<AppWindow>, state: Arc<AppState>) {
     app.on_open_url(open_url(handle.clone()));
     app.on_reorder_distros(reorder(handle.clone()));
     app.on_close_task_status(clear(handle.clone()));
+
+    // The three the expanded action strip keeps (spec Q22), wired in P5a.
+    setup_card_actions(app, &handle, &state);
 
     // The side bar's home entry fires this alongside `tab_selected(0)`.
     //
@@ -136,6 +139,135 @@ async fn act(
         Action::Launch => dashboard.launch_app(package).await,
         Action::Stop => dashboard.stop_app(package).await,
     }
+}
+
+/// The three buttons the expanded action strip keeps, and what each does.
+///
+/// `settings` is the simplest of the three and was the one that waited longest:
+/// it activates a Windows shell namespace and needs no dialog at all, so it
+/// could have been wired in P3 with `launch_app` and was not.
+fn setup_card_actions(app: &AppWindow, handle: &Weak<AppWindow>, state: &Arc<AppState>) {
+    // --- information: read the package, fill the dialog, show it -------------
+    let ah = handle.clone();
+    let st = state.clone();
+    app.on_information_clicked(move |name| {
+        if name.is_empty() {
+            return;
+        }
+        let package = name.to_string();
+        let ah = ah.clone();
+        let st = st.clone();
+        let _ = slint::spawn_local(async move {
+            match st.wsa_dashboard.app_info(&package).await {
+                Ok(info) => {
+                    if let Some(app) = ah.upgrade() {
+                        app.set_information(crate::Information {
+                            package: info.package.clone().into(),
+                            // Android leaves `versionName` empty for plenty of
+                            // installed packages, and `AppInfo`'s own test
+                            // pins that we do not invent one. So the dialog says
+                            // the value was not reported -- a fact about the
+                            // package, which is a different claim from "0".
+                            version_name: if info.version_name.is_empty() {
+                                i18n::t("dialog.unknown_version")
+                            } else {
+                                info.version_name.clone()
+                            }
+                            .into(),
+                            version_code: info.version_code.to_string().into(),
+                            apk_size: crate::ui::disk_model::size_text(info.apk_size_bytes).into(),
+                            is_system: info.is_system,
+                        });
+                        app.set_show_information(true);
+                    }
+                }
+                Err(error) => toast(&ah, describe(&package, error)),
+            }
+        });
+    });
+
+    // --- settings: open WSA's own Settings app -------------------------------
+    // The card passes a package because every card callback takes one; there is
+    // no per-package settings app, so the argument is ignored rather than
+    // turned into something it is not.
+    let ah = handle.clone();
+    let st = state.clone();
+    app.on_settings_clicked(move |_package| {
+        let ah = ah.clone();
+        let st = st.clone();
+        let _ = slint::spawn_local(async move {
+            if let Err(error) = st.wsa_dashboard.open_settings().await {
+                toast(&ah, error.to_string());
+            }
+        });
+    });
+
+    // --- delete: ask first --------------------------------------------------
+    // `adb uninstall` has no `-k` (spec 2.3, MAPPING 11.8), so it clears the
+    // package's data. The confirmation is the only thing standing between a
+    // mis-click and that, so it is not a toast and not a menu -- it is a dialog
+    // whose only button is the red one, exactly as the reference's is.
+    let ah = handle.clone();
+    app.on_delete_clicked(move |name| {
+        if name.is_empty() {
+            return;
+        }
+        if let Some(app) = ah.upgrade() {
+            app.set_package_to_delete(name.clone());
+            app.set_show_delete_confirmation(true);
+        }
+    });
+
+    // Cancel touches one boolean. There is nothing else to unwind: nothing was
+    // started, and the toast belongs to whoever raised it.
+    let ah = handle.clone();
+    app.on_cancel_delete(move || {
+        if let Some(app) = ah.upgrade() {
+            app.set_show_delete_confirmation(false);
+        }
+    });
+
+    let ah = handle.clone();
+    app.on_close_information(move || {
+        if let Some(app) = ah.upgrade() {
+            app.set_show_information(false);
+        }
+    });
+
+    // --- confirm: actually uninstall ----------------------------------------
+    let ah = handle.clone();
+    let st = state.clone();
+    app.on_confirm_delete(move || {
+        let Some(app) = ah.upgrade() else { return };
+        let package = app.get_package_to_delete().to_string();
+        if package.is_empty() {
+            app.set_show_delete_confirmation(false);
+            return;
+        }
+        // Closed before the round trip, not after. `adb uninstall` on a 2 GB
+        // package can take seconds, and a confirmation that stays up while the
+        // user waits looks like it did not register.
+        app.set_show_delete_confirmation(false);
+        let ah = ah.clone();
+        let st = st.clone();
+        let _ = slint::spawn_local(async move {
+            toast(&ah, i18n::t("operation.deleting"));
+            match st.wsa_dashboard.uninstall_apk(&package).await {
+                Ok(()) => {
+                    clear_toast(&ah);
+                    // The row is gone; the poll would get to it in five seconds
+                    // but is gated while an operation holds the slot, so it
+                    // would not get to it until the operation finished anyway.
+                    let _ = slint::spawn_local(crate::ui::data::refresh_home_with(
+                        crate::ui::refresh::MANUAL_TRIGGER,
+                        ah.clone(),
+                        st.clone(),
+                    ));
+                }
+                Err(error) => toast(&ah, describe(&package, error)),
+            }
+        });
+    });
 }
 
 fn describe(package: &str, error: OpsError) -> String {

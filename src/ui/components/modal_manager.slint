@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Ported from the reference's src/ui/components/modal_manager.slint
+// (wsl-dashboard 0.12.0, GPL-3.0-only).
+//
+// # What this file is in the reference
+//
+// A dispatcher, not an abstraction. It declares one `show_*` boolean per dialog
+// (about sixty of them), instantiates each dialog at `width: 100%; height: 100%`
+// when its flag is set, and forwards its `confirm` / `cancel` / `close` to its
+// own callbacks. Each dialog brings its own `#00000080` mask; the manager has no
+// visual layer of its own, which is why it is cheap to add a dialog to and why
+// there is nothing here worth refactoring into a `DialogHost`.
+//
+// # Why this copy has two of the sixty
+//
+// The reference's dialogs belong to pages this program has not built. `Settings`
+// and `LanguageSelect` and `Scheduler` are P6 and P7; `CheckUpdate` and
+// `Export` and `Move` are P8 and P4; `MessageMail` is the reference's own
+// donation mail reader. Porting them now would mean inventing the data they
+// display -- a settings model, a scheduler task list, an update payload -- for
+// pages that do not exist yet, and every one of those inventions would have to
+// be thrown away when the real page lands.
+//
+// So each phase adds its own blocks, with the reference's names and shapes, and
+// the file grows toward the reference's rather than starting from a guess at it.
+// P5a contributes the two that the home page's card has needed since P3 and
+// could not have: the delete confirmation and the information panel. The
+// `distro_card` note that said those three buttons would be wired "until P3"
+// was wrong about the phase; they were waiting on this file.
+//
+// docs/MAPPING.md section 12 records the subset, so P9's page-by-page comparison
+// is not surprised by a 2-block manager next to a 60-block one.
+
+import { Theme, AppI18n, LayoutConstants, Information } from "../theme.slint";
+import { ConfirmationDialog } from "dialogs/confirmation_dialog.slint";
+import { InformationDialog } from "dialogs/information_dialog.slint";
+
+export component ModalManager inherits Rectangle {
+    // ---- the home page's delete confirmation (reference `show_delete`) ------
+    // The reference names the target `delete_target_name` and fills it from the
+    // distro that was clicked. Here it is a package, and the wording comes from
+    // `dialog.delete_title` / `dialog.delete_msg` with the package substituted.
+    in property <bool> show_delete: false;
+    in property <string> delete_target_name: "";
+    callback confirm_delete();
+    callback cancel_delete();
+
+    // ---- the information panel (reference `show_information`) -------------
+    in property <bool> show_information: false;
+    in-out property <Information> information;
+    callback close_information();
+
+    // Every dialog is stretched over the whole window; the manager is mounted
+    // once, above the pages, so a dialog covers whichever page raised it.
+    if (show_delete): ConfirmationDialog {
+        width: 100%;
+        height: 100%;
+        dialog_height: 200px;
+        title_text: AppI18n.t("dialog.delete_title", [delete_target_name, AppI18n.version]);
+        message: AppI18n.t("dialog.delete_msg", [delete_target_name, AppI18n.version]);
+        confirm => {
+            root.confirm_delete();
+        }
+        cancel => {
+            root.cancel_delete();
+        }
+    }
+
+    if (show_information): InformationDialog {
+        width: 100%;
+        height: 100%;
+        info: root.information;
+        close => {
+            root.close_information();
+        }
+        // The reference's information dialog offers to open a WSL install
+        // directory; ours has nothing to open (see the dialog's header comment),
+        // so the callback is not declared. Declaring it and never raising it
+        // would be an API that lies about what the dialog can do.
+    }
+}

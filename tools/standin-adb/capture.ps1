@@ -636,6 +636,22 @@ try {
             # entries between them (network, scheduler) are still off. So the row
             # is another 36px plus the 4px gap: 194 + 40 = 234.
             'go-storage-page'  { @{ x = 27; y = 234 } }
+            # The home page's first card's chevron. Measured off a 1200x900
+            # capture of the `ready` stand-in rather than derived, because the
+            # home list sits under a search field whose height is set by the
+            # font and not by a layout constant: the chevron reads at (1140, 186)
+            # in the image, which is (760, 124) at this monitor's 1.5 scale.
+            'home-expand'      { @{ x = 760; y = 124 } }
+            # The three buttons spec Q22 keeps in the expanded strip, measured
+            # off p5a-home-expanded.png (1200x900): the info circle reads at
+            # (599, 257), the trash at (997, 257) and the gear at (1063, 257),
+            # which is (399, 171), (665, 171) and (709, 171) at 1.5. They move
+            # together, so they are written as one number each rather than
+            # derived from a shared origin that a future layout change would
+            # invalidate silently.
+            'home-info'        { @{ x = 399; y = 171 } }
+            'home-delete'      { @{ x = 665; y = 171 } }
+            'home-settings'    { @{ x = 709; y = 171 } }
             'device-expand'    { @{ x = 756; y = 80 } }
             default {
                 throw ("no coordinates known for -Act '{0}'; add it beside the others in " +

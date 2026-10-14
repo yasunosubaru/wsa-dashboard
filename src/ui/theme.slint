@@ -74,6 +74,25 @@ export struct DeviceProp {
     value: string,
 }
 
+/// One installed package's details, as the information dialog shows them.
+///
+/// Named `Information` and kept as one struct, per Q12, but the fields are the
+/// reference's WSL *distribution* fields replaced by `AppInfo`'s five. The
+/// reference's set -- `distro_name`, `wsl_version`, `install_location`,
+/// `vhdx_path`, `vhdx_size`, `actual_used`, `ip`, `is_sparse` -- has no WSA
+/// counterpart worth keeping: a package has a version and a size, and that is
+/// the whole of what `dumpsys package` will tell us about one.
+///
+/// `is_system` decides whether a row reads as something the user put there or as
+/// part of Android itself. See docs/MAPPING.md section 12.
+export struct Information {
+    package: string,
+    version_name: string,
+    version_code: string,
+    apk_size: string,
+    is_system: bool,
+}
+
 /// One WSA storage image, as the disk page draws it (P5a).
 ///
 /// Not the reference's `MountedDiskInfo`: that describes a disk *this program

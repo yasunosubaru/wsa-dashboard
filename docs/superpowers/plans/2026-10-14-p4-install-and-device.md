@@ -89,12 +89,28 @@ spec §3 表的顺序即索引：1 = add（安装 APK）、2 = usb（设备）�
 
 ## 4. Review Focus（做 task 时逐条对着看）
 
-1. `DisconnectAdb` 是**新变体**不是 `Shell`——`Shell` 是逃生口，写了第一个就有第二个。
-2. 目标列表的解析只有一处：`find_entry`（首页）和 `adb_targets()`（设备页）必须共用同一套
-   解析，两套解析会在"offline 拼写"这类地方悄悄分叉。
-3. `device_view` 不得出现 `usbipd` / `bind` / `attach` 字样——那是参照的领域，不是 WSA 的。
-4. 页签推进必须是**同时**改 `TABS_WITH_A_VIEW` 和 `sidebar_*`，少改一个就是"看得见点不开"
-   或"点得开一片空白"，正是 P3 守卫存在的理由。
-5. 安装回环必须在**真机真 APK** 上跑一遍（spec §10 验收就一句话），替身 adb 只证明命令面。
-6. 搬 `form_widgets` 而不是自造控件：P2 已整份拷过，且它带参照的主题化。
-7. MAPPING 要写清**哪几样是刻意没搬**（3.1 的四条），否则 P9 逐页对照时看起来像漏做。
+1. ✅ `DisconnectAdb` 是**新变体**不是 `Shell`——`Shell` 是逃生口，写了第一个就有第二个。
+   测试里顺带断言了 `!= Shell`，因为只断言 `argv()` 的话，哪天真写成 Shell 也会照样通过。
+2. ✅ 目标列表的解析只有一处：`parse_targets` 同时供 `find_entry`（首页）与
+   `adb_targets`（设备页），并有专门的测试钉住两者对每个状态结论一致。
+3. ✅ `device_view` 里没有 `usbipd` / `bind` / `attach` 的领域字——参见 MAPPING §11.2 的
+   「刻意没搬」表。
+4. ✅ 页签推进同时改 `TABS_WITH_A_VIEW` 和 `sidebar_*`；`tabs.rs` 的
+   `home_install_and_device_have_a_page_and_the_rest_do_not` 遍历全部九个索引，
+   让"只改了一半"直接失败。
+5. ⚠️ **安装回环只做了真机的一半**（安装通、卸载未跑），原因与可选做法见 MAPPING §11.8。
+6. ✅ 用 `form_widgets` 而非自造控件：P2 已整份照抄，且它带参照的主题化。
+7. ✅ MAPPING §11 写清了**哪几样是刻意没搬**（§11.2 八条）与三处计划没预见的（§11.4）。
+
+## 5. 完成情况
+
+Task 1–7 全部完成，分四次提交（`b076540` → `03abee8` → `648a908` → `7f560a3`）。
+计划里三处写错或写漏，做的时候才发现：
+
+- **§11.2 的 `ConnectAdb` payload**：计划只提了要加 `DisconnectAdb`，
+  没看到「连接」同样需要承载任意目标——设备页要连 Wi-Fi 目标和 USB 序列号，
+  而原来的 `ConnectAdb { port }` 只装得下首页那一条 `127.0.0.1:<port>`。
+- **`assets/feat/microsoft-shield.svg`**：计划说盾牌块 P5 才回来，实际 P4 就需要。
+- **§3.4 说 P4 一次翻两个开关**：设备页先落、安装页后落，两个 `show_*` 分属两次提交。
+
+另外三处计划没预见的坑记在 MAPPING §11.4，截图脚本四处改动记在 §11.6。

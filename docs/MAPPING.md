@@ -519,3 +519,114 @@ P3 计划的 Review Focus #6 写着"必须走 `start_drag()`，不能自己 `set
 
 **P2 的四张仍在 `p2-*` 名下**：它们记的是 spec §5 的四个渲染态，P3 只是换了外壳，
 改名会让 P2 计划里的引用断掉。重拍日期见 git。
+
+---
+
+## 11. P4 安装 APK 页与设备页
+
+### 11.1 不是移植，是重写
+
+P3 是纯移植，P4 不是。读过源码后确认两个 view 都不是照抄的对象：
+
+| 参照 | 它真正做的是 | spec §3 的映射 |
+|---|---|---|
+| `views/add_view.slint`（520 行） | 从发行版 / 镜像 / rootfs **创建一个 WSL 实例** | → 安装 APK：位置与交互照它，字段全换 |
+| `views/usb_view.slint`（258 行） | **管 usbip**：`usbipd` 的 bind / unbind / attach | → 设备页：adb 目标 + 连接/断开 + 属性表 |
+
+所以"1:1"落在**结构层**——页面坐在哪、表单怎么叠、卡片怎么展开、进度怎么显示，
+以及 `form_widgets.slint`（P2 已整份照抄，这页直接用）。字段与命令按 spec。
+
+### 11.2 刻意没搬的（P9 逐页对照时看这里，不是漏做）
+
+| 没搬 | 理由 |
+|---|---|
+| `usb_card.slint` 的 15 个字段 | 一个 adb 目标只有 `serial` 与 `state`；第三样（属性）是**问设备**要的。新写 `device_card.slint`，保留参照的徽标 / 药丸 / 单开单合交互 |
+| `usb_settings_dialog`（317 行） | 把物理盘绑进 WSL 的 usbipd 操作。spec §3 对网络页已明说参照的 netsh 段"不适用、保留结构但隐藏"，这页同理 |
+| `usb_device_info_dialog`（210 行） | spec §3 要的是"设备属性表"，没说它必须是弹窗。放页内 ⇒ 顺带把 P5 才要建的 `modal_manager`（790 行，只为仲裁对话框而存在）再往后推 |
+| `distro/install_logic.rs`（713 行） | 下载校验和、解压 rootfs、配镜像、逐行写 `terminal_output`。`adb install -r` 是一条命令一次往返，P1 已按 §4.1.1 的"exit code 与 stdout 两者都要"实现 |
+| 源选择器 / `[add.sources]` 四项 / 镜像整块 | APK 只有一个来源"一个文件"；一个选项的下拉是用不起来的控件 |
+| `instance_name` / `install_dir` / `name_error` | 没有被创建的东西，也没有目录；一个字段只有一条错误，参照的 `path_error` 就是那条 |
+| `bind_clicked` / `unbind_clicked` | adb 没有 bind 这一步 |
+| `usbipd_version` / `is_usbipd_outdated` | 没有 usbipd 可报版本。"工具缺失"对应 `device_error == "not_found"`，**不带下载按钮**——参照的按钮指向 `AppConstants.usbipd_releases`，WSA 侧没有能安全写死的地址 |
+
+### 11.3 改了签名的、换了名字的
+
+- **`ConnectAdb { port: u16 }` → `{ target: String }`**。名字按 Q12 不动，改的是参数装多少：
+  原来 `argv()` 里焊死 `127.0.0.1:`，只有首页那条路能用；设备页要连的是用户选的目标
+  （Wi-Fi 的 `192.168.1.5:5555`、USB 序列号）。**没有加第二个 `adb connect` 变体**——
+  那会让同一条命令在"唯一书写点"里出现两种拼法。
+- **回调名**按 Q12 保留参照拼写：`attach_clicked` / `detach_clicked` /
+  `info_clicked(DeviceTarget)` / `select_install_file(int)`。
+  **`install_distro` 没有保留**，它的四参数签名是选择器的形状（源序号、名字、路径…），
+  和"装一个 apk"是两件事；设备页的 attach/detach 是同一件事换个叫法，这里不是。
+- **i18n 键** `usb.*` / `add.*` 全按参照原键名，值按 spec §3 换
+  （`usb.attach` = "Connect"、`add.create` = "Install APK"）。
+  没有参照对应物的新键四个：`usb.subsystem`、`add.apk_file`、`add.installed`、`add.file_missing`。
+- **`adb devices` 只有一处解析**：`parse_targets` 同时供首页 `find_entry` 与设备页
+  `adb_targets` 使用，并有一个专门钉住"两者对每个状态结论一致"的测试（Review Focus 2）。
+- **`is_session_state(state)`** 收成一处判断，`find_entry` 与设备页共用，
+  免得 `state == "device"` 这个字面量散在两个文件里。
+
+### 11.4 计划里没预见的三处
+
+1. **layout 会吞掉父级高度。** `HorizontalLayout` 作为 `Rectangle` 的直接子元素时拿到的是
+   **父级**高度而不是自己声明的 `height`：头行于是拉满整卡、内容居中到中点，正好压在属性表上。
+   属性区从一开始就对，因为它本来就在一个显式 `height` 的 `Rectangle` 里——头行照同样方式包一层即可。
+2. **`assets/feat/microsoft-shield.svg` 得在 P4 就拷。** P2 从没编译过 `CustomButton`
+   （那页只用了 `CustomLineEdit`），所以它 `show_shield` 块里的 `@image-url` 一直没被检查过。
+   P3 的计划写的是"盾牌块随第一个会设它的组件（P5）回来"——**时间点说早了**。
+3. **`VerticalLayout` 的余量分配。** 没有自身高度的子项会吞掉页面剩余像素并居中：
+   标签贴顶、输入框低了 230px、中间那段空隙不归任何人。每行给显式高度（照参照的
+   `Text { height: 18px }` / 控件 32px）之后，余量落到页面底部，那里既看不见，
+   又正好是结果块要长进去的地方。
+
+### 11.5 侧栏坐标在多了一行之后会变
+
+`capture.ps1` 的点击坐标**从布局推导**而非照截图抄，所以 P4 打开 `sidebar_add`
+插入一行时，`go-device-page` 的 `y` 必须从 154 变成 194。抄旧值不会报错，只会安静地点到
+下一条上——第一次就是这么把安装页截成了设备页。`tabs.rs` 的测试同时钉住
+`TABS_WITH_A_VIEW` 与 `is_sidebar_entry` 两边一致（Review Focus 4）。
+
+### 11.6 截图脚本在 P4 期间的四处改动
+
+1. **`-Act` 改成逗号分隔的序列。** 有些状态要连点两下才到（页藏在侧栏里，属性表藏在
+   chevron 里），一个动作的取景拍不到两者。也因为 `powershell -File` **跨进程不解析
+   PowerShell 的逗号数组**：父 shell 里 `a,b` 到子进程是**一个**字符串，`ValidateSet`
+   拿整串去比对必然失败。去掉 `ValidateSet`，改成脚本内 `Split(',')`，
+   `switch` 的 `default` 负责报出可用值。
+2. **点击前等 250ms。** `Raise()` 之后前台切换没完成时，第一个点击被 Windows 消费去做激活。
+   症状是日志里**完全看不到** `tab selected`——除非有人去读日志。
+3. **点完把光标挪出窗口。** 停在按钮上会把该按钮的 tooltip 连同窗口边缘的截断一起拍进图，
+   读起来像是应用没有的布局 bug（参照的 tooltip 定位一样，同样会截）。
+4. **`-BypassDisplayFilter` 回来**（P2 有、P3 重写时删掉、P4 又需要）。f.lux 经 DWM 对
+   **整个桌面**做暖色合成，凡读屏幕的取图都会被染色。脚本检出色偏后暂停它、`finally` 里恢复，
+   AUMID 从运行中的进程路径反推（`F.luxSoftwareLLC.f.lux_4.137.0.0_x86__sw1dyjdkns7gt`
+   → 包名 + 发布者）。这里踩过一个 PowerShell 陷阱：**`"$name_$publisher"` 被解析成变量
+   `${name_}`**，推出 `sw1dyjdkns7gt!f.lux`——看着像成功、实际永远恢复不了；
+   写成 `${name}_${publisher}` 才对。
+
+### 11.7 验证
+
+`cargo test --release --bin wsadash` → **202 passed / 0 failed / 3 ignored**；
+GUI `cargo build --release --bin wsadashboard` 零 error 零 warning。
+
+| 文件 | 内容 |
+|---|---|
+| `docs/screenshots/p4-install.png` | 安装 APK 页 |
+| `docs/screenshots/p4-device.png` | 设备页：一个目标 + 徽标 + 断开 + chevron |
+| `docs/screenshots/p4-device-properties.png` | 同上展开，7 行 `getprop`，值与真机实测一致 |
+
+（截图尺寸随机器当时的显示缩放走：150% 时 1200×900，125% 时 1000×750，
+脚本每次都现测倍率，所以四张之间**不必**同尺寸——P2 那一批之所以要求同尺寸，
+是为了并排比对，这里比的是每一页的内容。）
+
+### 11.8 未完成：回环的真机一半
+
+spec §10 的 P4 验收是"安装/卸载回环可用"。**安装那一半已真机跑通**
+（`wsadash probe` / `start` / `list` 全通，设备页与属性表截图都是真 adb 取的）；
+**卸载那一半没跑**，因为它会**清掉所卸应用的数据**：
+`WsaCommand::UninstallApk` 是 spec §2.3 原样的 `adb uninstall <package>`，没有 `-k`。
+
+要看到完整回环只能拿一个**当前已装**的真应用去卸掉，因为磁盘上没有多余的 APK——
+实测 `$env:USERPROFILE\Downloads`、`<dev>`、`AppData\Local\Packages`
+三个树里 `.apk` 命中 **0 个**。这一步需要先指定可以清数据的应用。

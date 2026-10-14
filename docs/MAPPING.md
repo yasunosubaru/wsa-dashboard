@@ -880,3 +880,123 @@ cargo test --release --bin wsadash -- --ignored → 3 passed / 0 failed
 
 截图：`docs/screenshots/p5a-real-home.png`（真 adb、真包）与
 `p5a-real-restored.png`（真机存储页，VHDX mtime 已随本次启动更新）。
+---
+
+## 14. P5b：网络页（端口转发 + HTTP 代理）
+
+### 14.1 与参照的语义差异
+
+参照 `src/ui/handlers/network/` 是四个文件（`mod` / `rules` / `proxy` / `service` / `utils`），
+绝大部分在驱动 `netsh interface portproxy` 和一个替它跑提权工作的 Windows 服务。逐条：
+
+| 参照 | 我们 | 依据 |
+|---|---|---|
+| `netsh interface portproxy add/delete/show all` | `adb forward` / `adb reverse` / `--list` | spec §3 第 239 行 |
+| `netsh advfirewall firewall`（新增/删除规则） | 保留 netsh 这一条 | 同上（防火墙那半照搬） |
+| 服务 `WslDashboardService` 提权跑 netsh | 不需要：adb 命令不提权 | — |
+| 给 WSL shell 导 `HTTP_PROXY` 环境变量（`manage.rs:95`） | `settings put/delete global` | Android 没有 shell 环境变量这回事 |
+| 发行版列表 + 解析出的 IP（`distro_names` / `local_ips`） | 属性保留但没人读：`adb forward` 不需要地址 | — |
+
+**暂存模型整个没有对应物。** 参照是"先改、后应用"：规则先落盘，卡片显示未应用（`is_active == false`）
+并给一个绿色播放键，"Apply all rules" 一次性推全组。它必须这样，是因为 `netsh` 要提权，不能随手改。
+`adb forward` 是一条普通命令，加进去那一刻已经在服务端的表里。
+
+于是：`NetworkRuleCard` 保留三个回调签名但只渲染删除（同 P5a 的 `MountDiskCard`，同一个取舍：
+一个什么都不做的按钮比没有按钮更糟）；`process_network_rule` / `cancel_network_rule` /
+`apply_all_network_rules` / `cancel_all_network_rules` / `initialize_task_clicked` 声明了但没有
+handler，Slint 里那就是 no-op。**`is_helper_installed` 传 `true`**，让参照那个"Auto-Start
+Forwarding"按钮（它装的是 netsh 需要的提权 helper）不渲染；P7 的计划任务会真正接手它——开机后
+重建转发，因为 adb 自己不会。
+
+### 14.2 三个代理 global 互不推导（推翻 spec §1 第 116 行）
+
+spec §1 第 116 行写：`settings put global http_proxy <host:port>` 之后
+`global_http_proxy_host` / `_port` 会一致地读回来。**不成立。** 本机实测两个方向：
+
+```
+只写 http_proxy 10.0.2.2:8081      → host=[:0]  port=[:0]  combined=[10.0.2.2:8081]
+只写 host=10.0.2.2 + port=8080      → host=[10.0.2.2] port=[8080] combined=[:0]
+```
+
+AOSP 源码解释了原因：`ProxyTracker.loadGlobalProxy()` 读的是 `GLOBAL_HTTP_PROXY_HOST` /
+`_PORT` / `_EXCLUSION_LIST` 三件套，而 `HTTP_PROXY`（即 `http_proxy`）是**另一列**、被
+`loadDeprecatedGlobalHttpProxy()` **优先**读取。第一版实现写的 `http_proxy_host` /
+`http_proxy_port` / `http_proxy` 全在错的一列上——平台一个都不读。它能通过任何"写进去读回来"
+的测试，因为**两列都能 round-trip**；只有把替身按两列分开建模才分得清"写对了 key"和"写了个 key"。
+
+### 14.3 设置时必须 delete `http_proxy`，不能写它
+
+`loadDeprecatedGlobalHttpProxy()` 命中非空 `http_proxy` 就
+`setGlobalProxy(ProxyInfo(host, port, Collections.emptyList()))`——**空排除列表**——新版本还直接
+`return true` 短路，三件套根本不读。所以设代理时要**删掉**它；清除时才写 `:0`：
+`":0".split(':')` = `["", "0"]`，得到 `ProxyInfo("", 0, "")`，host 为空正好落进
+`setGlobalProxy` 的 else 分支把 `mGlobalProxy` 置 null。
+
+`http_proxy` **没有默认值**（`settings delete` 后读回 `null` 而不是 `:0`）——此前看到的 `:0`
+是我们自己先前写进去的。
+
+### 14.4 `settings put` 拒绝空串，清除只能 delete
+
+```
+settings put global global_http_proxy_exclusion_list ''
+→ Bad arguments   (exit 1)
+```
+
+**没有任何一种写等于"没有值"**，所以清空排除列表、清除代理都必须走 `settings delete`。
+替身 adb 现在也拒绝空 put——否则这条回归会在这儿过、在设备上炸。
+
+### 14.5 端口范围 1..=65535，参照文案写 65534
+
+取自 AOSP `ProxySelector.validate`（`portVal <= 0 || portVal > 0xFFFF`）与 `ProxyInfo.isValid()`。
+参照的 `network.proxy_error_port` 写 65534（它那条 netsh 的范围）。键名照留（Q12），**值改成与本页
+真正校验的代码一致**；`http_proxy_value` 因此拒绝 `0`、`65536` 和非数字，且在写之前拒绝——部分写入比
+不写更糟。
+
+### 14.6 认证字段没有平台对应物
+
+`ProxyTracker.setGlobalProxy` 只写 host / port / exclusion / pac 四项；`Settings.Global` 公开 API
+里没有用户名口令项；AOSP 里没有任何结构能存全局代理凭据。参照配的是 WSL shell（有 `HTTP_PROXY`
+环境变量），Android 没有等价物。
+
+所以 `proxy_auth` / `proxy_user` / `proxy_pass` 三个键**保留在页面上**（P9 要求组件对齐），保存时
+代码里显式 `let _ = (auth, username, password)` 而不是不绑定——不绑定读起来像漏了。宁可
+"保存时明确丢弃"，也不给系统一个永远不读的 key，让页面看起来配好了而其实没有。
+
+### 14.7 adb forward/reverse 的真实形状（spec §1 第 117 行已确认）
+
+```
+adb forward tcp:18081 tcp:8081  → 打印 18081（不是 "Success"），exit 0
+adb forward --list              → 127.0.0.1:58526 tcp:18081 tcp:8081
+adb reverse tcp:18080 tcp:18080 → 打印 18080
+adb reverse --list              → host-16 tcp:18080 tcp:18080
+```
+
+成功时**静默**（只打印端口号），所以不能复用给 install/uninstall 的 `require_success`——那个函数要
+求 stdout 里有一行字面量 `Success`，而 `install` 恰恰会在 exit 0 的同时打印 `Failure [...]`，
+那正是它存在的理由。给 forward/reverse 另写了 `silent_success`：exit code 说了算。
+**`serial` 列按不透明字符串处理**：`forward` 放 `host:port`、`reverse` 放字面量 `host-N`，
+一个按 `forward` 格式写的解析器会把每条 reverse 规则都丢掉，页面显示空白而规则其实存在。
+
+### 14.8 规则 id 编码成 `<方向>:<端口>`
+
+`delete_rule` 只收一个字符串（参照的签名），而删一条规则需要方向和端口两件事。参照的 id 是一个
+netsh key，本来就装着同样的两个事实。我们的 `network_model::parse_id` 对 `""`、`"forward"`、
+`"forward:"`、`"forward:abc"`、`"forward:0"`、`"forward:70000"`、以及参照自己的 `"18081-18081"`
+一律返回 `None`——**不能退化成 `(Forward, 0)`**：`adb forward --remove tcp:0` 是一条什么都不指向
+的命令，而 id 是从窗口里来的，可能是陈旧行。
+
+### 14.9 截图环境：两件会让人把错页当成证据的事
+
+**窗口在点击之前会被 Windows 移动。** 四次实测起点分别是 (113,114)、(37,38)、(265,266)、
+(151,152)，每次都不一样；而 `capture.ps1` 原本在步骤开头读一次窗口位置就一直用。偏移正好够点到
+隔壁那一行——一次本该点 Network 的点击选中了 **Storage**，画面看起来就是导航成功了。现在每次点击
+前重读，并在位置变化时打印。
+
+**这个桌面上有永远压在最上面的窗口。** `PrintWindow` 让窗口自己画自己，谁在上面都影响不了图；
+但输入是发给最上面那个窗口的。按下去之前用 `WindowFromPoint` 问一句那个像素归谁：两个点当时都报
+`'reader | OpenChamber'`。所以脚本现在会改用 `PostMessage` 把鼠标事件直接投进我们自己的队列。
+
+**代理页那张图是用临时办法拍的。** 在上述环境下注入点击整体不可靠（同一个刚成功的步骤，下一步就
+三连失败），页签切换没法稳定复现。于是把 `NetworkView` 的 `active_tab` 临时设成 1、重编、拍完复原、
+重编——**验证的是那个视图本身**（真正有风险的部分：布局、占位文案、认证块的禁用态），而页签切换
+的代码是参照逐字搬来的（`components.slint` 与参照 diff 除 SPDX 外完全一致）。

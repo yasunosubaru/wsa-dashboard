@@ -27,10 +27,8 @@
 //!
 //! | phase | tabs | entries |
 //! |---|---|---|
-//! | P3 | 0 | home (the only one P3 can show a page for) |
-//! | P4 | 0, 2 | + device. Index 1 is install APK, which lands separately in
-//! P4 -- see `has_a_view`'s caller, and the plan's task list, for why the two
-//! halves of P4 are not one switch |
+//! | P3 | 0 | home (the only one P3 could show a page for) |
+//! | P4 | 0, 1, 2 | + install APK (1), + device (2) |
 //! | P5 | 3, 5 | network, storage |
 //! | P6 | 7, 8 | settings, about |
 //! | P7 | 4 | task scheduler |
@@ -66,21 +64,14 @@ pub fn has_a_view(tab: i32) -> bool {
 mod tests {
     use super::{TABS_WITH_A_VIEW, has_a_view, is_sidebar_entry};
 
-    /// The state of P4's first half: two pages exist behind nine entries, and
-    /// The state of P4: three pages exist behind nine entries, and the guard
-    /// is what keeps the other six from blanking the screen.
-    ///
-    /// The test's name has changed twice (P3 then P4), because a test named
-    /// after a phase goes stale every phase. This one names the fact it pins:
-    /// how many entries have pages, and which. Six of the nine still open onto
-    /// nothing, which is expected rather than a gap -- see the table on
-    /// `TABS_WITH_A_VIEW`.
     /// Three pages behind nine entries, and exactly which three.
     ///
     /// The count is asserted rather than inferred, and the loop over all nine
     /// is what ties it to `is_sidebar_entry` -- a value that reached `has_a_view`
     /// for an index no sidebar item can select would pass an `assert_eq` on the
-    /// list and still be wrong.
+    /// list and still be wrong. Six of the nine still open onto nothing, which
+    /// is the planned state of P4 rather than a gap; see the table on
+    /// `TABS_WITH_A_VIEW`.
     #[test]
     fn home_install_and_device_have_a_page_and_the_rest_do_not() {
         assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2]);

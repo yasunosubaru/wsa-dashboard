@@ -117,16 +117,51 @@ impl WsaPaths {
 
 /// Locate WSA at runtime.
 ///
-/// `Get-AppxPackage` rather than a registry read or a guessed path: spec 1.1
-/// records this machine's WSA under `Downloads\Compressed`, so any hardcoded
-/// location is already wrong.
+/// `Get-AppxPackage` rather than a guessed path: spec 1.1 records this machine's
+/// WSA under `Downloads\Compressed`, so any hardcoded location is already wrong.
+///
+/// **A second source is asked for, not assumed.** `InstallLocation` is read from
+/// Appx and `PackageRootFolder` from the repository key:
+///
+/// ```text
+/// HKCU\...\AppModel\Repository\Packages\<PackageFullName>\PackageRootFolder
+/// ```
+///
+/// **What was measured on 2026-10-14, because the first version of this comment
+/// claimed the wrong thing.** With WSA's root folder deleted from disk,
+/// `Get-AppxPackage` still listed the package with `Status: Ok` and
+/// `IsDevelopmentMode: True`, but `InstallLocation` came back **empty**, and
+/// this function reported "not installed". With the folder restored, the very
+/// same development-mode registration reports `InstallLocation` normally. So the
+/// empty value was a *consequence of the missing folder*, not a property of
+/// development-mode registration -- the first version of this comment said the
+/// latter and was wrong.
+///
+/// The fallback therefore does **not** rescue a deleted folder: both properties
+/// name the same path, and restoring the folder is what fixed it. It is kept
+/// because the two answers come from different subsystems and need not always
+/// agree, and because a second source costs one registry read in the same
+/// process that was already spawning PowerShell. [`choose_location`] decides,
+/// and its tests say what it does and does not promise.
 pub fn resolve() -> Result<WsaPaths, WsaPathError> {
+    // One `-Command`, because two would be two processes and a second chance
+    // for the two answers to come from different moments. The registry key is
+    // globbed on the package *name* rather than the full name so that a
+    // re-registration under a new version still answers -- the full name
+    // changes on every update and hardcoding one would make this stale exactly
+    // when it matters most.
     let output = Command::new("powershell")
         .args([
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "(Get-AppxPackage MicrosoftCorporationII.WindowsSubsystemForAndroid).InstallLocation",
+            r#"$p = Get-AppxPackage MicrosoftCorporationII.WindowsSubsystemForAndroid
+$k = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages'
+$root = (Get-ChildItem $k -ErrorAction SilentlyContinue |
+         Where-Object { $_.PSChildName -like 'MicrosoftCorporationII.WindowsSubsystemForAndroid_*' } |
+         ForEach-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).PackageRootFolder } |
+         Where-Object { $_ } | Select-Object -First 1)
+if ($p) { "$($p.InstallLocation)`n$root" } else { "`n$root" }"#,
         ])
         .output()
         .map_err(|_| WsaPathError::NotInstalled)?;
@@ -135,12 +170,45 @@ pub fn resolve() -> Result<WsaPaths, WsaPathError> {
         return Err(WsaPathError::NotInstalled);
     }
 
-    let location = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if location.is_empty() {
-        // Package simply is not registered -- the distinct, expected case.
-        return Err(WsaPathError::NotInstalled);
+    // Two lines, either of which may be empty. A newline is the only separator
+    // either value can contain, which is why this splits on the first one
+    // rather than on whitespace.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    let install_location = lines.next().unwrap_or_default();
+    let package_root = lines.next().unwrap_or_default();
+
+    match choose_location(install_location, package_root) {
+        Some(location) => WsaPaths::from_install_location(Path::new(&location)),
+        // Registered but neither source named a usable root. Same answer for the
+        // caller as "never installed", and the distinction is kept out of the UI
+        // on purpose: a user cannot act on "the registration is broken" any more
+        // than on "not installed", and the first reads as a bug in this program.
+        None => Err(WsaPathError::NotInstalled),
     }
-    WsaPaths::from_install_location(Path::new(&location))
+}
+
+/// `InstallLocation` if it says anything, else `PackageRootFolder`, else
+/// `None`.
+///
+/// `InstallLocation` wins when both are present: the fallback is for the case
+/// the first one cannot answer, not a second opinion to overrule it.
+///
+/// Trimming is not cosmetic: a PowerShell pipeline that printed nothing leaves
+/// a newline behind, and "a path that is only a newline" has to mean the same
+/// thing as "no path" or the fallback never fires on exactly the state it
+/// exists for.
+fn choose_location(install_location: &str, package_root: &str) -> Option<String> {
+    let first = install_location.trim();
+    if !first.is_empty() {
+        return Some(first.to_owned());
+    }
+    let second = package_root.trim();
+    if second.is_empty() {
+        None
+    } else {
+        Some(second.to_owned())
+    }
 }
 
 /// `<Identity Name="...">` -> the identity.
@@ -293,6 +361,53 @@ mod tests {
         let err = WsaPaths::from_install_location(Path::new(r"C:\definitely\not\here"))
             .expect_err("path does not exist");
         assert!(matches!(err, WsaPathError::NotInstalled));
+    }
+
+    /// The `PackageRootFolder` fallback's *only* pure part: which of two
+    /// answers to believe.
+    ///
+    /// A development-mode registration (`Add-AppxPackage -Register`, which is
+    /// how WSA is sideloaded and therefore how it is registered on this
+    /// machine) reports an **empty `InstallLocation`** while the Appx repository
+    /// key carries a real `PackageRootFolder`. Measured, not assumed -- see
+    /// MAPPING 13.
+    #[test]
+    fn an_empty_install_location_falls_back_to_the_package_root() {
+        assert_eq!(
+            choose_location("", r"C:\Users\Me\Downloads\Compressed\WSA_...\WSA_x64").as_deref(),
+            Some(r"C:\Users\Me\Downloads\Compressed\WSA_...\WSA_x64")
+        );
+    }
+
+    /// Both empty means the package is registered but its root cannot be found
+    /// -- which is what this machine looked like for a while, and which the
+    /// caller must still report as "not installed" rather than as a crash.
+    #[test]
+    fn two_empty_answers_are_not_installed() {
+        assert_eq!(choose_location("", ""), None);
+    }
+
+    /// `InstallLocation` wins when it is there, and `PackageRootFolder` is not
+    /// consulted at all: the fallback is for the case the first one cannot
+    /// answer, not a second opinion to overrule it.
+    #[test]
+    fn install_location_wins_when_both_are_present() {
+        assert_eq!(
+            choose_location(r"C:\WindowsApps\Real", r"C:\Elsewhere").as_deref(),
+            Some(r"C:\WindowsApps\Real")
+        );
+    }
+
+    /// Whitespace is trimmed off both, because a PowerShell pipeline that
+    /// printed nothing leaves a newline behind and "a path that is only a
+    /// newline" is the same answer as "no path".
+    #[test]
+    fn whitespace_only_answers_count_as_empty() {
+        assert_eq!(
+            choose_location("  \r\n ", r"C:\Root").as_deref(),
+            Some(r"C:\Root")
+        );
+        assert_eq!(choose_location("\r\n", "  "), None);
     }
 
     /// Live check of the only part of this module the fixture cannot cover:

@@ -52,6 +52,11 @@ mod i18n;
 // binary, so naming it here would make the module unmountable and its tests
 // would never compile. The conversion happens in `ui/handlers/disk.rs`, exactly
 // as `data::row` turns a `home_model::AppRow` into a `Distro`.
+//
+// `cfg(test)` for the same reason as `tabs`: the CLI's own verbs call
+// `storage`, not `disk_model`, so a non-test build would compile the two
+// `explorer_arg_for_*` helpers and warn that nothing calls them.
+#[cfg(test)]
 #[path = "ui/disk_model.rs"]
 mod disk_model;
 

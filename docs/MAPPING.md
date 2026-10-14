@@ -780,3 +780,103 @@ spec §3 第 241 行把这一页从"把物理盘/VHD 挂进 WSL"改为"WSA 存�
 - 计划里 Task 5 写的 `Vec<StorageImageUI>`：`StorageImageUI` 由 Slint 生成、只存在
   于 GUI 二进制，纯模块里点名它会让 `#[path]` 挂载失败、测试一次都跑不了。
   改为 `StorageRow`，和 `home_model::AppRow` → `data::row` → `Distro` 同形。
+---
+
+## 13. WSA 恢复（2026-10-14）与一处被自己推翻的判断
+
+### 13.1 起因：注册还在，文件没了
+
+某一阶段 `resolve()` 开始报 `NotInstalled`（exit 4）。查下来是：
+
+```
+Get-AppxPackage *WindowsSubsystemForAndroid*
+  Status              : Ok
+  IsDevelopmentMode   : True
+  InstallLocation     : （空）
+HKCU\...\AppModel\Repository\Packages\<PFN>\PackageRootFolder
+  = C:\Users\reader\Downloads\Compressed\WSA_..._3\WSA_2407.40000.4.0_x64   → 目录不存在
+```
+
+包**注册还在**，指向的目录被删了。同批被删的还有 `Microsoft.UI.Xaml.2.8`
+与两个 `Microsoft.VCLibs`。
+
+### 13.2 我先写错了一句，已改
+
+第一版 `resolve()` 的注释说：*"开发模式注册的 `InstallLocation` 本来就是空的"*，
+并把 `PackageRootFolder` 回退说成是修复本机问题的原因。**这是错的**，实测推翻了它：
+
+| 状态 | `InstallLocation` | `PackageRootFolder` | 两者相同 |
+|---|---|---|---|
+| 文件夹已删 | 空 | 指向已删路径 | — |
+| 文件夹还原后 | 正常有值 | 同一路径 | 是 |
+
+即：**空值是缺目录的连带结果，不是开发模式注册的属性**——这个包恰恰是开发模式注册，
+目录回来后它照样报 `InstallLocation`。而 `PackageRootFolder` 与 `InstallLocation`
+**指向同一个路径**，所以回退救不了被删的文件夹，真正修好它的是把文件放回去。
+
+回退仍然保留（两个答案来自不同子系统，不必永远一致；多一次注册表读的代价，
+落在本来就为解析而启动的那个 PowerShell 里），但注释已改成只陈述实测到的内容。
+
+### 13.3 下载：GitHub 与 SourceForge 都被按主机限速
+
+| 源 | 速度 |
+|---|---|
+| GitHub release-assets 直连 | 17 KB/s（ETA 12.5 h） |
+| SourceForge 七个镜像（master / netix / phoenixnap / netcologne / deac-riga / versaweb / main） | 7–15 KB/s |
+| Cloudflare speedtest（同机对照） | **2,035 KB/s** |
+
+机器带宽没问题，是被服务方按主机限速。GitHub 代理 `gh-proxy.com` 跑出
+1.2–8 MB/s，最终 **740.0 MiB / 775,994,382 bytes** 下载完整，7z 魔数
+`37 7A BC AF 27 1C` 正确，bsdtar 3.8.8（libarchive）可直接读，无需装 7-Zip。
+
+**以后 >100 MB 的下载先问用户或走 IDM**（已写入团队记忆）。
+
+### 13.4 恢复步骤与两个拦路错误
+
+包名从残留的 `PackageRootFolder` 反查，逐字对上：
+`WSA_2407.40000.4.0_x64_Release-Nightly-with-magisk-30.6.30600.-stable-GApps-13.0.7z`，
+MustardChef/WSABuilds 的 `Windows_11_2407.40000.4.0_LTS_7_HOTFIX_1`。
+
+1. 解压到**旧注册的同一路径**（313 文件 / 2.1 GB / 30 s），一个注册表键都没改。
+   此时 `InstallLocation` 立刻恢复，`resolve()` 从 exit 4 变成 exit 3 `state=Stopped`。
+2. 但 `wsa://` 仍打不开：`HKCU\Classes\wsa\shell\open\command` 为**空**。
+3. 直接重注册 → `0x80073CFB`（已注册版本高于要注册的版本）。
+4. `Install.ps1` 第 173–174 行的回退分支就是答案：
+   `Remove-AppxPackage -PreserveApplicationData` 后再
+   `Add-AppxPackage -ForceUpdateFromAnyVersion -Register`。
+   **这一步需要管理员权限**，非提权会得到 `0x80073D28`。
+
+### 13.5 备份：唯一拷不到的那个文件
+
+`Remove-AppxPackage` 之前先把整个包数据目录 `robocopy /E` 备份到
+`<dev>\apps\_wsa-pkgdata-backup-20261014`（138 文件 / 3,090,681,424 字节）。
+
+**137 个拷成功，唯一失败的是 `Settings\settings.dat`（32,768 字节）**，报错
+"正被另一进程使用"。这不是拷贝不稳，是**已注册包的 `settings.dat` 被当作注册表
+配置单元挂载，任何进程都读不了它**——它在这个状态下必然锁死。
+
+而丢掉的正是坏掉的那份：该文件里装的是包的 `URLAssociations`
+（`wsa://` 的关联就在这个键下，13.4 第 2 步实测为空），重新注册会从
+`AppxManifest.xml` 重建。用户的应用与 2.9 GB 镜像逐字节一致。
+
+### 13.6 恢复结果
+
+```
+wsadash probe → state=Ready  adb_port=58526  boot_completed=true
+wsadash start → Booting → Ready，exit 0，用时 17s
+wsadash list  → com.topjohnwu.magisk 30.6  Magisk
+                com.nowcent.ham 1.7.6       Ham
+                com.microsoft.launcher 6.260402.0.1178950  Launcher
+cargo test --release --bin wsadash              → 222 passed / 0 failed / 3 ignored
+cargo test --release --bin wsadash -- --ignored → 3 passed / 0 failed
+                                                 live probe: state=Ready port=58526 boot_completed=true
+```
+
+**17 秒与 spec §1.2 当初实测的冷启动时间一致。** 用户的三个应用一个没丢。
+
+`-- --ignored` 那三条此前一直是"跳过冒充通过"（§11.8），这次是真通过——
+`resolves_the_live_install` 不再返回 `NotInstalled`，
+`probe_against_the_live_subsystem` 打出了实测值而不是 `skipping`。
+
+截图：`docs/screenshots/p5a-real-home.png`（真 adb、真包）与
+`p5a-real-restored.png`（真机存储页，VHDX mtime 已随本次启动更新）。

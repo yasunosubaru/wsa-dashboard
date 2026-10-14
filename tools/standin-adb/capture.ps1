@@ -748,6 +748,9 @@ try {
             # 内容区里唯一有可见效果的控件，用来判定点击到底通不通。图片 1200x900 里垃圾桶在
             # (1131,174) -> 逻辑 (754,116)。删了可复原（端口已知）。
             'network-delete-first' { @{ x = 754; y = 116 } }
+            # The page's primary button. Image 1200x900: 'Add Rule' spans about
+            # x 1026..1168, y 828..864, centre (1097, 846) -> logical (731, 564).
+            'network-add-rule'      { @{ x = 731; y = 564 } }
             # The home page's first card's chevron. Measured off a 1200x900
             # capture of the `ready` stand-in rather than derived, because the
             # home list sits under a search field whose height is set by the

@@ -53,6 +53,98 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppSta
     app.set_network_proxy_default_port(network_model::default_port().into());
     app.set_network_proxy_default_no_proxy(network_model::default_no_proxy().into());
 
+    // The add dialog's two combo boxes. WSA has one target and one address adb
+    // binds, so each list holds exactly one entry.
+    //
+    // A combo with no entries is a control that cannot be used at all, and the
+    // reference's dialog needs `distro_names` and `local_ips` filled to render
+    // a choice. `ip` is dropped at the point of use below -- `adb forward` binds
+    // 127.0.0.1 itself and takes no address -- so the reader sees the address
+    // that will be used rather than an empty box. MAPPING 14 records this and
+    // the reason the second combo is still there.
+    if let Some(app) = app_handle.upgrade() {
+        let one = |value: &str| {
+            ModelRc::from(Rc::new(VecModel::from(vec![slint::SharedString::from(value)])))
+        };
+        app.set_network_distro_names(one("WSA"));
+        app.set_network_local_ips(one("127.0.0.1"));
+    }
+
+    let ah = app_handle.clone();
+    app.on_open_add_rule_dialog(move || {
+        let Some(app) = ah.upgrade() else { return };
+        // The same three defaults the reference's `handlers/network/rules.rs`
+        // lines 17-19 seed: a listen port, a target port, and the firewall box
+        // off.
+        app.set_network_add_listen_port("8080".into());
+        app.set_network_add_target_port("8080".into());
+        app.set_network_add_enable_fw(false);
+        app.set_network_add_error("".into());
+        app.set_network_show_add_dialog(true);
+    });
+
+    let ah = app_handle.clone();
+    app.on_close_add_rule_dialog(move || {
+        if let Some(app) = ah.upgrade() {
+            app.set_network_show_add_dialog(false);
+        }
+    });
+
+    let ah = app_handle.clone();
+    let st = app_state.clone();
+    app.on_add_network_rule(move |_distro, _ip, lport, tport, fw| {
+        let (lport, tport) = (lport.to_string(), tport.to_string());
+        // The firewall checkbox is read and dropped, and the reason is not
+        // "not implemented yet" so much as "not implementable from here":
+        // `netsh advfirewall firewall add|delete rule` needs elevation, and the
+        // reference's answer to that is a Windows service it installs (its
+        // `service.rs`, which nothing here has). P7 owns the privileged
+        // machinery; until it exists the badge reads "FW: Off" and that is the
+        // truth. MAPPING 14.
+        let _ = fw;
+        let handle = ah.clone();
+        let state = st.clone();
+        let _ = slint::spawn_local(async move {
+            let parsed = match (lport.trim().parse::<u16>(), tport.trim().parse::<u16>()) {
+                // Port 0 is not a port. adb accepts the command and forwards
+                // nothing, which would be a rule that shows up nowhere and
+                // cannot be removed from here either.
+                (Ok(local), Ok(remote)) if local > 0 && remote > 0 => (local, remote),
+                _ => {
+                    if let Some(app) = handle.upgrade() {
+                        app.set_network_add_error(
+                            i18n::tr("network.proxy_error_port", &[]).into(),
+                        );
+                    }
+                    return;
+                }
+            };
+            let (local, remote) = parsed;
+            let dash = &state.wsa_dashboard;
+            match dash.forward_add(local, remote).await {
+                Ok(()) => {
+                    if let Some(app) = handle.upgrade() {
+                        app.set_network_add_error("".into());
+                        app.set_network_show_add_dialog(false);
+                    }
+                    toast(
+                        &handle,
+                        i18n::tr(
+                            "network.rules_apply_success",
+                            &[local.to_string(), remote.to_string()],
+                        ),
+                    );
+                    refresh(handle.clone(), state);
+                }
+                Err(error) => {
+                    if let Some(app) = handle.upgrade() {
+                        app.set_network_add_error(error.to_string().into());
+                    }
+                }
+            }
+        });
+    });
+
     let ah = app_handle.clone();
     let st = app_state.clone();
     app.on_delete_network_rule(move |id| {

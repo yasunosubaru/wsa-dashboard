@@ -13,7 +13,7 @@
 // visual layer of its own, which is why it is cheap to add a dialog to and why
 // there is nothing here worth refactoring into a `DialogHost`.
 //
-// # Why this copy has two of the sixty
+// # Why this copy has four of the sixty
 //
 // The reference's dialogs belong to pages this program has not built. `Settings`
 // and `LanguageSelect` and `Scheduler` are P6 and P7; `CheckUpdate` and
@@ -30,12 +30,19 @@
 // `distro_card` note that said those three buttons would be wired "until P3"
 // was wrong about the phase; they were waiting on this file.
 //
-// docs/MAPPING.md section 12 records the subset, so P9's page-by-page comparison
-// is not surprised by a 2-block manager next to a 60-block one.
+// P5b adds the network page's add-rule dialog and its proxy help panel. Its
+// third, `CheckProxyDialog`, is left out on purpose -- it sends a request
+// through the proxy and needs an HTTP client P8 brings -- and a fourth family
+// (26 more dialogs) waits on the pages that own them.
+//
+// docs/MAPPING.md sections 12 and 14 record the subset, so P9's page-by-page
+// comparison is not surprised by a 4-block manager next to a 60-block one.
 
 import { Theme, AppI18n, LayoutConstants, Information } from "../theme.slint";
 import { ConfirmationDialog } from "dialogs/confirmation_dialog.slint";
 import { InformationDialog } from "dialogs/information_dialog.slint";
+import { NetworkAddRuleDialog } from "dialogs/network_add_rule_dialog.slint";
+import { ProxyHelpDialog } from "dialogs/proxy_help_dialog.slint";
 
 export component ModalManager inherits Rectangle {
     // ---- the home page's delete confirmation (reference `show_delete`) ------
@@ -51,6 +58,32 @@ export component ModalManager inherits Rectangle {
     in property <bool> show_information: false;
     in-out property <Information> information;
     callback close_information();
+
+    // ---- the network page's add-rule dialog (P5b, Task 5) -----------------
+    // Reference `show_add_network_rule`, and every property is the one the
+    // reference declares for it, so the wiring can be diffed against
+    // `modal_manager.slint` lines 601-618.
+    in property <[string]> network_distro_names: [];
+    in property <[string]> network_local_ips: [];
+    // `in-out`, and that is not a style choice: the `<=>` two-way bindings
+    // below need it, and Slint refuses to link to an input property. The
+    // reference declares these the same way.
+    in-out property <bool> show_add_network_rule: false;
+    in-out property <int> network_add_distro_idx: 0;
+    in-out property <int> network_add_ip_idx: 0;
+    in-out property <string> network_add_listen_port: "";
+    in-out property <string> network_add_target_port: "";
+    in-out property <bool> network_add_enable_fw: true;
+    in property <string> network_add_error: "";
+    callback add_network_rule(string, string, string, string, bool);
+    callback close_add_rule_dialog();
+
+    // ---- the network page's proxy help panel (P5b, Task 5) ----------------
+    // Reference `show_network_proxy_help`. Text only, which is why it came with
+    // the add dialog and not with the connection check: see MAPPING 14 for why
+    // that one waits.
+    in-out property <bool> show_network_proxy_help: false;
+    callback close_proxy_help();
 
     // Every dialog is stretched over the whole window; the manager is mounted
     // once, above the pages, so a dialog covers whichever page raised it.
@@ -79,5 +112,41 @@ export component ModalManager inherits Rectangle {
         // directory; ours has nothing to open (see the dialog's header comment),
         // so the callback is not declared. Declaring it and never raising it
         // would be an API that lies about what the dialog can do.
+    }
+
+    // P5b's two, verbatim from the reference's lines 601-618 and 638-647. The
+    // third network dialog -- `CheckProxyDialog` -- is deliberately absent: it
+    // sends a real request through the proxy and reports the status, which needs
+    // an HTTP client this build does not have (P8's update check brings one).
+    // Mounting it now would mean a button that closes a dialog and reports
+    // nothing, and MAPPING 14 says when it arrives.
+    if (show_add_network_rule): NetworkAddRuleDialog {
+        width: 100%;
+        height: 100%;
+        distro_names: root.network_distro_names;
+        local_ips: root.network_local_ips;
+        distro_idx <=> root.network_add_distro_idx;
+        ip_idx <=> root.network_add_ip_idx;
+        listen_port <=> root.network_add_listen_port;
+        target_port <=> root.network_add_target_port;
+        enable_fw <=> root.network_add_enable_fw;
+        error_msg: root.network_add_error;
+        close => {
+            root.close_add_rule_dialog();
+        }
+        add(distro, ip, lp, tp, fw) => {
+            root.add_network_rule(distro, ip, lp, tp, fw);
+        }
+    }
+
+    if (show_network_proxy_help): Rectangle {
+        background: Theme.dark_mode ? #00000088 : #00000044;
+        z: 12;
+        TouchArea {
+            clicked => { root.close_proxy_help(); }
+        }
+        ProxyHelpDialog {
+            close => { root.close_proxy_help(); }
+        }
     }
 }

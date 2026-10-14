@@ -355,6 +355,33 @@ pub static ENGLISH: &[(&str, &str)] = &[
     // would buy no information.
     ("network.dir_forward", "Host -> WSA"),
     ("network.dir_reverse", "WSA -> Host"),
+    // -- the add-rule dialog (P5b) ------------------------------------------
+    // The reference's keys. Three values are ours, because the dialog's three
+    // nouns are the ones whose referent does not exist here:
+    //
+    //   target_distro      the reference picks a WSL instance to forward to.
+    //                      `adb forward` takes no address at all, so the field
+    //                      names the one thing there is: "Target".
+    //   listen_ip          the reference's is the WSL host's address; ours is
+    //                      the address adb binds, which the reader cannot
+    //                      change -- so it is filled in and the combo shows one
+    //                      entry rather than pretending to be a choice.
+    //   placeholders       kept: an example port is an example port.
+    ("network.target_distro", "Target"),
+    ("network.add_rule_listen_ip", "Listen IP"),
+    ("network.add_rule_listen_port", "Listen Port"),
+    ("network.add_rule_port_placeholder", "e.g. 8080"),
+    ("network.add_rule_target_port", "Target Port"),
+    ("network.add_rule_target_port_placeholder", "e.g. 80"),
+    ("network.add_rule_enable_fw", "Add Firewall Rule"),
+    ("dialog.add", "Add"),
+    ("dialog.add_network_rule_title", "Add Port Forwarding Rule"),
+    // -- the proxy help panel (P5b) -----------------------------------------
+    // The reference's two sentences describe a WSL shell with an environment
+    // variable. Ours describe what Android actually does with the setting.
+    ("dialog.http_proxy_helper", "HTTP Proxy Usage"),
+    ("dialog.http_proxy_helper_desc1", "1. When an app inside Android reaches the internet through a proxy you run."),
+    ("dialog.http_proxy_helper_desc2", "2. Android reads it as a system-wide hint: apps that honour the system proxy are affected, apps that do not are not."),
     ("dialog.save", "Save"),
 ];
 

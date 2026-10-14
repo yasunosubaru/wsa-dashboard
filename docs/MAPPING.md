@@ -1000,3 +1000,23 @@ netsh key，本来就装着同样的两个事实。我们的 `network_model::par
 三连失败），页签切换没法稳定复现。于是把 `NetworkView` 的 `active_tab` 临时设成 1、重编、拍完复原、
 重编——**验证的是那个视图本身**（真正有风险的部分：布局、占位文案、认证块的禁用态），而页签切换
 的代码是参照逐字搬来的（`components.slint` 与参照 diff 除 SPDX 外完全一致）。
+### 14.10 Task 5：两个对话框接上，第三个明确不接
+
+| 对话框 | 状态 | 理由 |
+|---|---|---|
+| `NetworkAddRuleDialog` | 接上 | 添加规则那个按钮一直活着，没有它页面就不完整 |
+| `ProxyHelpDialog` | 接上 | 纯文字，无数据依赖 |
+| `CheckProxyDialog` | **不接** | 它要真的通过代理发一次请求并回报 HTTP 状态，需要一个 HTTP 客户端；这个 build 没有，P8 的更新检查会带来。挂上去只会得到一个"点了就关掉、什么也不说"的按钮。它的页面入口（Check Connection）在代理被配置之前本来就是禁用的，所以这不是一个会静默失效的控件。 |
+
+**对话框的两个下拉框保留，各只有一项。** 参照的 `distro_names` / `local_ips` 是"转发到哪个发行版
+的哪个 IP"；`adb forward` 不需要地址，所以 `network_distro_names = ["WSA"]`、
+`network_local_ips = ["127.0.0.1"]`，`ip` 在使用处丢弃（和认证字段同一个处理）。空的下拉框是
+一个没法用的控件，填一个不是选择的项则是明说这不是选择。
+
+**防火墙勾选框目前没有效果，且不是"以后再说"。** `netsh advfirewall firewall add|delete rule`
+要提权，参照解决这件事的办法是装一个 Windows 服务（它的 `service.rs`），这里没有对应物。
+P7 拿到提权机制之后才谈得上。在那之前徽章读 "FW: Off"，`network_model` 里
+`enable_firewall` 恒为 false——这是事实，不是占位。
+
+**端口校验和代理页同一条规则**（1..=65535 之外拒绝），拒绝发生在 `forward_add` 之前：adb 接受
+端口 0 并且什么都不转发，那会是一条页面上显示不出、也删不掉的规则。

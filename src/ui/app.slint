@@ -139,6 +139,18 @@ export component AppWindow inherits Window {
     in property <string> network_proxy_default_host: "";
     in property <string> network_proxy_default_port: "";
     in property <string> network_proxy_default_no_proxy: "";
+    // ---- the network page's add-rule dialog (P5b) -------------------------
+    // The reference's `show_add_network_rule` and the six `network_add_*` fields
+    // it carries (`app.slint` lines 231-237), plus the two lists the dialog's
+    // combo boxes read from.
+    in-out property <bool> network_show_add_dialog: false;
+    in-out property <int> network_add_distro_idx: 0;
+    in-out property <int> network_add_ip_idx: 0;
+    in-out property <string> network_add_listen_port: "";
+    in-out property <string> network_add_target_port: "";
+    in-out property <bool> network_add_enable_fw: true;
+    in property <string> network_add_error: "";
+    in-out property <bool> show_network_proxy_help: false;
 
     // ---- install page (P4) -------------------------------------------------
     // All six are the reference's own names for the same six things on its
@@ -266,6 +278,7 @@ export component AppWindow inherits Window {
     callback cancel_all_network_rules();
     callback save_proxy_settings(bool, string, string, string, bool, string, string);
     callback check_proxy_connection(string);
+    callback close_add_rule_dialog();
     callback save_sidebar_state();
     callback window_pin_toggle();
     callback window_minimize();
@@ -523,12 +536,27 @@ export component AppWindow inherits Window {
                                 proxy_default_host: root.network_proxy_default_host;
                                 proxy_default_port: root.network_proxy_default_port;
                                 proxy_default_no_proxy: root.network_proxy_default_no_proxy;
+                                open_add_rule_dialog => {
+                                    root.open_add_rule_dialog();
+                                }
+                                add_rule(distro, ip, lport, tport, fw) => {
+                                    root.add_network_rule(distro, ip, lport, tport, fw);
+                                }
                                 delete_rule(id) => {
                                     root.delete_network_rule(id);
                                 }
                                 save_proxy_settings(enabled, host, port, no, auth, u, p) => {
                                     root.save_proxy_settings(enabled, host, port, no, auth, u, p);
                                 }
+                                show_proxy_help => {
+                                    root.show_network_proxy_help = true;
+                                }
+                                // `open_check_proxy_dialog` is left unconnected, and
+                                // the button that raises it is disabled until a proxy
+                                // has been configured -- so it is not a control that
+                                // silently does nothing. Its dialog sends a real
+                                // request through the proxy and needs an HTTP client
+                                // P8's update check brings; see MAPPING 14.
                             }
                         }
                     }
@@ -556,6 +584,25 @@ export component AppWindow inherits Window {
         close_information => {
             root.show_information = false;
             root.close_information();
+        }
+        network_distro_names: root.network_distro_names;
+        network_local_ips: root.network_local_ips;
+        show_add_network_rule <=> root.network_show_add_dialog;
+        network_add_distro_idx <=> root.network_add_distro_idx;
+        network_add_ip_idx <=> root.network_add_ip_idx;
+        network_add_listen_port <=> root.network_add_listen_port;
+        network_add_target_port <=> root.network_add_target_port;
+        network_add_enable_fw <=> root.network_add_enable_fw;
+        network_add_error: root.network_add_error;
+        show_network_proxy_help <=> root.show_network_proxy_help;
+        add_network_rule(distro, ip, lp, tp, fw) => {
+            root.add_network_rule(distro, ip, lp, tp, fw);
+        }
+        close_add_rule_dialog => {
+            root.close_add_rule_dialog();
+        }
+        close_proxy_help => {
+            root.show_network_proxy_help = false;
         }
     }
 

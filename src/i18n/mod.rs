@@ -96,6 +96,28 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("sidebar.settings", "Settings"),
     ("sidebar.about", "About"),
     ("sidebar.donate", "Donate"),
+    // -- usb: the device page (P4) ------------------------------------------
+    // Key names are the reference's own `[usb]` block (Q12: identifiers stay),
+    // and the view they label was renamed in spec section 3 because what it
+    // shows changed from usbip targets to adb targets. The values are ours:
+    //   empty   the reference counts USB devices on the host; we list adb's own targets
+    //   attach  the reference attaches a USB device to WSL; we open a session
+    //           to a target ("Attach to WSL" -> "Connect" is the same verb in
+    //           a different domain, and renaming the key would only lose the
+    //           line that ties ours to theirs)
+    //   detach  and its opposite
+    // `usb.bind`/`unbind` and the four usbip settings keys are deliberately not
+    // carried over: there is nothing to bind. See MAPPING section 11.
+    ("usb.empty", "No adb targets connected"),
+    ("usb.loading", "Loading devices..."),
+    ("usb.not_found_error", "adb was not found. Install Android SDK platform-tools, then restart."),
+    ("usb.attach", "Connect"),
+    ("usb.detach", "Disconnect"),
+    // Ours: the reference has no subsystem row to distinguish, because every
+    // row of its list is a USB device and none of them is the OS's own.
+    ("usb.subsystem", "Windows Subsystem for Android"),
+    ("usb.device_info", "Device properties"),
+    ("usb.detail", "Properties"),
     // -- main: the home page ---------------------------------------------
     ("main.loading", "Loading..."),
     // The reference names a WSL distribution; we list Android packages, so

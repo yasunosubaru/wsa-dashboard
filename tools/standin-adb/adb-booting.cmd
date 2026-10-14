@@ -34,7 +34,18 @@ echo standin-adb: no rule for shell %* 1>&2
 exit /b 1
 
 :getprop
+if "%~3"=="" goto allprops
 rem An empty line, not a missing one: the platform prints nothing at all for
 rem a key that has not been set yet, and `boot_completed` decides on `1`.
 echo.
+exit /b 0
+
+:allprops
+echo [ro.product.manufacturer]: [Microsoft Corporation]
+echo [ro.product.model]: [Subsystem for Android(TM)]
+echo [ro.build.version.release]: [13]
+echo [ro.build.version.sdk]: [33]
+echo [ro.hardware]: [windows_x86_64]
+echo [ro.build.display.id]: [TQ3A.230901.001]
+echo [ro.build.fingerprint]: [Windows/windows_x86_64/windows_x86_64:13/TQ3A.230901.001/user/release-keys]
 exit /b 0

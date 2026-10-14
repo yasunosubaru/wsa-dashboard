@@ -28,13 +28,15 @@
 //! | phase | tabs | entries |
 //! |---|---|---|
 //! | P3 | 0 | home (the only one P3 can show a page for) |
-//! | P4 | 1, 2 | install APK, device |
+//! | P4 | 0, 2 | + device. Index 1 is install APK, which lands separately in
+//! P4 -- see `has_a_view`'s caller, and the plan's task list, for why the two
+//! halves of P4 are not one switch |
 //! | P5 | 3, 5 | network, storage |
 //! | P6 | 7, 8 | settings, about |
 //! | P7 | 4 | task scheduler |
 //! | — | 6 | donate: spec section 3 maps it 1:1, but section 10 assigns it to no
 //! phase, so it stays out until something does |
-pub const TABS_WITH_A_VIEW: &[i32] = &[0];
+pub const TABS_WITH_A_VIEW: &[i32] = &[0, 2];
 
 /// The nine entries a `SidebarItem` can select, whatever has a page.
 ///
@@ -64,11 +66,33 @@ pub fn has_a_view(tab: i32) -> bool {
 mod tests {
     use super::{TABS_WITH_A_VIEW, has_a_view, is_sidebar_entry};
 
-    /// The state of P3, stated as a fact rather than implied by a handler body:
-    /// one page exists, and the side bar offers more than one entry.
+    /// The state of P4's first half: two pages exist behind nine entries, and
+    /// the guard is what keeps the other seven from blanking the screen.
+    ///
+    /// The test's name changed when P4 landed the device page. It used to say
+    /// `p3_has_exactly_one_tab_with_a_page`, which was true and then wasn't;
+    /// a test named after a phase goes stale every phase, so this one is named
+    /// after the fact it actually pins -- how many entries have pages *and*
+    /// which they are -- and the count is asserted rather than inferred.
     #[test]
-    fn p3_has_exactly_one_tab_with_a_page() {
-        assert_eq!(TABS_WITH_A_VIEW, &[0]);
+    fn exactly_two_tabs_have_a_page_and_they_are_home_and_device() {
+        assert_eq!(TABS_WITH_A_VIEW, &[0, 2]);
+        assert!(has_a_view(0), "home must be reachable");
+        assert!(has_a_view(2), "the device page is the one P4 lands first");
+    }
+
+    /// P4's other half is install APK at index 1, and it is not here yet.
+    ///
+    /// The side bar's `show_add` switch is still off in `app.slint`, so this
+    /// and that flag are the two things that have to move together when it
+    /// lands (P4 Review Focus 4). Asserted so that landing *half* of it -- the
+    /// switch flipped without the guard, or the guard without the switch --
+    /// fails here rather than producing a page that cannot be opened or one
+    /// that opens onto nothing.
+    #[test]
+    fn the_install_page_is_not_yet_available() {
+        assert!(is_sidebar_entry(1));
+        assert!(!has_a_view(1));
     }
 
     /// Everything in the list is something the side bar can select. An

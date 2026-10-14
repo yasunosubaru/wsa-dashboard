@@ -1,0 +1,319 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// The device page's row. Ported in shape from the reference's
+// components/usb_card.slint (402 lines), with its fields replaced.
+//
+// What is kept, because it is the interaction spec section 3 asks for:
+// the 32px badge in the left column, a status pill next to a chevron that
+// opens exactly one row at a time, and the actions in a second row rather than
+// behind a menu.
+//
+// What is not kept, because it is usbip's and not ours: `bus_id`, `vid:pid`,
+// forced bind, auto-attach, boot-attach, and the "must unbind before you can
+// look" hint. An adb target has two facts -- its serial and the state it is
+// answering in -- and the third thing this card shows, the properties, is read
+// from the device itself rather than remembered here. MAPPING section 11 lists
+// what was left out.
+
+import { ActionIcon } from "common.slint";
+import { Theme, DeviceTarget, DeviceProp, AppI18n, LayoutConstants } from "../theme.slint";
+
+/// One `key: value` line of `getprop`.
+///
+/// Two columns with no wrapping: a property value can be a 640-character build
+/// fingerprint, and eliding it keeps the table's rows equal. The whole value is
+/// still selectable text -- a table meant to be read off a screen and pasted
+/// somewhere does not need a copy button of its own.
+component PropertyRow inherits Rectangle {
+    in property <string> key;
+    in property <string> value;
+    height: 26px;
+
+    Rectangle {
+        x: 0;
+        width: 180px;
+        height: parent.height;
+        Text {
+            x: 0;
+            width: parent.width;
+            text: key;
+            font-size: 12px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_secondary;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-alignment: AppI18n.is-rtl ? right : left;
+        }
+    }
+
+    Rectangle {
+        x: AppI18n.is-rtl ? 0 : 188px;
+        width: parent.width - 188px;
+        height: parent.height;
+        Text {
+            width: parent.width;
+            text: value;
+            font-size: 12px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_primary;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-alignment: AppI18n.is-rtl ? left : right;
+        }
+    }
+}
+
+/// The expanded region: `getprop` as a table, or the reason it is not there.
+///
+/// The reference would put this behind a dialog (`usb_device_info_dialog`)
+/// whose own hint says "unbind first". Here it is in the page, because there is
+/// nothing to unbind and spec 3 asks for the table rather than for a modal --
+/// which also keeps it out of `modal_manager`, a 790-line component nothing
+/// else needs yet.
+component DeviceProperties inherits VerticalLayout {
+    in property <DeviceTarget> target;
+    in property <[DeviceProp]> props;
+    in property <bool> stale;
+    spacing: 0px;
+
+    // Which target the table describes. `adb shell getprop` has no `-s` in
+    // `WsaCommand` (spec 2.3 lists `DeviceProps` without one), so the table
+    // belongs to whatever adb answered for -- showing target B's properties
+    // inside target A's card would be worse than showing none.
+    if (!stale && props.length > 0): Rectangle {
+        height: props.length * 26px + 12px;
+        VerticalLayout {
+            y: 6px;
+            spacing: 0px;
+            padding-left: AppI18n.is-rtl ? 16px : 48px;
+            padding-right: AppI18n.is-rtl ? 48px : 16px;
+            for p in props: PropertyRow {
+                key: p.key;
+                value: p.value;
+            }
+        }
+    }
+
+    if (stale): Rectangle {
+        height: 36px;
+        Text {
+            x: AppI18n.is-rtl ? 16px : 48px;
+            width: parent.width - 64px;
+            height: 36px;
+            text: AppI18n.t("usb.device_info", [AppI18n.version]);
+            font-size: 12px * LayoutConstants.font-scale;
+            font-family: Theme.default_font;
+            color: Theme.text_secondary;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-alignment: AppI18n.is-rtl ? right : left;
+        }
+    }
+}
+
+/// The target's icon, coloured by how it is answering.
+///
+/// `is_connected` rather than a `state` comparison, because the three spellings
+/// that mean "connected" are decided once in Rust (see `DeviceTarget`), and a
+/// card that decides again is where a new adb state would slip through.
+component DeviceBadge inherits VerticalLayout {
+    in property <DeviceTarget> target;
+    width: 32px;
+    alignment: center;
+    Rectangle {
+        width: 32px;
+        height: 32px;
+        Text {
+            y: 7px;
+            // The subsystem is a device too; there is no second glyph for it,
+            // so the *colour* is what marks the difference (see below).
+            text: "\u{E88E}";
+            font-family: Theme.icon_font;
+            font-size: 20px;
+            color: target.is_connected ? (target.is_subsystem ? Theme.icon_color_info : Theme.icon_color_success) : Theme.icon_color_amber;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+/// adb's own word for this row's state, on the same pill the reference gives
+/// its `NotShared`/`Shared`/`Attached`.
+///
+/// No translation: the three states the page can show are `device`,
+/// `offline` and `unauthorized`, plus whatever future platform-tools invents.
+/// A pill that had been re-worded into English would no longer match the line
+/// `adb devices` prints when the reader checks, and matching that line is the
+/// entire point of the pill.
+component StateBadge inherits Rectangle {
+    in property <string> state;
+    width: state_text.preferred-width + 16px;
+    height: 22px;
+    border-radius: 4px;
+    background: state == "device"
+        ? (Theme.dark_mode ? #1a3a1a : #e6f7e6)
+        : state == "unauthorized"
+            ? (Theme.dark_mode ? #3a2a1a : #fdf0e6)
+            : (Theme.dark_mode ? #2a2a2a : #f0f0f0);
+    state_text := Text {
+        width: 100%;
+        height: 100%;
+        text: state;
+        font-size: 11px * LayoutConstants.font-scale;
+        font-family: Theme.default_font;
+        color: state == "device"
+            ? (Theme.dark_mode ? #66cc66 : #2d8a2d)
+            : state == "unauthorized"
+                ? (Theme.dark_mode ? #cc9966 : #8a5a2d)
+                : Theme.text_secondary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component DeviceCard inherits Rectangle {
+    in property <DeviceTarget> target;
+    in property <[DeviceProp]> props;
+    /// Whether `props` describes *this* target. False while another row's are
+    /// shown or nothing has been asked yet -- see `DeviceProperties`.
+    in property <bool> props_are_for_this_target: false;
+    in property <bool> expanded: false;
+    callback toggle_expand();
+    callback attach_clicked(string);
+    callback detach_clicked(string);
+
+    property <length> header-height: 64px;
+    property <length> body-height: expanded ? (props_are_for_this_target && props.length > 0 ? props.length * 26px + 12px : 36px) : 0px;
+    height: header-height + body-height;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: expanded ? Theme.accent : Theme.border_color;
+    background: card.has-hover ? Theme.card_bg_muted : Theme.card_bg;
+
+    // Hover only, and deliberately with no `clicked`.
+    //
+    // A TouchArea that handles `clicked` sits above everything declared before
+    // it and takes the press, so the connect/disconnect and expand buttons
+    // above would go dead -- the classic way a card that has both a card-level
+    // action and row actions loses its buttons. With no press handler it
+    // contributes `has-hover` and lets clicks through, and the chevron, which
+    // is a button a reader can find, is what expands the row. Expanding on a
+    // whole-card click was worth considering; swallowing the buttons to have
+    // it was not.
+    card := TouchArea {
+    }
+
+    // -- header row --------------------------------------------------------
+    // Wrapped in a Rectangle of its own height, the way the expanded body
+    // below already is.
+    //
+    // A layout that is a *direct* child of a plain Rectangle is given the
+    // parent's height rather than its own, so `height: header-height` on the
+    // HorizontalLayout below was silently ignored: the row filled all 258px of
+    // the expanded card and centred its contents at the card's midpoint, which
+    // is what drew the serial, the badge and the chevron on top of the property
+    // table instead of above it. The body was right from the start because it
+    // is inside a Rectangle with an explicit height -- this gives the header
+    // the same shape.
+    Rectangle {
+        y: 0px;
+        height: header-height;
+        width: parent.width;
+        HorizontalLayout {
+            height: 100%;
+        padding-left: AppI18n.is-rtl ? 8px : 16px;
+        padding-right: AppI18n.is-rtl ? 16px : 8px;
+        spacing: 12px;
+
+        DeviceBadge {
+            target: root.target;
+        }
+
+        // Serial + state, stacked like the reference's description + BusId.
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: target.serial;
+                font-size: 14px * LayoutConstants.font-scale;
+                font-weight: 500;
+                font-family: Theme.default_font;
+                color: Theme.text_primary;
+                overflow: elide;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+            }
+            Text {
+                // The second line says *what this target is*, not how it is
+                // answering -- the pill carries that, and repeating it here
+                // (poorly) made the row say "Devices" for a connected target
+                // and "Disconnect" for a disconnected one, which reads as a
+                // status while being a verb, and is backwards besides.
+                //
+                // So: the subsystem names itself and nothing else needs to, a
+                // serial having no second line is exactly the reference's
+                // usbip row without a BusId to report. Empty rather than a
+                // dash -- a row with nothing to say says nothing.
+                text: target.is_subsystem ? AppI18n.t("usb.subsystem", [AppI18n.version]) : "";
+                font-size: 11px;
+                font-family: Theme.default_font;
+                color: Theme.text_secondary;
+                overflow: elide;
+                horizontal-alignment: AppI18n.is-rtl ? right : left;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            StateBadge {
+                state: target.state;
+            }
+        }
+
+        // One action per row: whatever this target is *not* currently doing.
+        // The reference shows bind, unbind, attach and detach together because
+        // usbip's state machine allows them simultaneously; adb's does not --
+        // a connected target can be disconnected, and nothing else is a verb.
+        VerticalLayout {
+            alignment: center;
+            ActionIcon {
+                icon: target.is_connected ? "\u{E711}" : "\u{E896}";
+                icon_type: target.is_connected ? "danger" : "info";
+                tooltip: target.is_connected
+                    ? AppI18n.t("usb.detach", [AppI18n.version])
+                    : AppI18n.t("usb.attach", [AppI18n.version]);
+                clicked => {
+                    if (root.target.is_connected) {
+                        root.detach_clicked(root.target.serial);
+                    } else {
+                        root.attach_clicked(root.target.serial);
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            ActionIcon {
+                icon: expanded ? "\u{E70E}" : "\u{E70D}";
+                tooltip: AppI18n.t("usb.device_info", [AppI18n.version]);
+                clicked => {
+                    root.toggle_expand();
+                }
+            }
+        }
+        }
+    }
+
+    // -- expanded body -----------------------------------------------------
+    if (expanded): Rectangle {
+        y: header-height;
+        height: body-height;
+        width: parent.width;
+        background: Theme.dark_mode ? #00000033 : #FFFFFF33;
+        DeviceProperties {
+            target: root.target;
+            props: root.props;
+            stale: !(root.props_are_for_this_target && root.props.length > 0);
+        }
+    }
+}

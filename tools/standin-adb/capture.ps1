@@ -103,7 +103,15 @@ param(
     # rather than trusted: the collapsed capture must show a 81px-wide bar
     # (54px at 1.5) and the dark capture must not have #FFFFFF as its dominant
     # colour.
-    [ValidateSet('none', 'collapse-sidebar', 'dark-theme')]
+    # Steps to click through before shooting, comma-separated or repeated.
+    #
+    # A single `string` rather than an array, because arrays do not survive
+    # `powershell -File`: the parent's own shell parses `go-device-page,
+    # device-expand` into two arguments, but a command line handed to another
+    # process is just text, so the child saw the whole comma-joined token and
+    # refused it against the allowed list. Splitting here means both spellings
+    # work -- `-Act a,b` and `-Act a -Act b` -- and an unknown name is caught
+    # by the switch below, which is where it can say what the valid ones are.
     [string]$Act = 'none',
 
     # The home page's flat field: `Theme.content_bg` in light mode, from
@@ -119,7 +127,17 @@ param(
     # real page -- the loading overlay, which is the caption, a search box and
     # two lines of text -- measures eight. The floor exists because a blank
     # white image would otherwise be filed as evidence of a tier.
-    [int]$MinDiversity = 8
+    [int]$MinDiversity = 8,
+
+    # Pause the screen's colour filter for the capture and restart it after.
+    #
+    # f.lux composes through DWM over the whole desktop, so any capture that
+    # reads the screen is tinted -- white comes back as something else, and how
+    # much else changes with the hour. Without this the script refuses the
+    # picture and names the filter, which is the right answer when the caller
+    # can simply turn it off; with it the filter is paused for one capture and
+    # restored in the `finally`, so nothing is left switched off.
+    [switch]$BypassDisplayFilter
 )
 
 $ErrorActionPreference = 'Stop'
@@ -314,6 +332,16 @@ public static class Wsa {
     mouse_event(0x0004, 0, 0, 0, IntPtr.Zero); // left up
   }
 
+  /// Park the cursor somewhere it cannot be hovering anything.
+  ///
+  /// The same `SetCursorPos` `ClickAt` uses, without the press. A screenshot
+  /// is taken at the end of a click sequence, and the cursor is still where
+  /// the last click was made -- on a button -- so the image carries that
+  /// button's tooltip. Nothing about the app changed.
+  public static void MoveAway(int x, int y) {
+    SetCursorPos(x, y);
+  }
+
   /// Bring this window above whatever is on the desktop.
   ///
   /// The check below asks five points whether ours is on top, and it is only a
@@ -396,6 +424,65 @@ function Get-DominantColour($bitmap) {
     if ($hist.Count -eq 0) { return '#000000' }
     $top = $hist.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1
     return ('#{0}' -f $top.Key)
+}
+
+# --- the display filter (f.lux) ---------------------------------------------
+#
+# f.lux composes through DWM over the whole desktop, so *every* capture path
+# that reads the screen comes back tinted -- the app's white flat field reads
+# as #FFA250 at night and as nothing at all at midday, which is why the tint
+# appears and disappears between runs of the same script.
+#
+# The filter is paused for the length of one capture and restarted afterwards.
+# Pausing is `Stop-Process`, and restarting cannot be the exe -- WindowsApps
+# ACLs refuse to launch it directly -- so it goes through the shell's own
+# AppsFolder protocol with the AUMID, which is how a Store app is started
+# from a command line.
+$script:FilterAumid = ''
+$script:FilterSuspended = $false
+
+function Get-DisplayFilterAumid {
+    $exe = Get-Process -Name 'flux' -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty Path
+    if (-not $exe) { return '' }
+    # C:\Program Files\WindowsApps\F.luxSoftwareLLC.f.lux_4.137.0.0_x86__sw1dyjdkns7gt\Flux\flux.exe
+    #  ^ the folder is <package name>_<version>_<arch>__<publisher id>, and the
+    #    family name is the package name plus the publisher, joined by "_".
+    $folder = Split-Path -Parent (Split-Path -Parent $exe)
+    $leaf = Split-Path -Leaf $folder
+    $name = $leaf -replace '_[^_]+_[^_]+__[^_]+$', ''
+    $publisher = ($leaf -split '__')[-1]
+    if (-not $name -or $publisher -eq $leaf) { return '' }
+    return "${name}_${publisher}!f.lux"
+}
+
+function Suspend-DisplayFilter {
+    $process = Get-Process -Name 'flux' -ErrorAction SilentlyContinue
+    if (-not $process) { return }
+    $script:FilterAumid = Get-DisplayFilterAumid
+    $process | Stop-Process -Force
+    $script:FilterSuspended = $true
+    # DWM drops the transform as soon as the process dies, so the wait below is
+    # a real one rather than a hope -- the check that settles it is the next
+    # capture, which is verified rather than trusted.
+    Start-Sleep -Seconds 2
+}
+
+function Restore-DisplayFilter {
+    if (-not $script:FilterSuspended) { return }
+    if (-not $script:FilterAumid) {
+        # Suspended but with no AUMID means the filter was stopped by a path
+        # that gave us nothing to restart -- and a screen left untinted with no
+        # way back is worse than a tinted capture, so say it rather than go.
+        Write-Output ('the display filter is paused and its AUMID could not be derived; ' +
+                      'start it again by hand (' + $script:FilterAumid + ' is empty).')
+        return
+    }
+    Start-Process explorer.exe -ArgumentList "shell:AppsFolder\$($script:FilterAumid)"
+    $script:FilterSuspended = $false
+    # Said rather than assumed: the process takes a few seconds to appear, so
+    # this line -- not the process list -- is the thing a reader can check on.
+    Write-Output "display filter restarted ($($script:FilterAumid))"
 }
 
 # Is our window the one that is actually there?
@@ -515,28 +602,64 @@ try {
     # Wait for the app's own signal, then for the paint to land.
     Wait-ForModel $LogDir $ModelTimeoutSeconds $SettleSeconds
 
-    if ($Act -ne 'none') {
+    # `-Act` is a sequence, because some states are only reachable by a second
+    # click: the device page exists behind the side bar, and its properties
+    # table exists behind that page's chevron. One step per run would make
+    # either one unshootable.
+    $steps = @($Act -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'none' }
+    foreach ($step in $steps) {
+        if ($step -eq 'none') { continue }
         # Logical coordinates first, physical after -- the window's own layout
         # is in the units `app.slint` declares, and the mouse is in the units the
-        # screen is drawn in. `Sidebar`'s hamburger: 4px of side padding + 13px
-        # of button padding + 10px half an icon, at 40px title + 12px top
-        # padding + 4px spacer + 18px half a 36px row. `TitleBar`'s switch:
-        # four 46px buttons right-aligned, the switch being the first and 40px
-        # wide, so 800 - 46*3 - 20.
-        $actWhere = switch ($Act) {
+        # screen is drawn in. Derived from the layout rather than typed in:
+        #   collapse  40px title + 12px padding + 4px spacer + half an icon
+        #   theme     four 46px buttons right-aligned, the 40px switch first,
+        #             so 800 - 46*3 - 20
+        #   devices   that, plus one 36px row and its 4px gap
+        #   expand    the card sits in the content area's 16px/6px padding and
+        #             the list's 4px/16px, its header is 64px tall, and the
+        #             chevron is the last 28px of the row minus 8px of card
+        $actWhere = switch ($step) {
             'collapse-sidebar' { @{ x = 27; y = 74 } }
             'dark-theme'       { @{ x = 642; y = 20 } }
+            'go-device-page'   { @{ x = 27; y = 154 } }
+            'device-expand'    { @{ x = 756; y = 80 } }
+            default {
+                throw ("no coordinates known for -Act '{0}'; add it beside the others in " +
+                       $PSCommandPath) -f $step
+            }
         }
         $before = [Wsa]::Frame($hWnd)
         $px = [int]($before.Left + ($actWhere.x * $scale))
         $py = [int]($before.Top + ($actWhere.y * $scale))
-        Write-Verbose ("clicking '{0}' at physical ({1},{2})" -f $Act, $px, $py)
+        Write-Verbose ("clicking '{0}' at physical ({1},{2})" -f $step, $px, $py)
         [Wsa]::Raise($hWnd)
+        # The window has just been asked to come to the foreground, and a click
+        # that arrives before that transition finishes is consumed by it: the
+        # window activates and nothing else happens. Two runs in a row produced
+        # no `tab selected` line in the app's log at all -- the click was made
+        # and swallowed, which is invisible unless something reads the log. The
+        # wait is what makes the log line appear.
+        Start-Sleep -Milliseconds 250
         [Wsa]::ClickAt($px, $py)
         # The side bar's width animates over 200ms and the theme switch over
         # 150ms; waiting past both is cheaper than either animation being
         # halfway through the shutter.
         Start-Sleep -Milliseconds 700
+    }
+
+    if ($steps.Count -gt 0) {
+        # Off the window before the shutter.
+        #
+        # The last click leaves the cursor sitting on a button, so the picture
+        # carries that button's tooltip -- clipped by the window's edge, which
+        # reads as a layout bug the app does not have (the reference's tooltip
+        # is positioned the same way and would clip identically). Hover states
+        # are worth nothing in an evidence shot and a tooltip is worth less, so
+        # the cursor goes where it cannot be over anything.
+        $last = [Wsa]::Frame($hWnd)
+        [Wsa]::MoveAway($last.Left - 120, $last.Top - 120)
+        Start-Sleep -Milliseconds 250
     }
 
     # The size the four captures share: `app.slint`'s 800x600, in the physical
@@ -598,6 +721,14 @@ try {
         $dominant = Get-DominantColour $cand
         if ($dominant.ToUpperInvariant() -ne $ExpectedBackground.ToUpperInvariant()) {
             $cand.Dispose()
+            # Once per run, and only once: pausing the filter and resuming it
+            # mid-loop would leave the desktop in whichever state the run ended
+            # in, which is what the `finally` exists to prevent.
+            if ($BypassDisplayFilter -and -not $script:FilterSuspended) {
+                Suspend-DisplayFilter
+                Write-Output ('the screen was measuring the page as ' + $dominant +
+                              '; the display filter is paused and will be restarted after the capture.')
+            }
             Start-Sleep -Milliseconds 800
             continue
         }
@@ -612,7 +743,7 @@ try {
                    'turn off that window''s "always on top" if it has one, and re-run.')
         }
         if ($dominant -and $dominant.ToUpperInvariant() -ne $ExpectedBackground.ToUpperInvariant()) {
-            $why = if ($Act -eq 'dark-theme') {
+            $why = if (@($Act -split ',') -contains 'dark-theme') {
                 'the dark theme is on and the expected background is still the light one ' +
                 '(Theme.content_bg is #1E1E1E dark and #FFFFFF light, and the dominant area is ' +
                 'the side bar, #2D2D30). Pass -ExpectedBackground for the theme you are shooting.'
@@ -640,4 +771,7 @@ finally {
     if ($proc -and -not $proc.HasExited) { $proc.Kill() }
     $env:WSADASH_ADB = $null
     Remove-Item Env:RUST_LOG -ErrorAction SilentlyContinue
+    # Last, and unconditional: a refusal anywhere above must not leave the
+    # reader's screen filter switched off.
+    Restore-DisplayFilter
 }

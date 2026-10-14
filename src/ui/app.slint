@@ -28,13 +28,15 @@
 // string still answers a second instance asking who is already open -- which is
 // why `runner` keeps overriding it with the application name.
 
-import { Theme, Distro, AppInfo, AppI18n, AppApi } from "theme.slint";
+import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp } from "theme.slint";
 // ★ The reference re-exports its globals from the root (reference
 //    `src/ui/app.slint:43`) -- that is what puts `AppI18n` / `AppInfo` in the
 //    generated Rust re-export list, and therefore what makes
-//    `app.global::<AppI18n>()` in `app::runner` resolve.
-export { Theme, Distro, AppInfo, AppI18n, AppApi }
+//    `app.global::<AppI18n>()` in `app::runner` resolve. The structs are here
+//    for the same reason: `handlers/device.rs` has to build them.
+export { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp }
 import { MainView } from "views/main_view.slint";
+import { DeviceView } from "views/device_view.slint";
 import { TaskStatusToast } from "components/task_status_toast.slint";
 import { TitleBar } from "components/title_bar.slint";
 import { Sidebar } from "components/sidebar.slint";
@@ -69,6 +71,20 @@ export component AppWindow inherits Window {
     in property <bool> home_greyed: false;
     in property <bool> home_buttons_disabled: false;
 
+    // ---- device page (P4) --------------------------------------------------
+    // Property names are the reference's (`usb_*`) -- Q12 keeps identifiers as
+    // it wrote them; spec section 3 renamed the *view*, not its inputs.
+    in property <[DeviceTarget]> usb_targets: [];
+    in property <bool> usb_loading: false;
+    in property <string> usb_error: "";
+    /// What the open row's properties are, as `getprop` printed them.
+    /// The reference's own name for "what the info panel shows".
+    in property <[DeviceProp]> usb_device_info_data: [];
+    /// Which serial those belong to. Ours, and not in the reference: one
+    /// dialog there knows which device it was opened for, while a page with
+    /// every row open needs to be told twice.
+    in property <string> usb_info_target: "";
+
     // The reference calls these task_status_* rather than home_toast_*; the
     // name is kept because the toast is a window-level overlay in the
     // reference, above every dialog, and it stays that way here.
@@ -95,7 +111,7 @@ export component AppWindow inherits Window {
     // the same switch the reference's settings page flips, so each later phase
     // turns one on and nothing about the mechanism changes. See MAPPING §8.
     in-out property <bool> sidebar_add: false;
-    in-out property <bool> sidebar_usb: false;
+    in-out property <bool> sidebar_usb: true;
     in-out property <bool> sidebar_network: false;
     in-out property <bool> sidebar_scheduler: false;
     in-out property <bool> sidebar_mount: false;
@@ -111,6 +127,15 @@ export component AppWindow inherits Window {
     callback stop_distro(string);
     callback reorder_distros(int, int);
     callback close_task_status();
+    // The device page's two. Names are the reference's `attach_clicked` /
+    // `detach_clicked` (Q12); the reference's other two, `bind_clicked` and
+    // `unbind_clicked`, have no counterpart here because adb has no bind step.
+    callback attach_clicked(string);
+    callback detach_clicked(string);
+    /// Opening a row asks for that target's properties. Takes the whole target
+    /// rather than a serial because the reference's info_clicked takes the
+    /// whole device (Q12 keeps signatures as they were written).
+    callback info_clicked(DeviceTarget);
     callback select_tab(int);
     callback home_clicked();
     callback save_sidebar_state();
@@ -245,6 +270,33 @@ export component AppWindow inherits Window {
                                 }
                                 reorder_distros(from, to) => {
                                     root.reorder_distros(from, to);
+                                }
+                            }
+
+                            // Tab 3 in spec section 3's table (index 2 here).
+                            // `z` follows the reference's own numbering --
+                            // `MainView` is z:3 and `AddInstanceView` z:4, so
+                            // the view for index N sits at N + 3 -- which keeps
+                            // a later tab from being painted under an earlier
+                            // one while both are `visible` at once.
+                            DeviceView {
+                                visible: true;
+                                z: 5;
+                                opacity: selected_tab == 2 ? 1 : 0;
+                                x: selected_tab == 2 ? 0px : 10000px;
+                                targets: root.usb_targets;
+                                usb_loading: root.usb_loading;
+                                usb_error: root.usb_error;
+                                usb_device_info_data: root.usb_device_info_data;
+                                usb_info_target: root.usb_info_target;
+                                attach_clicked(serial) => {
+                                    root.attach_clicked(serial);
+                                }
+                                detach_clicked(serial) => {
+                                    root.detach_clicked(serial);
+                                }
+                                info_clicked(t) => {
+                                    root.info_clicked(t);
                                 }
                             }
                         }

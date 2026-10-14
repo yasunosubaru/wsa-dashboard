@@ -24,9 +24,15 @@ use crate::ui::tabs::has_a_view;
 // while looking, in a diff, exactly like tests that do. `ui/tabs.rs` says the
 // same thing at greater length, including which phase adds which index.
 
-pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, _app_state: Arc<AppState>) {
+pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppState>) {
     let ah = app_handle.clone();
     app.on_select_tab(move |tab| {
+        // Logged unconditionally and at debug, because "the click did not
+        // arrive" and "the click arrived and was refused" are different
+        // problems that look identical from the outside -- the page simply
+        // does not change, and this is the only place that can tell them
+        // apart.
+        tracing::debug!(tab, allowed = has_a_view(tab), "tab selected");
         if !has_a_view(tab) {
             // Not an error: the entry is visible and its page is not written
             // yet, and the user has just been told nothing about why. `debug`
@@ -38,6 +44,16 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, _app_state: Arc<AppSt
         }
         if let Some(app) = ah.upgrade() {
             app.set_selected_tab(tab);
+        }
+
+        // Each page that has work to do asks for it when it is opened. The
+        // reference does the same from here -- efresh_usb, efresh_tasks,
+        // efresh_mounted_disks, three fetches -- and it is why this handler
+        // has the state: switching to a page is the moment its data is
+        // known-to-be-wanted, and a page that only refreshed on a timer would
+        // be blank for as long as the first visit takes.
+        if tab == 2 {
+            crate::ui::handlers::device::refresh(ah.clone(), app_state.clone());
         }
     });
 

@@ -1,0 +1,218 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// The device page. Ported in structure from the reference's
+// views/usb_view.slint (258 lines).
+//
+// The skeleton is theirs, line for line in shape: one row at a time stays open
+// (`expanded_serial` compared against each row's serial), three mutually
+// exclusive *whole-page* states -- error, empty, loading -- decided the same
+// way, a `Flickable` with the reference's `CustomScrollbar` reading its
+// `viewport-y`, and the same faint overlay for a refresh that happens while a
+// list is already on screen.
+//
+// Property names stay `usb_*` because Q12 keeps identifiers as the reference
+// wrote them (spec section 3 renamed the *view* to `device`, not its inputs).
+// What is gone:
+//
+//   * `usbipd_version` / `is_usbipd_outdated` -- there is no usbipd to version.
+//     The analogue of "the tool is missing" is `device_error == "not_found"`,
+//     and it has no download link because the reference's points at
+//     `AppConstants.usbipd_releases`, which has no WSA counterpart we could
+//     name without inventing an address.
+//   * `is_task_exists` -- that is a scheduled-task question, and P7 answers it.
+//   * `bind`/`unbind`/`attach`/`detach` as four callbacks: adb has two verbs.
+//
+// `usb_device_info_data` is the reference's own name for "what the info panel
+// shows" (`usb_device_info_data` on its AppWindow); the difference is that ours
+// is an array of `getprop` rows rendered here instead of handed to a dialog.
+// `usb_info_target` is ours, and it exists so a card can tell whether the
+// properties on the window are its own.
+
+import { CustomScrollbar } from "../components/scrollbar.slint";
+import { Theme, DeviceTarget, DeviceProp, AppI18n, LayoutConstants } from "../theme.slint";
+import { DeviceCard } from "../components/device_card.slint";
+
+/// The list itself, kept separate from the page so the `for` and its single
+/// expand stay in one place (the reference separates them for the same reason).
+component DeviceList inherits VerticalLayout {
+    in property <[DeviceTarget]> targets;
+    in property <[DeviceProp]> device_info_data;
+    in property <string> info_target;
+    in-out property <string> expanded_serial: "";
+    callback attach_clicked(string);
+    callback detach_clicked(string);
+    callback info_clicked(DeviceTarget);
+
+    padding-top: 0px;
+    padding-bottom: 0px;
+    padding-left: AppI18n.is-rtl ? 16px : 4px;
+    padding-right: AppI18n.is-rtl ? 4px : 16px;
+    spacing: 12px;
+    alignment: start;
+
+    for t in targets: DeviceCard {
+        target: t;
+        props: root.device_info_data;
+        props_are_for_this_target: root.info_target == t.serial;
+        expanded: root.expanded_serial == t.serial;
+        toggle_expand => {
+            // Opening is what asks for the properties; closing is not asked
+            // for and not remembered. The reference asks the same way, from
+            // its card's own expand, and passes the whole device rather than
+            // an id -- info_clicked(DeviceTarget) keeps that shape.
+            let opening = root.expanded_serial != t.serial;
+            root.expanded_serial = opening ? t.serial : "";
+            if (opening) {
+                root.info_clicked(t);
+            }
+        }
+        attach_clicked(serial) => {
+            root.attach_clicked(serial);
+        }
+        detach_clicked(serial) => {
+            root.detach_clicked(serial);
+        }
+    }
+}
+
+export component DeviceView inherits VerticalLayout {
+    in property <[DeviceTarget]> targets;
+    in property <bool> usb_loading: false;
+    in property <string> usb_error: "";
+    in property <[DeviceProp]> usb_device_info_data;
+    in property <string> usb_info_target: "";
+    callback attach_clicked(string);
+    callback detach_clicked(string);
+    callback info_clicked(DeviceTarget);
+
+    private property <string> expanded_serial: "";
+
+    vertical-stretch: 1;
+    spacing: 2px;
+    padding-top: 8px;
+
+    Rectangle {
+        vertical-stretch: 1;
+        clip: true;
+
+        // -- error: no targets *and* something to say about why --------------
+        // The reference has a second arm here for "usbipd is not installed"
+        // with a download button. Ours reports adb's own absence in words; a
+        // button would need an address for a page we do not control.
+        if (usb_error != "" && targets.length == 0): Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+                Text {
+                    text: "\u{EA39}";
+                    font-family: Theme.icon_font;
+                    font-size: 48px;
+                    color: Theme.icon_color_danger;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: usb_error == "not_found"
+                        ? AppI18n.t("usb.not_found_error", [AppI18n.version])
+                        : usb_error;
+                    color: Theme.text_secondary;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // -- empty ----------------------------------------------------------
+        if (usb_error == "" && targets.length == 0 && !usb_loading): Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: "\u{E88E}";
+                    font-family: Theme.icon_font;
+                    font-size: 48px;
+                    color: Theme.icon_color_amber;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: AppI18n.t("usb.empty", [AppI18n.version]);
+                    color: Theme.text_secondary;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // -- loading, first paint only --------------------------------------
+        if (usb_loading && targets.length == 0): Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+                Text {
+                    text: "...";
+                    font-size: 24px * LayoutConstants.font-scale;
+                    color: Theme.accent;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: AppI18n.t("usb.loading", [AppI18n.version]);
+                    color: Theme.text_secondary;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // -- the list, and it stays up through a later refresh ---------------
+        if (targets.length > 0): Rectangle {
+            flick := Flickable {
+                viewport-height: device_list.preferred-height;
+                width: parent.width;
+                height: 100%;
+                device_list := DeviceList {
+                    targets: root.targets;
+                    device_info_data: root.usb_device_info_data;
+                    info_target: root.usb_info_target;
+                    expanded_serial <=> root.expanded_serial;
+                    attach_clicked(serial) => {
+                        root.attach_clicked(serial);
+                    }
+                    detach_clicked(serial) => {
+                        root.detach_clicked(serial);
+                    }
+                    info_clicked(t) => {
+                        root.info_clicked(t);
+                    }
+                }
+            }
+
+            CustomScrollbar {
+                opacity: (flick.viewport-height > flick.height) ? 1 : 0;
+                visible: flick.viewport-height > flick.height;
+                x: AppI18n.is-rtl ? 2px : parent.width - 8px;
+                y: 0;
+                width: 8px;
+                height: 100%;
+                maximum: flick.viewport-height - flick.height;
+                page_size: flick.height;
+                value: -flick.viewport-y;
+                scroll_to(v) => {
+                    flick.viewport-y = -v;
+                }
+            }
+
+            // A refresh happening under a list that is already showing.
+            if (usb_loading): Rectangle {
+                background: Theme.dark_mode ? #00000033 : #FFFFFF33;
+                border-radius: 4px;
+            }
+        }
+    }
+}

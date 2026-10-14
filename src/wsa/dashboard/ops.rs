@@ -46,7 +46,7 @@ use std::time::Duration;
 
 use crate::adb::decoder::{
     is_system_package, listing_is_unparseable, parse_package_info, parse_package_list,
-    parse_process_list, subsystem_status,
+    parse_process_list, parse_props, subsystem_status,
 };
 use crate::wsa::command::WsaCommand;
 use crate::wsa::executor::{run_program, CommandOutput, ExecError};
@@ -186,6 +186,19 @@ pub fn parse_targets(devices_stdout: &str) -> Vec<AdbTarget> {
     out
 }
 
+/// Does this state mean there is a session with the target?
+///
+/// One line, and worth being one line: the home page decides "our endpoint is
+/// ready" through [`find_entry`] and the device page decides "this row can be
+/// disconnected" through [`Self::adb_targets`], and two copies of a string
+/// comparison spread over two files is how a future adb state ends up counted
+/// as connected on one page and not the other. `authorizing` and anything else
+/// invented after this was written are not sessions -- `device` is the only
+/// state in which adb will accept a command against the target.
+pub fn is_session_state(state: &str) -> bool {
+    state == "device"
+}
+
 /// Locate `127.0.0.1:<port>` in `adb devices` output.
 ///
 /// Serial match rather than "any line": `adb devices` lists every host the
@@ -201,8 +214,10 @@ fn find_entry(devices_stdout: &str, port: u16) -> AdbEntry {
         return AdbEntry::Absent;
     };
 
+    if is_session_state(&target.state) {
+        return AdbEntry::Device;
+    }
     match target.state.as_str() {
-        "device" => AdbEntry::Device,
         "unauthorized" => AdbEntry::Unauthorized,
         // `offline`, `authorizing` and anything a future platform-tools
         // invents are all "an entry exists but there is no session".
@@ -490,6 +505,24 @@ impl WsaDashboard {
     pub async fn adb_targets(&self) -> Result<Vec<AdbTarget>, OpsError> {
         let listing = self.run(WsaCommand::ListAdbDevices).await?;
         Ok(parse_targets(&listing.stdout))
+    }
+
+    /// Every property the target reports, as `getprop` printed them.
+    ///
+    /// Bare `adb shell getprop`, exactly as spec section 2.3 lists
+    /// `DeviceProps` -- no `-s` prefix, because the command surface has one
+    /// shape and every variant carries only its own arguments. With a single
+    /// connected target that is the same command; with two, adb refuses and
+    /// says why on stderr, which surfaces here as an error rather than as one
+    /// target's properties under another's name.
+    ///
+    /// The whole dump is returned and *filtered by the caller*, not filtered
+    /// here: which of these keys are worth a row is a presentation decision
+    /// and belongs with the page that shows them (`SHOWN_PROPS` in
+    /// `handlers/device.rs`, each key measured against a real `getprop`).
+    pub async fn device_props(&self) -> Result<HashMap<String, String>, OpsError> {
+        let out = self.run(WsaCommand::GetProps).await?;
+        Ok(parse_props(&out.stdout))
     }
 
     /// Drop a connection: `adb disconnect <target>`.

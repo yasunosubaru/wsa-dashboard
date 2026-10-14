@@ -37,6 +37,43 @@ export struct Distro {
     initial_color_index: int,
 }
 
+/// One row of the device page: an adb target as `adb devices` reported it.
+///
+/// The fields are deliberately few. The reference's `UsbDevice` carries
+/// fifteen (bus id, VID:PID, forced bind, auto-attach...), because a usbip
+/// device has to be *shared* before it is useful and those are the knobs that
+/// sharing turns on. An adb target has two facts: what it is called, and how it
+/// is answering. Everything else on that page comes from `getprop`, which asks
+/// the device itself rather than us remembering it.
+///
+/// `state` is not an enum for the same reason `ops::AdbTarget.state` is not:
+/// adb invents states (`authorizing`, `no permissions`, `recovery`) and this
+/// page's job is to show the machine's own word back to the operator.
+export struct DeviceTarget {
+    serial: string,
+    state: string,
+    /// `state == "device"` -- a session, not merely a row. Decides whether the
+    /// row can be disconnected or has to be connected first; decided in Rust so
+    /// that "what counts as connected" is written once rather than as a string
+    /// comparison wherever a button needs it.
+    is_connected: bool,
+    /// This row is the subsystem's own endpoint rather than some other target
+    /// the adb server happens to know about.
+    is_subsystem: bool,
+}
+
+/// One row of the properties table: `key`/`value` exactly as `getprop` printed
+/// them.
+///
+/// Not translated. `ro.product.model` is the property's own name and the label
+/// a reader will paste into a search; the reference's `[usb.detail]` labels are
+/// translated because they are *its* names for hardware it chose, and these are
+/// Android's.
+export struct DeviceProp {
+    key: string,
+    value: string,
+}
+
 
 export global Theme {
     in property <bool> dark_mode: false;

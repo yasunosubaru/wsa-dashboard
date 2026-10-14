@@ -633,3 +633,44 @@ GUI bin 编译）和做法。
 `disk_model.rs` 90 行、`command.rs`/`ops.rs` 增量 50 行、Slint 侧是参照文件的搬运
 （900 行上下，但那部分计划里只描述"改哪几处"而不是抄正文）。代码块只出现在测试与
 签名处，没有大段函数体。
+
+---
+
+## 完成情况（2026-10-14）
+
+七个 task 全部落地，工作树干净。**218 passed / 0 failed / 3 ignored**，
+GUI `cargo build --release --bin wsadashboard` 零 error 零 warning。
+
+| task | 提交 | 结果 |
+|---|---|---|
+| 1 `storage` + `wsadash vhdx` | `8b34b90` | 5 条测试；真机在 `probe` 报 exit 4 的同一时刻给出两个镜像的准确字节数 |
+| 2 磁盘页视图层 | `4579184` | 卡片与视图照搬换数据源；`DiskView` 在写它的同一个提交里就被 `app.slint` 引用 |
+| 3 ModalManager 子集 + 两个对话框 | `0c17fa0` | 与 6 合并提交（拆开会留下"搬了对话框却没人能打开它"的中间态） |
+| 4 `OpenSettings` op | `5755014` | **没有加 `WsaCommand` 变体**——见下 |
+| 5 磁盘页接线 | `1b01d13` | 8 条 `disk_model` 测试；`p5a-disk.png` 是 WSA 不可用状态下拍的 |
+| 6 首页三按钮接线 | `0c17fa0` | 与 3 合并；`p5a-info-dialog.png` / `p5a-delete-confirm.png` |
+| 7 MAPPING §12 + 空状态截图 | `105c780` | 八条记录；空状态截图暴露两个缺陷并当场修掉 |
+
+### 与计划不符之处（都是写之前读了源码才发现的）
+
+1. **Task 4 不该加 `WsaCommand::OpenSettings`。** `command.rs` 的模块注释早已写明
+   `LaunchApp` / `StartSubsystem` / `StopSubsystem` / `OpenSettings` / `VhdxInfo`
+   都不进命令表——它们没有 adb argv、也不经 executor。照 `launch_app` 的形状重做。
+2. **Task 5 的 `Vec<StorageImageUI>` 会让纯模块无法挂进 CLI。** `StorageImageUI`
+   由 Slint 生成、只存在于 GUI 二进制；点名它 `#[path]` 挂载就失败、测试一次都
+   跑不了。改成 `StorageRow`，与 `home_model::AppRow` → `data::row` → `Distro` 同形。
+3. **Task 2 的"ModalManager 不引入 `DialogHost`"结论对，但描述错了。** 它不是
+   "60 份重复的遮罩"，是纯调度器，遮罩由各对话框自己带。
+4. **Task 3 与 Task 6 合并成一个提交。**
+5. **Task 7 的空状态截图原本打算手动改名 `LocalCache`，改成单次调用内
+   `try/finally` 改名并核对复原**——计划里那句"拍完必须改回来"是个许愿，
+   `finally` 才是保证。
+
+### 尚未做（属 P5b 或更后面）
+
+- 网络页（页签 3）、HTTP 代理、`adb forward` / `adb reverse`。
+- 磁盘页的 `adb shell df` 占用行与"应用占用 Top N"——卡片上 `usage_text` 字段
+  已在，`has_usage` 恒为 false，等 P5b 的 `df` 到位后填。
+- ModalManager 的其余二十个对话框，随各自页面所在阶段加。
+- **P5b 的真机验收仍被同一个环境问题挡着**（§11.8）：WSA 的注册是开发模式且
+  指向已删除的目录，`resolve()` 因此失败。

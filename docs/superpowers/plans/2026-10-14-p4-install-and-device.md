@@ -98,7 +98,13 @@ spec §3 表的顺序即索引：1 = add（安装 APK）、2 = usb（设备）�
 4. ✅ 页签推进同时改 `TABS_WITH_A_VIEW` 和 `sidebar_*`；`tabs.rs` 的
    `home_install_and_device_have_a_page_and_the_rest_do_not` 遍历全部九个索引，
    让"只改了一半"直接失败。
-5. ⚠️ **安装回环只做了真机的一半**（安装通、卸载未跑），原因与可选做法见 MAPPING §11.8。
+5. ⚠️ **回环按用户选定的方案 2 落地**：卸载在**替身 adb** 上验证完成
+   （`install_then_uninstall_round_trip_through_the_stand_in`，203 passed），真机卸载未跑——
+   它会清掉所卸应用的数据，而磁盘上 `.apk` 命中 0 个，无法"装个自己创建的包再卸掉"。
+   真机安装那一半早些时候跑通过，但现在无法复验：WSA 的注册在这次会话期间变成了
+   **开发模式**（`IsDevelopmentMode: True`、`InstallLocation` 空），`resolve()` 因此失败。
+   **注意 `-- --ignored` 那 2 个"passed"是 `skipping` 提前 return，不是通过。**
+   详见 MAPPING §11.8。
 6. ✅ 用 `form_widgets` 而非自造控件：P2 已整份照抄，且它带参照的主题化。
 7. ✅ MAPPING §11 写清了**哪几样是刻意没搬**（§11.2 八条）与三处计划没预见的（§11.4）。
 

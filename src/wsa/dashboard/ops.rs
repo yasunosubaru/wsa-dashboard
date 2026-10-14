@@ -811,7 +811,39 @@ type "%S%op.stdout"
 type "%S%op.stderr" 1>&2
 set "CODE=1"
 if exist "%S%op.exit" set /p CODE=<"%S%op.exit"
+call :apply %~1 %~2
 exit /b %CODE%
+
+rem -- the loop itself -------------------------------------------------------
+rem Accepting both commands was not enough: :op answered install and uninstall
+rem from the same fixture, so `list_apps` could never tell the difference and
+rem the round trip had nothing to observe. A failed operation changes nothing
+rem (hence the code check), and `install -r` on a package already present keeps
+rem exactly one row rather than adding a second -- what a real `pm list
+rem packages` does.
+rem
+rem Written as jumps rather than as an `if ( ... )` block for one reason: a
+rem `set` inside parentheses is *not* visible to the `%VAR%`s in that same
+rem block, which are expanded when the whole block is parsed. The first version
+rem read an empty NEWPKG, matched "any line containing package:" against it, and
+rem silently added nothing -- a fake that accepts the command, reports success,
+rem and changes no state, which is worse than one that reports failure.
+:apply
+if not "%CODE%"=="0" goto :eof
+if "%~1"=="uninstall" goto :uninstall
+if not "%~1"=="install" goto :eof
+if not exist "%S%install.package" goto :eof
+set "NEWPKG="
+set /p NEWPKG=<"%S%install.package"
+if "%NEWPKG%"=="" goto :eof
+findstr /l /c:"package:%NEWPKG%" "%S%packages.txt" >nul 2>&1
+if errorlevel 1 echo package:%NEWPKG%>>"%S%packages.txt"
+goto :eof
+
+:uninstall
+findstr /v /l /c:"package:%~2" "%S%packages.txt" >"%S%packages.tmp" 2>nul
+move /y "%S%packages.tmp" "%S%packages.txt" >nul
+goto :eof
 
 :shell
 if "%~2"=="getprop" goto getprop
@@ -877,7 +909,17 @@ exit /b 0
             let fake = Self { state };
             std::fs::write(
                 fake.path().join("fake-adb.cmd"),
-                BATCH.replace("@TAB@", "\t"),
+                // CRLF, and normalised rather than appended.
+                //
+                // `goto <label>` finds labels in an LF-only batch file, which is
+                // why nothing complained for six months -- but `call <label>`
+                // does not: it reports "系统找不到指定的批处理标签" and carries on,
+                // so the first `call` added here produced a fake that accepted
+                // the command, reported success, and changed no state. The error
+                // lands in the wrong stream to notice, and the round-trip test
+                // was the only thing that could see it. Normalising both ways
+                // keeps this true no matter how the file was checked out.
+                BATCH.replace("@TAB@", "\t").replace("\r\n", "\n").replace('\n', "\r\n"),
             )
             .expect("write fake adb");
             // Every file the script may read starts out present, so a
@@ -892,6 +934,11 @@ exit /b 0
             fake.write("op.stdout", "");
             fake.write("op.stderr", "");
             fake.write("op.exit", "0");
+            // Which package an `install` produces. The fake cannot read an APK
+            // manifest, and neither can this list -- the name has to come from
+            // somewhere, and an empty file means "this fake was not told", which
+            // `:apply` treats as nothing to add rather than as a blank name.
+            fake.write("install.package", "");
             fake
         }
 
@@ -1593,6 +1640,68 @@ R5CT30XXXXX\tunauthorized\n\
             .uninstall_apk("com.example.app")
             .await
             .expect("adb reported Success");
+    }
+
+    /// The whole loop, on the stand-in: a package that is not there becomes
+    /// there, and then it is not.
+    ///
+    /// This is the half of spec section 10's P4 acceptance that can be run
+    /// without touching a real device. The other half is deliberately not
+    /// attempted against one: `adb uninstall` clears the package's data, the
+    /// APKs on this machine were counted (zero in three trees), and removing an
+    /// installed application in order to photograph it disappearing is a change
+    /// to the reader's machine rather than to this program. MAPPING section
+    /// 11.8 records that, and the three ways it could have been done instead.
+    ///
+    /// The fake has to *model* the loop, not merely accept the two commands --
+    /// which is the point. `:op` answered install and uninstall from the same
+    /// fixture before this, so `list_apps` could never show a difference and
+    /// the loop had nothing to observe. The package name for an install comes
+    /// from a fixture file rather than from the fake parsing an APK manifest,
+    /// because that is what the truth is on a real device too: adb learns the
+    /// package from the file, and here the test hands it over.
+    #[tokio::test]
+    async fn install_then_uninstall_round_trip_through_the_stand_in() {
+        let adb = FakeAdb::new();
+        adb.write(
+            "packages.txt",
+            "package:com.topjohnwu.magisk\npackage:com.android.settings\n",
+        );
+        // What the APK under test declares. The fake cannot read a manifest, so
+        // the test says which package the file is.
+        adb.write("install.package", "com.example.fresh");
+        adb.write("op.stdout", "Performing Streamed Install\nSuccess\n");
+        adb.write("op.exit", "0");
+
+        let dashboard = adb.dashboard();
+
+        let before = dashboard.list_apps(false).await.expect("list before");
+        assert_eq!(before.len(), 1, "one third-party package: {before:?}");
+
+        dashboard
+            .install_apk(Path::new(r"C:\pkgs\com.example.fresh.apk"))
+            .await
+            .expect("install");
+
+        let middle = dashboard.list_apps(false).await.expect("list after install");
+        assert_eq!(middle.len(), 2, "the new package should be there: {middle:?}");
+        assert!(
+            middle.iter().any(|app| app.package == "com.example.fresh"),
+            "installed and then not found: {middle:?}"
+        );
+
+        dashboard
+            .uninstall_apk("com.example.fresh")
+            .await
+            .expect("uninstall");
+
+        let after = dashboard.list_apps(false).await.expect("list after uninstall");
+        assert_eq!(after.len(), 1, "back to where it started: {after:?}");
+        assert!(
+            !after.iter().any(|app| app.package == "com.example.fresh"),
+            "uninstalled and still there: {after:?}"
+        );
+        assert!(after.iter().any(|app| app.package == "com.topjohnwu.magisk"));
     }
 
     // -- the guard, observed from inside a running operation -----------------

@@ -620,13 +620,54 @@ GUI `cargo build --release --bin wsadashboard` 零 error 零 warning。
 脚本每次都现测倍率，所以四张之间**不必**同尺寸——P2 那一批之所以要求同尺寸，
 是为了并排比对，这里比的是每一页的内容。）
 
-### 11.8 未完成：回环的真机一半
+### 11.8 真机回环：卸载一半的替代验证，与一个环境变化
 
-spec §10 的 P4 验收是"安装/卸载回环可用"。**安装那一半已真机跑通**
-（`wsadash probe` / `start` / `list` 全通，设备页与属性表截图都是真 adb 取的）；
-**卸载那一半没跑**，因为它会**清掉所卸应用的数据**：
-`WsaCommand::UninstallApk` 是 spec §2.3 原样的 `adb uninstall <package>`，没有 `-k`。
+spec §10 的 P4 验收是"安装/卸载回环可用"，用户选定按**方案 2** 落地。
 
-要看到完整回环只能拿一个**当前已装**的真应用去卸掉，因为磁盘上没有多余的 APK——
-实测 `$env:USERPROFILE\Downloads`、`<dev>`、`AppData\Local\Packages`
-三个树里 `.apk` 命中 **0 个**。这一步需要先指定可以清数据的应用。
+**卸载：在替身 adb 上验证完成。**
+`ops::tests::install_then_uninstall_round_trip_through_the_stand_in` 走完整的
+"装 → 列表多一个 → 卸 → 列表回到原样"，203 passed。
+
+它不是"断言收到了命令"那种假验证：原先替身的 `:op` 对 install 和 uninstall
+用**同一份** fixture 作答，`list_apps` 两侧看到的永远一样，回环无物可观察。
+为此改了替身——`:apply` 在 exit 0 时把 `install.package` 这个 fixture 写进
+`packages.txt`、按行删掉卸载的包，且 `install -r` 对已存在的包只留一行
+（真机 `pm list packages` 就是这么表现的）。没装机的环节，就在替身上把状态机建出来。
+
+过程中踩到两个 cmd 的坑，都写在 `BATCH` 的注释里：
+- **括号块里的 `%VAR%` 在整块解析时展开**，那时 `NEWPKG` 还是空的，于是
+  `findstr "package:"` 匹配到"任意含 package: 的行"，**静默什么都不加**——
+  一个接受命令、报告成功、却什么都没改的假 adb，比报告失败的更坏。
+  改成无括号的 `goto` 结构。
+- **替身 `.cmd` 是纯 LF**：`goto <label>` 在 LF 文件里找得到标签，`call <label>` 找不到，
+  报"系统找不到指定的批处理标签"后继续走。六年没人踩到只是因为此前没有 `call`。
+  写文件时改成**双向归一化成 CRLF**。
+
+**真机卸载没跑**：`WsaCommand::UninstallApk` 是 spec §2.3 原样的
+`adb uninstall <package>`，**没有 `-k`**，会清掉所卸应用的数据；
+而磁盘上没有多余的 APK——实测 `$env:USERPROFILE\Downloads`、`<dev>`、
+`AppData\Local\Packages` 三个树里 `.apk` 命中 **0 个**，
+所以无法"先装一个自己创建的包再卸掉"。用户选定此方案，未做，如实记下。
+
+**真机安装那一半：本会话早些时候确实跑通过**（`wsadash probe`/`start`/`list`、
+设备页与属性表截图都取自真 adb），但现在**无法复验**——机器状态在这次会话期间变了：
+
+```
+Get-AppxPackage *WindowsSubsystemForAndroid*
+  IsDevelopmentMode : True          ← 之前是普通安装
+  InstallLocation   : (空)          ← 直接 Register 清单的开发模式注册
+  PackageUserInformation : {}       ← 没有关联用户
+WindowsApps\…\AppxManifest.xml      → 不存在
+58526 端口无监听 / 无 WsaClient / 无 vmmemWSA / `adb devices` 空
+```
+
+`resolve()` 只按 spec §1.1 的 `Get-AppxPackage … .InstallLocation` 取路径，拿到空值就判
+"未安装"——**按规范它答得没错**（这台机器上 WSA 确实起不来），但开发模式注册的清单本来
+就不在 `WindowsApps` 下，spec 没覆盖这种注册方式。
+
+**这一条要特别注意，别读成绿色**：此时
+`cargo test --release --bin wsadash -- --ignored` 的输出是 **2 passed / 1 failed**，
+而那 2 个"passed"是**跳过**——`probe_against_the_live_subsystem` 在 `resolve()` 失败时
+`eprintln!("skipping…"); return;`，`running_apps_sees_a_real_running_app` 同理。
+跳过和通过长得一模一样。唯一真正失败的是 `resolves_the_live_install`。
+修好注册之前，任何"真机通过"的陈述都不成立。

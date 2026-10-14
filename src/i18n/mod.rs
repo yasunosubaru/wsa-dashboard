@@ -162,7 +162,17 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("mount_disk.mount", "Open Folder"),
     (
         "mount_disk.no_mounted",
-        "No WSA storage images in the data folder:",
+        "No WSA storage images in:",
+    ),
+    // Ours: the case where there is no folder to name at all, which the
+    // sibling key cannot describe -- it ends in a colon and expects a path
+    // after it. The two are worded apart because they are different facts: a
+    // folder that is there and holds nothing means WSA was reset or moved
+    // package family, and a folder that could not be located means this
+    // account has never had one.
+    (
+        "mount_disk.no_mounted_no_dir",
+        "No WSA storage images, and LOCALAPPDATA is not set, so there is no WSA data folder to look in.",
     ),
     // -- dialog: the shared shells (P5a) -------------------------------------
     // Key names are the reference's `[dialog]` block (Q12). The delete pair is

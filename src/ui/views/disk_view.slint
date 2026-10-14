@@ -87,6 +87,23 @@ export component DiskView inherits Rectangle {
                             font-family: Theme.default_font;
                             color: Theme.text_secondary;
                             horizontal-alignment: center;
+                            // Ours, and the reference has no need of it: its
+                            // line here is "No mounted disks", eleven characters
+                            // that always fit. Ours ends in a path, which on
+                            // this machine is ninety. A `Text` with no width
+                            // bound sizes its layout to the text, so the
+                            // vertical layout grew past the window and pushed
+                            // the icon off the right edge -- an overflow and a
+                            // mis-centred glyph from one missing bound.
+                            wrap: word-wrap;
+                            // `flick.width`, not `parent.width`. Inside a
+                            // Flickable's container, `parent.width` *is*
+                            // `viewport-width`, which is computed from this
+                            // layout's own minimum width -- Slint rejects that
+                            // as a binding loop, with a message that names the
+                            // whole cycle. `flick.width` is bound straight to
+                            // the clipping Rectangle, so it does not close one.
+                            width: flick.width - 120px;
                         }
                     }
 

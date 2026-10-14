@@ -96,10 +96,17 @@ pub fn model(dir: Option<&Path>) -> StoragePage {
         None => Vec::new(),
     };
 
-    let note = match (&rows, dir) {
-        (_, None) => format!("{} {}", i18n::t("mount_disk.no_mounted"), storage::CACHE_DIR_NAME),
-        (rows, Some(_)) if rows.is_empty() => String::new(),
-        _ => String::new(),
+    // A populated page needs no note; an empty one always needs a sentence. The
+    // two empty cases are worded apart because they are different facts: a
+    // folder that is there and holds nothing means WSA was reset or moved, and
+    // a folder that could not be located means this account has never had it.
+    let note = if rows.is_empty() {
+        match dir {
+            Some(dir) => format!("{} {}", i18n::t("mount_disk.no_mounted"), dir.display()),
+            None => i18n::t("mount_disk.no_mounted_no_dir"),
+        }
+    } else {
+        String::new()
     };
 
     StoragePage { rows, note }
@@ -149,33 +156,32 @@ mod tests {
 
     /// The state spec 11 line 348 is about: the subsystem is not running, and
     /// very often the data folder is not there either. The answer has to be a
-    /// page, not an error, and it has to say *where* it looked -- a bare "no
-    /// images" on a machine where WSA was never installed reads as a fault in
-    /// this program rather than as a fact about the machine.
+    /// page, not an error, and it has to say *why* it found nothing.
     #[test]
-    fn a_missing_directory_is_an_empty_page_that_says_where_it_looked() {
+    fn a_missing_directory_is_an_empty_page_that_explains_itself() {
         let page = model(None);
         assert!(page.rows.is_empty(), "{:?}", page.rows);
-        assert!(!page.note.is_empty(), "the empty state must name the folder");
+        assert!(!page.note.is_empty(), "the empty state must say something");
         assert!(
-            page.note.contains("LocalCache"),
-            "note should carry the folder it searched: {}",
+            page.note.contains("LOCALAPPDATA"),
+            "with no folder to name, the note must name what it needed: {}",
             page.note
         );
     }
 
-    /// A directory that exists but holds no images gets a *different* note from
-    /// one that does not exist. They are different facts: "WSA is installed and
-    /// its images are gone" and "WSA was never here" are not the same answer,
-    /// and collapsing them would hide the first.
+    /// A directory that exists but holds no images is the *more* common empty
+    /// state -- a WSA reset, or a subscription that reinstalled under a new
+    /// package family -- and it gets the folder it looked in, because that is
+    /// the fact worth checking. An empty string here was the first version's
+    /// answer, and it left the empty state rendering its icon over nothing.
     #[test]
-    fn a_directory_with_no_images_is_not_reported_as_a_missing_directory() {
+    fn a_directory_with_no_images_names_the_directory_it_searched() {
         let dir = tempfile::tempdir().unwrap();
         let page = model(Some(dir.path()));
         assert!(page.rows.is_empty());
         assert!(
-            !page.note.contains("LocalCache"),
-            "an existing folder needs no explanation of where it is: {}",
+            page.note.contains(&dir.path().to_string_lossy().to_string()),
+            "the note must carry the folder: {}",
             page.note
         );
     }

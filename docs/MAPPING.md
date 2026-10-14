@@ -671,3 +671,112 @@ WindowsApps\…\AppxManifest.xml      → 不存在
 `eprintln!("skipping…"); return;`，`running_apps_sees_a_real_running_app` 同理。
 跳过和通过长得一模一样。唯一真正失败的是 `resolves_the_live_install`。
 修好注册之前，任何"真机通过"的陈述都不成立。
+
+---
+
+## 12. P5a：ModalManager 子集 + WSA 存储页（磁盘页）
+
+spec §10 把"网络页 + 磁盘页"放进同一个 P5。两者是两套独立数据源、两套独立数据面，
+各自能独立产出可运行、可验收的软件，所以按 writing-plans 的 scope check 拆成
+**P5a（本节）** 与 P5b（网络页）。先做 P5a 还有个实际理由：磁盘页的核心读本地
+文件，**现在就能真机验收**，而 WSA 停止正是 spec §11 第 348 行要的验收条件。
+
+### 12.1 事实更正：目录是 `LocalCache`，不是 `LocalState`
+
+spec §2 第 226 行写 `VhdxInfo` 读 `LocalState\*.vhdx`。**该目录不存在**。真值：
+
+```
+%LOCALAPPDATA%\Packages\MicrosoftCorporationII.WindowsSubsystemForAndroid_8wekyb3d8bbwe\LocalCache\
+    userdata.2.vhdx    2,995,781,632 bytes   2026-10-13 23:12
+    metadata.2.vhdx      75,497,472 bytes   2026-10-13 19:51
+```
+
+与 spec 第 111 行 `LocalPortMin`/`LocalPortMax` 那条事实更正同一类。
+
+**文件名带版本号**（`.2`）。按前缀 + 精确 `.vhdx` 后缀匹配，不硬编码全名——
+否则 WSA 自己升一次版本号这页就空了；也**不是**子串匹配，`userdata.vhdx.bak`
+这类备份副本不算数（一个回答"还剩多少空间"的页面把备份算进去就是在撒谎）。
+
+### 12.2 真机验收（spec §11 第 348 行）
+
+此刻这台机器 WSA **不可用**（见 §11.8），所以"关闭子系统后磁盘页可用"不是模拟出来的：
+
+```
+wsadash probe   → exit 4  "WSA is not installed"
+wsadash vhdx    → exit 0  两行，字节数与文件系统完全一致
+```
+
+`docs/screenshots/p5a-disk.png` 就是这个状态下拍的（`probe` 与 `vhdx` 同一时刻）。
+`docs/screenshots/p5a-disk-empty.png` 把 `LocalCache` 临时改名后拍的空状态，
+拍完在同一次 PowerShell 调用的 `finally` 里改名回去并核对过（2 个 vhdx 都在）。
+改名只是元数据操作，不碰数据。
+
+### 12.3 语义重定义：`MountDiskCard` 三个回调只渲染一个
+
+spec §3 第 241 行把这一页从"把物理盘/VHD 挂进 WSL"改为"WSA 存储管理"。卡片结构与
+交互照搬，只换数据源——但**交互照搬在这三个按钮上做不到**：
+
+| 参照 | WSA 侧 | 决定 |
+|---|---|---|
+| `mount_clicked`（挂载） | 没有挂载这回事 | 保留，改为 `explorer /select,`，文案"打开目录" |
+| `unmount_clicked`（卸载） | WSA 没有 unmount API | **不渲染** |
+| `delete_clicked`（删除记录） | 删 `userdata.vhdx` = 抹掉整个子系统 | **不渲染** |
+
+签名按 Q12 全留。**这是 P5a 唯一的故意交互分歧**，P9 逐页对照时会看到。
+不渲染的理由是本项目一贯的那条：渲染出来的控件必须做点诚实的事，一个渲染出来
+却什么都不做的控件比没有更糟。
+
+底栏的 primary 按钮在参照里是打开"选盘"对话框；这里没有盘可选，改为打开
+`LocalCache` 目录本身，与卡片共用一个 `open_folder(string)`。
+
+### 12.4 一个测试抓到的设计错误：不能用文件系统判断意图
+
+底栏要"打开目录"、卡片要"选中文件"，第一版写成 `explorer_arg_for(path)` 靠
+`path.is_dir()` 区分。测试立刻红了——**因为这台机器上 `LocalCache` 根本不存在**
+（WSA 从没跑过），目录被当成文件、加上 `/select,`、Explorer 报错。恰好是在这一页
+唯一要服务的状态上失效。改为 `explorer_arg_for_dir` / `explorer_arg_for_file`
+两个函数，由调用方说明意图，文件系统不参与。
+
+### 12.5 `Information` 结构体：名字保留，字段换成 WSA 语义
+
+参照的 `Information` 有八个 WSL **发行版**字段（`distro_name` / `wsl_version` /
+`install_location` / `vhdx_path` / `vhdx_size` / `actual_used` / `ip` /
+`is_sparse`）。结构体名按 Q12 保留，字段换成 `AppInfo` 的五个：包名、版本名、
+版本号、APK 大小、是否系统应用。
+
+三个参照字段在 Android 应用上永远是空——空占位不是中立，是这个框答不了的问题。
+参照唯一的 `status` 行（发行版是否 Running）换成"来源：系统应用 / 用户安装"，
+因为后者决定"卸载"这个动作该不该被提供。用 `bool` 而不是字符串：参照拿字面量
+`"Running"` 比较，差一个字母就会静默显示停用那一份。
+
+### 12.6 `ModalManager` 只搬两块
+
+计划里把它写成"60 份重复的遮罩"，读源码后发现**不是**：它是纯调度器，声明每个
+对话框一个 `show_*`，按 100%/100% 实例化，遮罩由各对话框自己带。所以既没有值得
+抽成 `DialogHost` 的东西（P9 硬裁定：参照没有的组件＝缺陷），加对话框也很便宜。
+
+只搬 `show_delete` 与 `show_information`。其余二十个对话框的显示数据分别属于 P6
+的设置/语言、P7 的计划任务、P8 的更新/导出，现在搬就得先造那些页面的数据模型，
+真页面落地时再全部推倒。各阶段按参照的名字往里加，文件朝参照那份长齐。
+
+### 12.7 两个截图当场抓出来的缺陷
+
+1. **卡片上没有大小。** 右栏照搬参照只有一行 `mount_time`，而 spec §3 第 241 行
+   要求这一页显示"大小、路径、占用"。参照可以不画——它的大小在信息框里，这一页
+   没有。改成大小在上、时间在下。
+2. **空状态长路径横向溢出，把图标顶到窗口外。** 参照那句是 "No mounted disks"
+   （11 字符，必然放得下），我们那句以路径结尾（这台机器 90 字符）；`Text` 没有
+   宽度约束会把纵向布局撑到比窗口还宽。补 `wrap: word-wrap` + `width: flick.width - 120px`。
+   用 `flick.width` 而不是 `parent.width`：Flickable 容器里 `parent.width` 就是
+   `viewport-width`，而它由本布局的 min-width 算出，Slint 直接报绑定环。
+
+### 12.8 顺带修正的四处失实注释
+
+- `tabs.rs`：三段互相矛盾的旧阶段注释叠在一起，表格里的 P4 行还停在 `0, 2`。
+- `distro_card.slint` / `handlers/home.rs`：都说展开条那三个按钮"直到 P3 接上"，
+  而 P3 交付的是外壳，一个都没接。实际在 P5a 才接上。
+- `i18n/mod.rs` 的 `operation.deleting`：**原地**改文案而不是新增一条——`lookup`
+  是 `find`，第一条命中，重复键会静默沿用旧文案。
+- 计划里 Task 5 写的 `Vec<StorageImageUI>`：`StorageImageUI` 由 Slint 生成、只存在
+  于 GUI 二进制，纯模块里点名它会让 `#[path]` 挂载失败、测试一次都跑不了。
+  改为 `StorageRow`，和 `home_model::AppRow` → `data::row` → `Distro` 同形。

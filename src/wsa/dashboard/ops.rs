@@ -108,6 +108,15 @@ pub enum OpsError {
     /// into `Activate` would be worse still, since `Activate` means Windows
     /// refused a URI we did try to open.
     NotInstalled(String),
+
+    /// The request was malformed, so no command was run at all.
+    ///
+    /// Its own variant for the same reason `NotInstalled` has one: `Rejected`
+    /// documents itself as "the operation ran and did not do what you asked",
+    /// and this is the opposite -- nothing was attempted. Folding it in would
+    /// make the two indistinguishable to a caller that wants to tell the user
+    /// "that is not a proxy" rather than "adb refused".
+    Invalid(String),
 }
 
 impl From<ExecError> for OpsError {
@@ -131,6 +140,7 @@ impl std::fmt::Display for OpsError {
             }
             Self::NoData(detail) => write!(f, "{detail}"),
             Self::NotInstalled(detail) => write!(f, "{detail}"),
+            Self::Invalid(detail) => write!(f, "{detail}"),
             Self::Busy(busy) => write!(f, "{busy}"),
         }
     }
@@ -333,6 +343,47 @@ fn settings_uri(aumid: &str) -> Option<String> {
     } else {
         Some(format!("shell:AppsFolder\\{aumid}"))
     }
+}
+
+/// What Android wants written to `http_proxy` to turn the proxy **off**.
+///
+/// `:0`, not an empty string. Measured on this machine: with nothing configured
+/// every one of the three globals answers the literal `null`, and writing `:0`
+/// is what leaves all three answering `:0` afterwards. An empty value is not
+/// what the platform uses for "off", so writing one is writing a value nothing
+/// recognises. The constant exists so the op and the test cannot drift into
+/// different "off" values.
+pub const CLEARED_PROXY: &str = ":0";
+
+/// Globals that have never been written read back as this literal, not as an
+/// empty line (measured).
+pub const UNSET_PROXY_GLOBAL: &str = "null";
+
+/// `<host>:<port>` from two `settings` reads, or `None` for "not set".
+///
+/// Absence has three spellings on this platform and all three mean "off":
+///
+/// - `null` -- the global has never been written (measured).
+/// - `:0` -- the value this module writes to turn the proxy off, read back
+///   through (measured).
+/// - empty -- what a shell that strips the reply gives (measured on the fake,
+///   and the safe assumption about any host that trims differently).
+///
+/// A host with no port is `None` too, and deliberately: Android accepts
+/// `settings put global http_proxy 127.0.0.1` and then ignores it, so treating
+/// it as a value would write a setting that looks applied and is not.
+pub fn http_proxy_value(host: &str, port: &str) -> Option<String> {
+    let host = host.trim();
+    let port = port.trim();
+    if is_unset_proxy_global(host) || is_unset_proxy_global(port) {
+        return None;
+    }
+    Some(format!("{host}:{port}"))
+}
+
+/// One global's reply meaning "no proxy configured".
+fn is_unset_proxy_global(value: &str) -> bool {
+    value.is_empty() || value == UNSET_PROXY_GLOBAL || value == CLEARED_PROXY
 }
 
 /// One port mapping, either direction.
@@ -810,6 +861,89 @@ impl WsaDashboard {
         Ok(parse_reverse_list(&out.stdout))
     }
 
+    /// Point Android at an HTTP proxy (spec 3 line 239).
+    ///
+    /// Writes **three** globals, through [`WsaCommand::Shell`] rather than a new
+    /// variant: they are ordinary `adb shell settings` subcommands, and a variant
+    /// per `settings put` would put the whole settings namespace in the command
+    /// table.
+    ///
+    /// **Why three, measured on this machine:** the platform keeps them
+    /// *independently* and derives nothing between them. Writing
+    /// `http_proxy 10.0.2.2:8081` leaves `http_proxy_host` and `http_proxy_port`
+    /// answering `:0`; writing `http_proxy_host` + `http_proxy_port` leaves
+    /// `http_proxy` answering `:0`. So whichever one is written alone leaves the
+    /// other two saying "off" -- a state where the Settings app and the system's
+    /// own proxy tracker disagree about whether there is a proxy.
+    ///
+    /// **This corrects spec 1 line 116**, which recorded that
+    /// `global_http_proxy_host` / `_port` read back consistently after a
+    /// combined write. They do not, on this build. See MAPPING 14.
+    ///
+    /// **Refuses a host with no port** rather than writing it, because Android
+    /// accepts that and then ignores it.
+    pub async fn set_http_proxy(&self, host: &str, port: &str) -> Result<(), OpsError> {
+        let Some(value) = http_proxy_value(host, port) else {
+            return Err(OpsError::Invalid(format!(
+                "a proxy needs both a host and a port (got host={host:?}, port={port:?})"
+            )));
+        };
+        self.put_global("http_proxy", &value).await?;
+        self.put_global("http_proxy_host", host.trim()).await?;
+        self.put_global("http_proxy_port", port.trim()).await
+    }
+
+    /// Turn the proxy off, by putting the platform's own off value into all three
+    /// globals. See [`set_http_proxy`] for why all three, and [`CLEARED_PROXY`]
+    /// for why `:0` rather than an empty value.
+    pub async fn clear_http_proxy(&self) -> Result<(), OpsError> {
+        for name in ["http_proxy", "http_proxy_host", "http_proxy_port"] {
+            self.put_global(name, CLEARED_PROXY).await?;
+        }
+        Ok(())
+    }
+
+    /// The proxy Android is currently configured with, or `""`.
+    ///
+    /// Reads the **split pair**, which is what the page's two fields edit, and
+    /// not the combined string. Reading the combined one would put the
+    /// splitting rule here and nowhere else, and would disagree with what
+    /// [`set_http_proxy`] last wrote whenever an older tool left the two out of
+    /// step -- which the platform permits, as measured.
+    pub async fn get_http_proxy(&self) -> Result<String, OpsError> {
+        let host = self.read_global("http_proxy_host").await?;
+        let port = self.read_global("http_proxy_port").await?;
+        Ok(http_proxy_value(&host, &port).unwrap_or_default())
+    }
+
+    /// `adb shell settings put global <name> <value>`.
+    async fn put_global(&self, name: &str, value: &str) -> Result<(), OpsError> {
+        let out = self
+            .run(WsaCommand::Shell {
+                args: vec![
+                    "settings".into(),
+                    "put".into(),
+                    "global".into(),
+                    name.into(),
+                    value.into(),
+                ],
+            })
+            .await?;
+        silent_success(out)
+    }
+
+    /// `adb shell settings get global <name>`, trimmed. Never an error for an
+    /// absent global: Android answers `null` and exits 0, and this is called on
+    /// a page that has to render with nothing configured.
+    async fn read_global(&self, name: &str) -> Result<String, OpsError> {
+        let out = self
+            .run(WsaCommand::Shell {
+                args: vec!["settings".into(), "get".into(), "global".into(), name.into()],
+            })
+            .await?;
+        Ok(out.stdout.trim().to_owned())
+    }
+
     /// Open WSA's own Settings app (spec 2 line 223).
     ///
     ///
@@ -1092,8 +1226,66 @@ if "%~2"=="ps" goto ps
 if "%~2"=="pm" goto pm
 if "%~2"=="dumpsys" goto dumpsys
 if "%~2"=="am" goto am
+if "%~2"=="settings" goto settings
 echo fake-adb: no rule for shell %* 1>&2
 exit /b 1
+
+rem `settings get|put global <name> [value]`. Two files, host and port, because
+rem that is how Android really keeps it and a fake that stored one combined
+rem string would let a bug that dropped the split pass every test here.
+:settings
+if "%~3"=="get" goto :settings_get
+if "%~3"=="put" goto :settings_put
+echo fake-adb: no rule for shell settings %* 1>&2
+exit /b 1
+
+rem Absent file answers the literal `null`, which is what Android answers for a
+rem global that has never been written (measured). An earlier version also
+rem answered the combined `http_proxy` by reading both files into variables
+rem inside a parenthesised block -- which prints `::` forever, because a `set`
+rem in a block is not visible to the `%VAR%`s in that same block.
+:settings_get
+if "%~5"=="http_proxy_host" goto :get_host
+if "%~5"=="http_proxy_port" goto :get_port
+if "%~5"=="http_proxy" goto :get_combined
+echo null
+exit /b 0
+
+:get_host
+if exist "%S%proxy.host" (type "%S%proxy.host") else (echo null)
+exit /b 0
+
+:get_port
+if exist "%S%proxy.port" (type "%S%proxy.port") else (echo null)
+exit /b 0
+
+:get_combined
+if exist "%S%proxy.combined" (type "%S%proxy.combined") else (echo null)
+exit /b 0
+
+rem All three globals are stored independently and derive nothing from each
+rem other, because that is how the platform behaves (measured): writing
+rem `http_proxy` alone leaves host and port at `:0`. A fake that kept them in
+rem step would let a regression that dropped one of the three writes pass here.
+:settings_put
+if "%~5"=="http_proxy" goto :put_proxy
+if "%~5"=="http_proxy_host" goto :put_host
+if "%~5"=="http_proxy_port" goto :put_port
+echo fake-adb: no rule for shell settings put %* 1>&2
+exit /b 1
+
+:put_proxy
+>"%S%proxy.host" echo %~6
+>"%S%proxy.combined" echo %~6
+exit /b 0
+
+:put_host
+>"%S%proxy.host" echo %~6
+exit /b 0
+
+:put_port
+>"%S%proxy.port" echo %~6
+exit /b 0
 
 :ps
 if exist "%S%ps.fail" (
@@ -1586,6 +1778,174 @@ R5CT30XXXXX\tunauthorized\n\
         let rules = parse_forward_list("serial tcp:abc tcp:18081\nserial tcp:80 tcp:18081\n");
         assert_eq!(rules.len(), 1, "{rules:?}");
         assert_eq!(rules[0].local, 80);
+    }
+
+    // --- HTTP proxy (P5b) ----------------------------------------------------
+    //
+    // Spec 1 line 116 records that `settings put global http_proxy <host:port>`
+    // is writable on this subsystem and that `global_http_proxy_host` /
+    // `_port` read back consistently. Spec 3 line 239 makes this the network
+    // page's second tab, *replacing* the reference's approach -- the reference
+    // exports an `HTTP_PROXY` environment variable into a WSL shell, which has
+    // no meaning for an Android subsystem.
+
+    /// Measured on this machine with no proxy configured: all three reads come
+    /// back the literal `null`, not an empty line. Reading `null` as a host
+    /// would render the page as "proxy: null" instead of "not set", so the
+    /// literal has to be recognised.
+    ///
+    /// `:0` is the third spelling of "off" -- the value this module writes when
+    /// clearing, read straight back through. The first version of this function
+    /// knew only `null` and empty, so a proxy the dashboard had just turned off
+    /// read back as the host `:0` on port `:0`.
+    #[test]
+    fn all_three_spellings_of_off_are_recognised() {
+        assert_eq!(http_proxy_value("null", "null"), None);
+        assert_eq!(http_proxy_value("", ""), None);
+        assert_eq!(http_proxy_value(":0", ":0"), None, "the off value read back");
+        assert_eq!(http_proxy_value("127.0.0.1", "7890").as_deref(), Some("127.0.0.1:7890"));
+    }
+
+    /// A host with no port is not a usable proxy either. Android accepts
+    /// `settings put global http_proxy 127.0.0.1` and then ignores it, so
+    /// writing it would be a setting that silently does nothing.
+    #[test]
+    fn a_proxy_without_a_port_is_refused_rather_than_written() {
+        assert_eq!(http_proxy_value("127.0.0.1", ""), None);
+        assert_eq!(http_proxy_value("127.0.0.1", "null"), None);
+    }
+
+    /// Turning the proxy off is `settings put global http_proxy :0` on Android,
+    /// not an empty value -- an empty value leaves the previous proxy in place,
+    /// which is the opposite of what the reader asked for.
+    #[test]
+    fn clearing_the_proxy_writes_androids_off_value() {
+        assert_eq!(CLEARED_PROXY, ":0");
+        assert!(http_proxy_value("", "").is_none());
+    }
+
+    /// Setting a proxy must write **all three** globals.
+    ///
+    /// This is the one measurement that changed the design. On this build the
+    /// platform stores them independently and derives nothing between them:
+    /// writing `http_proxy 10.0.2.2:8081` leaves `http_proxy_host` and
+    /// `http_proxy_port` answering `:0`, and the reverse holds too. An
+    /// implementation that writes only the combined string leaves the Settings
+    /// app showing "no proxy" next to a system that has one; one that writes
+    /// only the split pair leaves the system's own proxy tracker with `:0`.
+    /// Either half of that disagreement is invisible to a read of a single
+    /// global, which is exactly why this asserts the file, not the value.
+    #[tokio::test]
+    async fn setting_a_proxy_writes_the_combined_and_the_split_globals() {
+        let adb = FakeAdb::new();
+        adb.dashboard()
+            .set_http_proxy("10.0.2.2", "8081")
+            .await
+            .expect("set");
+
+        let state = adb.path();
+        for (file, expected) in [
+            ("proxy.combined", "10.0.2.2:8081"),
+            ("proxy.host", "10.0.2.2"),
+            ("proxy.port", "8081"),
+        ] {
+            let actual = std::fs::read_to_string(state.join(file))
+                .unwrap_or_else(|e| panic!("{file} was never written: {e}"));
+            assert_eq!(actual.trim(), expected, "{file}");
+        }
+    }
+
+    /// And clearing must put the off value into all three, for the same reason:
+    /// a global left holding the old host is a proxy the reader cannot switch
+    /// off from this page.
+    #[tokio::test]
+    async fn clearing_writes_the_off_value_into_all_three_globals() {
+        let adb = FakeAdb::new();
+        let dash = adb.dashboard();
+        dash.set_http_proxy("10.0.2.2", "8081").await.expect("set");
+        dash.clear_http_proxy().await.expect("clear");
+
+        for file in ["proxy.combined", "proxy.host", "proxy.port"] {
+            let actual = std::fs::read_to_string(adb.path().join(file))
+                .unwrap_or_else(|e| panic!("{file} vanished instead of being cleared: {e}"));
+            assert_eq!(actual.trim(), CLEARED_PROXY, "{file}");
+        }
+    }
+
+    /// The loop, on the stand-in: set, read back, clear, read back empty. The
+    /// stand-in gains a `settings` branch for this, because `settings` is a
+    /// `shell` subcommand and the existing fake only modelled five of them.
+    #[tokio::test]
+    async fn the_proxy_survives_a_set_read_clear_loop() {
+        let adb = FakeAdb::new();
+        let dash = adb.dashboard();
+
+        dash.set_http_proxy("127.0.0.1", "7890").await.expect("set");
+        assert_eq!(
+            dash.get_http_proxy().await.expect("read back"),
+            "127.0.0.1:7890"
+        );
+
+        dash.clear_http_proxy().await.expect("clear");
+        assert_eq!(
+            dash.get_http_proxy().await.expect("read back after clear"),
+            "",
+            "cleared but still reports a proxy"
+        );
+    }
+
+    /// A host with no port must never reach `settings put`, because Android
+    /// accepts it and then ignores it -- a setting that looks applied and is
+    /// not.
+    ///
+    /// Also the assertion that the stand-in keeps the two globals **separate**.
+    /// The set/read/clear loop above would still pass if the fake stored one
+    /// combined string, so it cannot tell "the code asks for both globals" from
+    /// "the code asks for one". Writing the host file directly is the only way
+    /// to reach `get_http_proxy` in that state, and it answers "no port, so no
+    /// proxy" rather than half a proxy.
+    #[tokio::test]
+    async fn a_host_with_no_port_reads_back_as_no_proxy_not_as_half_of_one() {
+        let adb = FakeAdb::new();
+        adb.write("proxy.host", "10.0.2.2\n");
+        assert_eq!(
+            adb.dashboard().get_http_proxy().await.expect("read back"),
+            "",
+            "a host with no port is not a proxy"
+        );
+
+        adb.write("proxy.port", "8080\n");
+        assert_eq!(
+            adb.dashboard().get_http_proxy().await.expect("read back"),
+            "10.0.2.2:8080",
+            "the port is kept in its own global, not folded into the host"
+        );
+    }
+
+    /// Reading a proxy that was never set is not a failure: `null` is what
+    /// Android answers, and a page that reports an error for "no proxy
+    /// configured" is a page that errors on every fresh install.
+    #[tokio::test]
+    async fn reading_an_unset_proxy_is_empty_and_not_an_error() {
+        let adb = FakeAdb::new();
+        assert_eq!(
+            adb.dashboard().get_http_proxy().await.expect("unset is readable"),
+            ""
+        );
+    }
+
+    /// A host with no port must never reach `settings put`, because Android
+    /// accepts it and then ignores it -- a setting that looks applied and is
+    /// not.
+    #[tokio::test]
+    async fn setting_a_proxy_without_a_port_is_refused() {
+        let adb = FakeAdb::new();
+        let err = adb
+            .dashboard()
+            .set_http_proxy("127.0.0.1", "")
+            .await
+            .expect_err("half a proxy is not a proxy");
+        assert!(err.to_string().contains("port"), "{err}");
     }
 
     /// The whole loop on the stand-in: forward a port, see it listed, remove it,

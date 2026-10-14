@@ -7,4 +7,5 @@
 //! is a sideloaded Appx package whose install directory can be anywhere, so
 //! every path the app uses has to be resolved at runtime.
 
+pub mod storage;
 pub mod wsa_path;

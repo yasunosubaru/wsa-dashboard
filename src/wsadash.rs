@@ -35,6 +35,11 @@ mod refresh;
 // Same reason as `home_model`: `tabs` is a decision with tests, and it was
 // written inside `handlers/common.rs` first -- where it would have compiled
 // into nothing, because `handlers` is GUI-only. See `src/ui/tabs.rs`.
+//
+// `cfg(test)` because the CLI has no other use for it: the GUI reaches the same
+// file through `mod ui;`, and a non-test `wsadash` build would otherwise
+// compile four items it never calls and warn about all four.
+#[cfg(test)]
 #[path = "ui/tabs.rs"]
 mod tabs;
 
@@ -47,6 +52,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use wsa::app::storage;
 use wsa::app::wsa_path::{self, WsaPathError};
 use wsa::dashboard::ops::OpsError;
 use wsa::dashboard::{dashboard_for, WsaDashboard};
@@ -142,6 +148,7 @@ async fn main() -> ExitCode {
         ("uninstall", [package]) => uninstall(package).await,
         ("start", []) => start().await,
         ("stop", []) => stop().await,
+        ("vhdx", []) => vhdx().await,
         ("-h" | "--help" | "help", _) => {
             usage(&mut std::io::stdout());
             code(EXIT_OK)
@@ -172,6 +179,7 @@ commands:
   uninstall <package>   remove a package
   start                 cold-start the subsystem and wait for it
   stop                  shut the subsystem down
+  vhdx                  WSA's storage images, read off the disk; needs no device
 
 environment:
   WSADASH_ADB           path to adb (default: `adb` on PATH)
@@ -479,4 +487,44 @@ async fn stop() -> ExitCode {
         }
         Err(error) => ops_failure(&error),
     }
+}
+
+/// WSA's storage images, tab-separated, `userdata` first.
+///
+/// The one command here that does **not** call [`connect`], and that is the
+/// point of it rather than an omission: the disk page has to answer on a
+/// machine where the subsystem is stopped (spec 11 line 348), and `connect()`
+/// resolves the Appx package, which is exactly what fails when WSA is not
+/// running. Reading `LocalCache` needs no package and no device.
+///
+/// Output columns: role, size in bytes, modified, file name, full path.
+async fn vhdx() -> ExitCode {
+    let Some(dir) = storage::cache_dir() else {
+        eprintln!(
+            "wsadash: LOCALAPPDATA is not set, so there is no WSA data folder to look in."
+        );
+        return code(EXIT_NOT_INSTALLED);
+    };
+    let images = match storage::images_in(&dir) {
+        Ok(images) => images,
+        Err(err) => {
+            eprintln!("wsadash: cannot read {}: {err}", dir.display());
+            return code(EXIT_FAILED);
+        }
+    };
+    for image in &images {
+        let role = match image.role {
+            storage::StorageRole::UserData => "userdata",
+            storage::StorageRole::Metadata => "metadata",
+        };
+        println!(
+            "{}\t{}\t{}\t{}\t{}",
+            role,
+            image.size_bytes,
+            image.modified,
+            image.file_name,
+            image.path.display()
+        );
+    }
+    code(EXIT_OK)
 }

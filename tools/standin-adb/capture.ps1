@@ -320,6 +320,58 @@ public static class Wsa {
     return "'" + t + "' (" + c + ")";
   }
 
+  // 'WindowFromPoint(POINT)' and 'GetAncestor' were already declared above for
+  // 'Describe'; a second 'DllImport' of either with the same signature is a
+  // compile error rather than a harmless repeat, so this uses those.
+  //
+  // Single quotes throughout this block's comments, matching the rest of the
+  // class: this is C# inside a PowerShell *double-quoted* here-string, where a
+  // backtick is an escape. Backtick followed by the letter n becomes a newline,
+  // which is how a comment naming no-frame silently split in two and left the
+  // compiler reading "o-frame" as a label. This comment says that without
+  // writing the sequence, because writing it here would trigger it.
+  static IntPtr At(int x, int y) {
+    POINT p; p.X = x; p.Y = y;
+    return GetAncestor(WindowFromPoint(p), 2 /* GA_ROOT */);
+  }
+
+  /// Whether *our* window is what owns a screen point right now.
+  ///
+  /// Used to decide how to click. A point that reads correctly inside the
+  /// captured image says nothing about who would take the click: 'PrintWindow'
+  /// paints the window itself and so is immune to what is stacked above it,
+  /// while input goes to whatever is on top. On this desktop something is
+  /// routinely on top -- measured, both the sidebar and the tab reported
+  /// WindowFromPoint -> 'reader | OpenChamber' (Chrome_WidgetWin_1) at the
+  /// moment of the press, and the tab clicks were lost to it while the sidebar
+  /// ones happened to land.
+  public static bool PointIsOn(IntPtr h, int x, int y) { return At(x, y) == h; }
+
+  [DllImport("user32.dll")]
+  static extern bool PostMessage(IntPtr h, uint msg, IntPtr wParam, IntPtr lParam);
+
+  /// Press and release at a point *inside our window*, addressed to the window
+  /// rather than to the screen.
+  ///
+  /// The fallback for a point another window owns: 'PostMessage' puts the mouse
+  /// events in our own queue, so the Z-order of unrelated windows stops being a
+  /// variable in a screenshot. Coordinates are client pixels, which for a
+  /// 'no-frame' window are also the logical layout units multiplied by the
+  /// monitor scale -- 'Frame' and 'GetClientRect' coincide by construction (see
+  /// 'Frame').
+  ///
+  /// 'WM_MOUSEMOVE' first for the reason 'ClickAt' moves the cursor first: a
+  /// TouchArea that never sees a move has no hover, and a press arriving as the
+  /// first message it gets is a press on a button that was never there.
+  public static void ClickClient(IntPtr h, int x, int y) {
+    IntPtr lp = (IntPtr)((y << 16) | (x & 0xFFFF));
+    PostMessage(h, 0x0200 /* WM_MOUSEMOVE */, IntPtr.Zero, lp);
+    System.Threading.Thread.Sleep(40);
+    PostMessage(h, 0x0201 /* WM_LBUTTONDOWN */, new IntPtr(1), lp);
+    System.Threading.Thread.Sleep(40);
+    PostMessage(h, 0x0202 /* WM_LBUTTONUP */, IntPtr.Zero, lp);
+  }
+
   /// Click at a point, in physical pixels.
   ///
   /// Move, press, release -- not `mouse_event` alone, because a button that the
@@ -568,6 +620,43 @@ function Wait-ForModel([string]$dir, [int]$timeoutSeconds, [int]$paintSeconds) {
     Start-Sleep -Seconds $paintSeconds
 }
 
+# Reading the log back after a click, which is the only way a swallowed click is
+# detectable at all.
+#
+# It happens: `Raise` asks Windows to bring the window forward and a click
+# arriving before that transition completes is consumed by it -- the window
+# activates and nothing else does. The 250ms wait below was chosen because it
+# usually makes that go away, and "usually" is the problem: it did not on one
+# two-step run, so `go-network-page` produced no `tab selected` line, the second
+# step clicked the coordinate it would have had if the first had worked, and it
+# landed in the home page's search box. The picture that came back was a
+# perfectly good photograph of the wrong page -- which is worse than a script
+# that failed, because it is evidence.
+#
+# So a `go-*` step is read back rather than trusted, the same way this script
+# already reads back its collapsed and dark captures.
+function LogLength([string]$dir) {
+    $log = Get-ChildItem $dir -Filter 'wsadashboard.log.*' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($log) { $log.Length } else { 0 }
+}
+
+function LogGained([string]$dir, [long]$since, [string]$pattern) {
+    $log = Get-ChildItem $dir -Filter 'wsadashboard.log.*' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $log) { return $false }
+    $stream = [System.IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite')
+    try {
+        $stream.Position = [Math]::Min($since, $stream.Length)
+        $reader = New-Object System.IO.StreamReader($stream)
+        $tail = $reader.ReadToEnd()
+        $reader.Dispose()
+    } finally {
+        $stream.Close()
+    }
+    return ($tail -match $pattern)
+}
+
 # A single instance of the app would take a second launch as "focus the one
 # that is already there" (P7 wires that deliberately), so no launch can be
 # left running from a previous run.
@@ -631,11 +720,34 @@ try {
             # is what happened.
             'go-install-page'  { @{ x = 27; y = 154 } }
             'go-device-page'   { @{ x = 27; y = 194 } }
-            # P5a turned on `show_mount`, which inserts the storage entry directly
-            # below the device one -- they are adjacent in `sidebar.slint`, and the
-            # entries between them (network, scheduler) are still off. So the row
-            # is another 36px plus the 4px gap: 194 + 40 = 234.
-            'go-storage-page'  { @{ x = 27; y = 234 } }
+            # P5b turned on `show_network`, which sits between device and
+            # storage in `sidebar.slint` (line 132, then 142 for scheduler, then
+            # 152 for mount), so the network row takes 194 + 40 = 234 and
+            # **storage moves down with it**: 274. The scheduler row is still off,
+            # which is why it does not add a row of its own.
+            #
+            # Both numbers change in this one edit on purpose, and the comment on
+            # `go-install-page` says why: the rows below an inserted one shift,
+            # and updating only the new step would have made `go-storage-page`
+            # land on network -- a click that succeeded, a picture that looks
+            # plausible, and a storage capture filed under the wrong page.
+            'go-network-page'  { @{ x = 27; y = 234 } }
+            'go-storage-page'  { @{ x = 27; y = 274 } }
+            # The network page's second tab. Measured off
+            # p5b-network-port-forwarding.png (1200x900) rather than derived:
+            # the tab bar is inside `NetworkView`'s own 40px row with 8px/4px
+            # padding, and the first tab's width is its label's, so its position
+            # depends on the font rather than on a layout constant. The "HTTP
+            # Proxy" box reads at (504..587, 87..124), centre (546, 106), which
+            # is (364, 71) at this monitor's 1.5 scale.
+            #
+            # Re-measure if the font or the tab labels change -- a tab click that
+            # lands a few pixels left of the target does not throw, it leaves the
+            # first tab showing and files the second one's picture as the first.
+            'network-proxy-tab' { @{ x = 396; y = 71 } }
+            # 内容区里唯一有可见效果的控件，用来判定点击到底通不通。图片 1200x900 里垃圾桶在
+            # (1131,174) -> 逻辑 (754,116)。删了可复原（端口已知）。
+            'network-delete-first' { @{ x = 754; y = 116 } }
             # The home page's first card's chevron. Measured off a 1200x900
             # capture of the `ready` stand-in rather than derived, because the
             # home list sits under a search field whose height is set by the
@@ -659,18 +771,114 @@ try {
             }
         }
         $before = [Wsa]::Frame($hWnd)
-        $px = [int]($before.Left + ($actWhere.x * $scale))
-        $py = [int]($before.Top + ($actWhere.y * $scale))
-        Write-Verbose ("clicking '{0}' at physical ({1},{2})" -f $step, $px, $py)
-        [Wsa]::Raise($hWnd)
-        # The window has just been asked to come to the foreground, and a click
-        # that arrives before that transition finishes is consumed by it: the
-        # window activates and nothing else happens. Two runs in a row produced
-        # no `tab selected` line in the app's log at all -- the click was made
-        # and swallowed, which is invisible unless something reads the log. The
-        # wait is what makes the log line appear.
-        Start-Sleep -Milliseconds 250
-        [Wsa]::ClickAt($px, $py)
+        $logSince = LogLength $LogDir
+        # A click that arrives while the window is still being brought forward is
+        # consumed by that transition: the window activates and nothing else
+        # happens. The 250ms wait makes it rare, and "rare" is not good enough --
+        # it cost one two-step run, where `go-network-page` produced no `tab
+        # selected` line at all, the second step clicked the coordinate it would
+        # have needed had the first worked, and it landed in the home page's
+        # search box. The picture that came back was a perfect photograph of the
+        # wrong page: worse than a failure, because it reads as evidence.
+        #
+        # So steps are repeated, and which ones *may* be is a question of whether
+        # the action sets state or toggles it:
+        #
+        #   sets   `go-*` (select a page), `network-proxy-tab` (select a tab).
+        #          Clicking three times ends in the same state as once, so a
+        #          swallowed first click costs nothing but a few hundred ms.
+        #   toggles `collapse-sidebar`, `dark-theme`, and the chevrons, which
+        #          *open* a panel that is already open if the first click
+        #          worked. Clicking those again would silently produce the
+        #          opposite of what was asked, so they get exactly one attempt
+        #          and the wait that was already there.
+        #
+        # `go-*` additionally has its effect read back from the app's log,
+        # because it is the only family whose failure produces a *plausible*
+        # wrong picture. A second failure there is raised rather than written to
+        # disk as evidence.
+        $setsState = ($step -like 'go-*') -or ($step -eq 'network-proxy-tab') -or ($step -eq 'network-delete-first')
+        $attempts = if ($setsState) { 3 } else { 1 }
+        $applied = $false
+        for ($try = 0; $try -lt $attempts -and -not $applied; $try++) {
+            [Wsa]::Raise($hWnd)
+            # 600ms, up from 250ms, because 250ms was demonstrably not enough:
+            # one run failed the *first* sidebar click three times in a row, and
+            # three separate runs lost the first click of the sequence -- enough
+            # that a run either threw or photographed a page it never opened.
+            # The wait is the only thing standing between "the window was asked
+            # to come forward" and "the window is forward"; nothing else in this
+            # script can tell, since a swallowed click produces no error and no
+            # log line of its own.
+            Start-Sleep -Milliseconds 600
+
+            # Re-read the frame here rather than reusing the one taken at the
+            # top of the step.
+            #
+            # Windows moves this window between the two: a launch cascades it,
+            # and the position differs run to run -- measured across four runs
+            # it started at (113,114), (37,38), (265,266) and (151,152). A frame
+            # read a moment earlier can therefore be stale by enough to miss the
+            # target entirely, and the miss is silent: the click lands on
+            # whatever sits at the old coordinates, which is how one run meant
+            # for the Network entry selected Storage instead -- one row down,
+            # and a picture that looked like a successful navigation.
+            $now = [Wsa]::Frame($hWnd)
+            if ($now.Left -ne $before.Left -or $now.Top -ne $before.Top) {
+                Write-Verbose ("  window moved since the step began ({0},{1}) -> ({2},{3})" -f `
+                               $before.Left, $before.Top, $now.Left, $now.Top)
+            }
+            $before = $now
+            $px = [int]($before.Left + ($actWhere.x * $scale))
+            $py = [int]($before.Top + ($actWhere.y * $scale))
+            # Printed after the re-read, so the number in the log is the one the
+            # press actually uses. Printed once, because three attempts print
+            # three identical lines and say nothing more.
+            if ($try -eq 0) {
+                Write-Verbose ("  clicking '{0}' at physical ({1},{2})" -f $step, $px, $py)
+            }
+
+            # Who is on that pixel *now*, after the raise and before the press.
+            # Not decoration: `PrintWindow` photographs the window regardless of
+            # what stacks above it, so a capture can look perfect while every
+            # input aimed at that spot goes elsewhere. Where another window owns
+            # the point, the click is addressed to our window's queue instead --
+            # otherwise the Z-order of an unrelated program is what decides
+            # whether this screenshot documents the page the run opened.
+            $ours = [Wsa]::PointIsOn($hWnd, $px, $py)
+            if ($try -eq 0) {
+                if ($ours) {
+                    Write-Verbose '  under the cursor: ours -- clicking the screen'
+                } else {
+                    Write-Verbose '  under the cursor: another window -- posting to ours'
+                }
+            }
+            if ($ours) {
+                [Wsa]::ClickAt($px, $py)
+            } else {
+                [Wsa]::ClickClient($hWnd, [int]($actWhere.x * $scale), [int]($actWhere.y * $scale))
+            }
+            Start-Sleep -Milliseconds 500
+            if ($step -like 'go-*') {
+                $applied = LogGained $LogDir $logSince 'tab selected'
+            } else {
+                # No detector for an in-page tab switch -- the app does not log
+                # it -- so it takes the repeats it is entitled to rather than
+                # stopping after the first click. Three clicks on a control that
+                # sets a value end where one does; only the *last* attempt counts
+                # as done, which is what makes it actually retry.
+                $applied = ($try -eq ($attempts - 1))
+            }
+            if (-not $applied) {
+                Write-Verbose ("'{0}' attempt {1} not confirmed yet" -f $step, ($try + 1))
+            }
+        }
+        if (-not $applied) {
+            throw ("-Act '{0}' never reached a page: the app logged no 'tab selected' " +
+                   "after {1} clicks, so a capture now would photograph whichever page " +
+                   "was already showing. See {2}") -f $step, $attempts, $LogDir
+        }
+
         # The side bar's width animates over 200ms and the theme switch over
         # 150ms; waiting past both is cheaper than either animation being
         # halfway through the shutter.

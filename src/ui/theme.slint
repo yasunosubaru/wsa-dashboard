@@ -119,6 +119,40 @@ export struct StorageImageUI {
     has_usage: bool,
 }
 
+/// One port-forwarding rule, as the reference names it
+/// (`src/ui/theme.slint` line 77).
+///
+/// **Field names are the reference's; what fills them is not.** The reference
+/// forwards to a *WSL distro's* IP, so `distro_name` names the instance and
+/// `target_port` is a port on it. WSA has no distros and no IP to dial: a rule
+/// is `adb forward tcp:<listen_port> tcp:<target_port>`, both sides ports. So:
+///   `id`            "forward" or "reverse" -- the adb verb. The reference's
+///                   was a netsh portproxy key; the card uses it to say which
+///                   direction a rule points.
+///   `distro_name`   the *direction* in words: "To WSA" or "From WSA". WSA has
+///                   no instance column, so the slot the reference filled with
+///                   a distro's name carries the one thing that distinguishes
+///                   the two kinds of rule. Renaming the field would have been
+///                   tidier and would have lost the line that ties this
+///                   struct to the reference's (Q12 keeps identifiers).
+///   `listen_address` / `listen_port`  the host side, which adb names too.
+///   `target_port`   the device-side port. No address, because adb's reverse
+///                   syntax takes one port and resolves the host by name.
+///   `enable_firewall`  whether a `netsh advfirewall` rule was added for this
+///                   port. The reference's firewall half is kept verbatim
+///                   (spec 3 line 239); only the forwarding mechanism changed.
+///   `is_active`     always true for a rule read out of adb -- a mapping is in
+///                   the table or it is not. Kept because the card reads it.
+export struct PortProxyRuleUI {
+    id: string,
+    distro_name: string,
+    listen_address: string,
+    listen_port: string,
+    target_port: string,
+    enable_firewall: bool,
+    is_active: bool,
+}
+
 
 export global Theme {
     in property <bool> dark_mode: false;

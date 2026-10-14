@@ -345,37 +345,91 @@ fn settings_uri(aumid: &str) -> Option<String> {
     }
 }
 
-/// What Android wants written to `http_proxy` to turn the proxy **off**.
+/// The settings key `ProxyTracker.loadGlobalProxy` reads the host from.
 ///
-/// `:0`, not an empty string. Measured on this machine: with nothing configured
-/// every one of the three globals answers the literal `null`, and writing `:0`
-/// is what leaves all three answering `:0` afterwards. An empty value is not
-/// what the platform uses for "off", so writing one is writing a value nothing
-/// recognises. The constant exists so the op and the test cannot drift into
-/// different "off" values.
+/// **The names in this section are the whole story of a bug this feature had
+/// for about an hour.** Android has *two* sets of proxy globals and they are
+/// not connected:
+///
+/// | read by the system (AOSP `ProxyTracker`) | legacy, not read at load |
+/// |---|---|
+/// | `global_http_proxy_host` | `http_proxy_host` |
+/// | `global_http_proxy_port` | `http_proxy_port` |
+/// | `global_http_proxy_exclusion_list` | -- |
+/// | -- | `http_proxy` (combined `host:port`) |
+///
+/// The first version wrote `http_proxy_host` / `http_proxy_port` / `http_proxy`,
+/// which are the *second* column -- i.e. not what `loadGlobalProxy` reads at all.
+/// It would have passed any test that only checked that the values the code
+/// wrote came back, because both columns do round-trip through `settings`.
+/// AOSP's own `ProxyTracker.setGlobalProxy` is what names the first column; its
+/// comment and `global.proto` ("Including Global.HTTP_PROXY is redundant since
+/// the data is also encompassed in the host and port fields") say so.
+pub const PROXY_HOST_GLOBAL: &str = "global_http_proxy_host";
+pub const PROXY_PORT_GLOBAL: &str = "global_http_proxy_port";
+pub const PROXY_EXCLUSION_GLOBAL: &str = "global_http_proxy_exclusion_list";
+
+/// The deprecated combined `Settings.Global.HTTP_PROXY`.
+///
+/// Handled **separately and deliberately**, because AOSP reads it first and
+/// destructively: `ProxyTracker.loadDeprecatedGlobalHttpProxy()` splits it on
+/// `:` and calls `setGlobalProxy(ProxyInfo(host, port, Collections.emptyList()))`
+/// -- an **empty exclusion list** -- and on recent versions returns `true`
+/// immediately, so the trio above is never consulted.
+///
+/// Consequences, both taken from that source rather than inferred:
+///
+/// - **Setting a proxy must `settings delete` this key**, not write it. Left
+///   holding a value, it silently discards whatever exclusion list was written.
+/// - **Clearing must write `:0` to it.** `":0".split(':')` yields `["", "0"]`,
+///   giving `ProxyInfo("", 0, "")`, whose host is empty -- so `setGlobalProxy`
+///   takes its else-branch and nulls `mGlobalProxy`. That is the documented
+///   immediate clear, and it is why [`CLEARED_PROXY`] is `:0` and not empty.
+///
+/// The measurement that disambiguated this: `settings delete global http_proxy`
+/// on a factory state answers `null`, not `:0`. The `:0` seen before that was
+/// our own earlier write, not a platform default.
+pub const DEPRECATED_PROXY_GLOBAL: &str = "http_proxy";
+
+/// What Android wants written to [`DEPRECATED_PROXY_GLOBAL`] to turn the proxy
+/// **off**.
+///
+/// `:0`, not an empty string, and for the reason given on that constant: it is
+/// the value whose split gives an empty host, which is how AOSP's own clear
+/// branch is reached. See MAPPING 14.
 pub const CLEARED_PROXY: &str = ":0";
 
-/// Globals that have never been written read back as this literal, not as an
-/// empty line (measured).
+/// Globals that have never been written read back as this literal (measured).
 pub const UNSET_PROXY_GLOBAL: &str = "null";
+
+/// Android's own range for a proxy port, from `ProxySelector.validate` /
+/// `ProxyInfo.isValid`: `portVal <= 0 || portVal > 0xFFFF` is invalid.
+///
+/// 1..=65535 rather than 65534. The reference's own text says 65534, and its
+/// `network.proxy_error_port` key keeps that number; the range here follows
+/// the platform this page writes to, and MAPPING 14 records the off-by-one.
+pub const PROXY_PORT_MIN: u32 = 1;
+pub const PROXY_PORT_MAX: u32 = 0xFFFF;
 
 /// `<host>:<port>` from two `settings` reads, or `None` for "not set".
 ///
-/// Absence has three spellings on this platform and all three mean "off":
+/// Absence has three spellings and all three mean "off" -- `null` (never
+/// written), `:0` (the clear value this module writes), and empty.
 ///
-/// - `null` -- the global has never been written (measured).
-/// - `:0` -- the value this module writes to turn the proxy off, read back
-///   through (measured).
-/// - empty -- what a shell that strips the reply gives (measured on the fake,
-///   and the safe assumption about any host that trims differently).
-///
-/// A host with no port is `None` too, and deliberately: Android accepts
-/// `settings put global http_proxy 127.0.0.1` and then ignores it, so treating
-/// it as a value would write a setting that looks applied and is not.
+/// A host with no port is `None`, and so is a port outside
+/// [`PROXY_PORT_MIN`]=..=[`PROXY_PORT_MAX`]. Both are refusals rather than
+/// conversions: Android accepts `settings put global http_proxy 127.0.0.1` and
+/// then ignores it, and `ProxyInfo.isValid()` rejects a port of 0 or one above
+/// 0xFFFF outright -- so writing either would produce a setting that looks
+/// applied and is not, which is worse than refusing before the write.
 pub fn http_proxy_value(host: &str, port: &str) -> Option<String> {
     let host = host.trim();
     let port = port.trim();
     if is_unset_proxy_global(host) || is_unset_proxy_global(port) {
+        return None;
+    }
+    let number: u32 = port.parse().ok()?;
+    if !(PROXY_PORT_MIN..=PROXY_PORT_MAX).contains(&number) {
         return None;
     }
     Some(format!("{host}:{port}"))
@@ -861,59 +915,92 @@ impl WsaDashboard {
         Ok(parse_reverse_list(&out.stdout))
     }
 
-    /// Point Android at an HTTP proxy (spec 3 line 239).
+    /// Point Android at an HTTP proxy.
     ///
-    /// Writes **three** globals, through [`WsaCommand::Shell`] rather than a new
-    /// variant: they are ordinary `adb shell settings` subcommands, and a variant
-    /// per `settings put` would put the whole settings namespace in the command
-    /// table.
+    /// Four commands, all through [`WsaCommand::Shell`]: they are ordinary
+    /// `adb shell settings` subcommands and a variant per `settings put` would
+    /// put the whole settings namespace in the command table.
     ///
-    /// **Why three, measured on this machine:** the platform keeps them
-    /// *independently* and derives nothing between them. Writing
-    /// `http_proxy 10.0.2.2:8081` leaves `http_proxy_host` and `http_proxy_port`
-    /// answering `:0`; writing `http_proxy_host` + `http_proxy_port` leaves
-    /// `http_proxy` answering `:0`. So whichever one is written alone leaves the
-    /// other two saying "off" -- a state where the Settings app and the system's
-    /// own proxy tracker disagree about whether there is a proxy.
+    /// Writes [`PROXY_HOST_GLOBAL`] / [`PROXY_PORT_GLOBAL`] / optionally
+    /// [`PROXY_EXCLUSION_GLOBAL`] -- the three AOSP's `ProxyTracker` writes and
+    /// `loadGlobalProxy` reads -- and **deletes** [`DEPRECATED_PROXY_GLOBAL`].
     ///
-    /// **This corrects spec 1 line 116**, which recorded that
-    /// `global_http_proxy_host` / `_port` read back consistently after a
-    /// combined write. They do not, on this build. See MAPPING 14.
+    /// The delete is the load-bearing half. `settings put` cannot write an
+    /// empty string (measured: `Bad arguments`), so a previously-set legacy key
+    /// cannot be blanked; and leaving it populated makes AOSP discard the
+    /// exclusion list we just wrote, because `loadDeprecatedGlobalHttpProxy`
+    /// builds its `ProxyInfo` with `Collections.emptyList()`. Deleting it is
+    /// the only way to say "read the trio, not this".
     ///
-    /// **Refuses a host with no port** rather than writing it, because Android
-    /// accepts that and then ignores it.
-    pub async fn set_http_proxy(&self, host: &str, port: &str) -> Result<(), OpsError> {
+    /// `no_proxy` may be empty, and an empty one is written by **deleting** the
+    /// exclusion global rather than putting an empty value, for the same
+    /// `Bad arguments` reason.
+    ///
+    /// **Refuses a host with no valid port** rather than writing it: Android
+    /// accepts a host-only value and ignores it, and `ProxyInfo.isValid()`
+    /// rejects port 0 and anything above 0xFFFF.
+    pub async fn set_http_proxy(&self, host: &str, port: &str, no_proxy: &str) -> Result<(), OpsError> {
         let Some(value) = http_proxy_value(host, port) else {
             return Err(OpsError::Invalid(format!(
-                "a proxy needs both a host and a port (got host={host:?}, port={port:?})"
+                "a proxy needs a host and a port in {PROXY_PORT_MIN}..={PROXY_PORT_MAX} \
+                 (got host={host:?}, port={port:?})"
             )));
         };
-        self.put_global("http_proxy", &value).await?;
-        self.put_global("http_proxy_host", host.trim()).await?;
-        self.put_global("http_proxy_port", port.trim()).await
+        self.put_global(PROXY_HOST_GLOBAL, host.trim()).await?;
+        self.put_global(PROXY_PORT_GLOBAL, port.trim()).await?;
+
+        let no_proxy = no_proxy.trim();
+        if no_proxy.is_empty() {
+            self.delete_global(PROXY_EXCLUSION_GLOBAL).await?;
+        } else {
+            self.put_global(PROXY_EXCLUSION_GLOBAL, no_proxy).await?;
+        }
+
+        // Not `put(DEPRECATED_PROXY_GLOBAL, value)` -- see that constant: a
+        // value here makes AOSP overwrite our exclusion list with an empty one.
+        self.delete_global(DEPRECATED_PROXY_GLOBAL).await?;
+        Ok(())
     }
 
-    /// Turn the proxy off, by putting the platform's own off value into all three
-    /// globals. See [`set_http_proxy`] for why all three, and [`CLEARED_PROXY`]
-    /// for why `:0` rather than an empty value.
+    /// Turn the proxy off, by reaching AOSP's own clear branch.
+    ///
+    /// Writing [`CLEARED_PROXY`] to [`DEPRECATED_PROXY_GLOBAL`] first is what
+    /// actually nulls `mGlobalProxy` -- `":0"` splits to `["", "0"]`, giving an
+    /// empty host, which is exactly the condition `setGlobalProxy`'s else-branch
+    /// tests for. The three deletes then leave nothing behind to be read back as
+    /// a proxy by the next `loadGlobalProxy`.
     pub async fn clear_http_proxy(&self) -> Result<(), OpsError> {
-        for name in ["http_proxy", "http_proxy_host", "http_proxy_port"] {
-            self.put_global(name, CLEARED_PROXY).await?;
+        self.put_global(DEPRECATED_PROXY_GLOBAL, CLEARED_PROXY).await?;
+        for name in [PROXY_HOST_GLOBAL, PROXY_PORT_GLOBAL, PROXY_EXCLUSION_GLOBAL] {
+            self.delete_global(name).await?;
         }
         Ok(())
     }
 
     /// The proxy Android is currently configured with, or `""`.
     ///
-    /// Reads the **split pair**, which is what the page's two fields edit, and
-    /// not the combined string. Reading the combined one would put the
-    /// splitting rule here and nowhere else, and would disagree with what
-    /// [`set_http_proxy`] last wrote whenever an older tool left the two out of
-    /// step -- which the platform permits, as measured.
+    /// Reads the **AOSP column**, not the legacy one -- see
+    /// [`PROXY_HOST_GLOBAL`] for why that distinction is the bug.
     pub async fn get_http_proxy(&self) -> Result<String, OpsError> {
-        let host = self.read_global("http_proxy_host").await?;
-        let port = self.read_global("http_proxy_port").await?;
+        let host = self.read_global(PROXY_HOST_GLOBAL).await?;
+        let port = self.read_global(PROXY_PORT_GLOBAL).await?;
         Ok(http_proxy_value(&host, &port).unwrap_or_default())
+    }
+
+    /// The exclusion list, comma-separated, or `""`.
+    ///
+    /// Its own accessor rather than folded into [`get_http_proxy`]: the page's
+    /// two fields and its "no proxy for" field edit and read separately, and a
+    /// combined accessor would have to invent a separator that appears nowhere
+    /// in what Android stores.
+    pub async fn get_proxy_exclusion_list(&self) -> Result<String, OpsError> {
+        let list = self.read_global(PROXY_EXCLUSION_GLOBAL).await?;
+        let list = list.trim();
+        if is_unset_proxy_global(list) {
+            Ok(String::new())
+        } else {
+            Ok(list.to_owned())
+        }
     }
 
     /// `adb shell settings put global <name> <value>`.
@@ -926,6 +1013,24 @@ impl WsaDashboard {
                     "global".into(),
                     name.into(),
                     value.into(),
+                ],
+            })
+            .await?;
+        silent_success(out)
+    }
+
+    /// `adb shell settings delete global <name>`.
+    ///
+    /// The only way to *clear* one: `settings put` rejects an empty value with
+    /// `Bad arguments` (measured), so there is no write that means "no value".
+    async fn delete_global(&self, name: &str) -> Result<(), OpsError> {
+        let out = self
+            .run(WsaCommand::Shell {
+                args: vec![
+                    "settings".into(),
+                    "delete".into(),
+                    "global".into(),
+                    name.into(),
                 ],
             })
             .await?;
@@ -1230,61 +1335,106 @@ if "%~2"=="settings" goto settings
 echo fake-adb: no rule for shell %* 1>&2
 exit /b 1
 
-rem `settings get|put global <name> [value]`. Two files, host and port, because
-rem that is how Android really keeps it and a fake that stored one combined
-rem string would let a bug that dropped the split pass every test here.
+rem `settings get|put|delete global <name> [value]`.
+rem
+rem Four files, one per key, and **they are named for the two columns Android
+rem really has**: AOSP's `ProxyTracker` reads `global_http_proxy_host` /
+rem `global_http_proxy_port` / `global_http_proxy_exclusion_list`, while
+rem `http_proxy` is the deprecated combined value it reads *first* and lets
+rem override the trio (see `DEPRECATED_PROXY_GLOBAL` for the source). Separate
+rem storage, neither derived from the other -- so one file per *side* is what
+rem makes this fake catch a regression that writes to the wrong column, which
+rem is the bug this replaces. A single combined file would have passed every
+rem test here while writing nothing the platform reads.
 :settings
 if "%~3"=="get" goto :settings_get
 if "%~3"=="put" goto :settings_put
+if "%~3"=="delete" goto :settings_delete
 echo fake-adb: no rule for shell settings %* 1>&2
 exit /b 1
 
 rem Absent file answers the literal `null`, which is what Android answers for a
-rem global that has never been written (measured). An earlier version also
-rem answered the combined `http_proxy` by reading both files into variables
-rem inside a parenthesised block -- which prints `::` forever, because a `set`
-rem in a block is not visible to the `%VAR%`s in that same block.
+rem global with no row (measured: `settings delete` then `get` gives `null`).
 :settings_get
-if "%~5"=="http_proxy_host" goto :get_host
-if "%~5"=="http_proxy_port" goto :get_port
-if "%~5"=="http_proxy" goto :get_combined
+if "%~5"=="global_http_proxy_host" goto :get_aosp_host
+if "%~5"=="global_http_proxy_port" goto :get_aosp_port
+if "%~5"=="global_http_proxy_exclusion_list" goto :get_aosp_excl
+if "%~5"=="http_proxy" goto :get_deprecated
 echo null
 exit /b 0
 
-:get_host
-if exist "%S%proxy.host" (type "%S%proxy.host") else (echo null)
+:get_aosp_host
+if exist "%S%aosp.host" (type "%S%aosp.host") else (echo null)
 exit /b 0
 
-:get_port
-if exist "%S%proxy.port" (type "%S%proxy.port") else (echo null)
+:get_aosp_port
+if exist "%S%aosp.port" (type "%S%aosp.port") else (echo null)
 exit /b 0
 
-:get_combined
-if exist "%S%proxy.combined" (type "%S%proxy.combined") else (echo null)
+:get_aosp_excl
+if exist "%S%aosp.excl" (type "%S%aosp.excl") else (echo null)
 exit /b 0
 
-rem All three globals are stored independently and derive nothing from each
-rem other, because that is how the platform behaves (measured): writing
-rem `http_proxy` alone leaves host and port at `:0`. A fake that kept them in
-rem step would let a regression that dropped one of the three writes pass here.
+:get_deprecated
+if exist "%S%deprecated.proxy" (type "%S%deprecated.proxy") else (echo null)
+exit /b 0
+
+rem Measured: `settings put global <name> ''` answers "Bad arguments" and exits
+rem 1. There is therefore **no write that means "no value"** -- a path that
+rem needs to clear one must delete instead, and `set_http_proxy` is written that
+rem way for exactly this reason. A fake that accepted an empty put would let
+rem that mistake pass here and fail on the device.
 :settings_put
-if "%~5"=="http_proxy" goto :put_proxy
-if "%~5"=="http_proxy_host" goto :put_host
-if "%~5"=="http_proxy_port" goto :put_port
+if "%~6"=="" goto :put_empty
+if "%~5"=="global_http_proxy_host" goto :put_aosp_host
+if "%~5"=="global_http_proxy_port" goto :put_aosp_port
+if "%~5"=="global_http_proxy_exclusion_list" goto :put_aosp_excl
+if "%~5"=="http_proxy" goto :put_deprecated
 echo fake-adb: no rule for shell settings put %* 1>&2
 exit /b 1
 
-:put_proxy
->"%S%proxy.host" echo %~6
->"%S%proxy.combined" echo %~6
+:put_empty
+echo Bad arguments 1>&2
+exit /b 1
+
+:put_aosp_host
+>"%S%aosp.host" echo %~6
 exit /b 0
 
-:put_host
->"%S%proxy.host" echo %~6
+:put_aosp_port
+>"%S%aosp.port" echo %~6
 exit /b 0
 
-:put_port
->"%S%proxy.port" echo %~6
+:put_aosp_excl
+>"%S%aosp.excl" echo %~6
+exit /b 0
+
+:put_deprecated
+>"%S%deprecated.proxy" echo %~6
+exit /b 0
+
+:settings_delete
+if "%~5"=="global_http_proxy_host" goto :del_aosp_host
+if "%~5"=="global_http_proxy_port" goto :del_aosp_port
+if "%~5"=="global_http_proxy_exclusion_list" goto :del_aosp_excl
+if "%~5"=="http_proxy" goto :del_deprecated
+echo fake-adb: no rule for shell settings delete %* 1>&2
+exit /b 1
+
+:del_aosp_host
+del /q "%S%aosp.host" 2>nul
+exit /b 0
+
+:del_aosp_port
+del /q "%S%aosp.port" 2>nul
+exit /b 0
+
+:del_aosp_excl
+del /q "%S%aosp.excl" 2>nul
+exit /b 0
+
+:del_deprecated
+del /q "%S%deprecated.proxy" 2>nul
 exit /b 0
 
 :ps
@@ -1782,22 +1932,37 @@ R5CT30XXXXX\tunauthorized\n\
 
     // --- HTTP proxy (P5b) ----------------------------------------------------
     //
-    // Spec 1 line 116 records that `settings put global http_proxy <host:port>`
-    // is writable on this subsystem and that `global_http_proxy_host` /
-    // `_port` read back consistently. Spec 3 line 239 makes this the network
-    // page's second tab, *replacing* the reference's approach -- the reference
-    // exports an `HTTP_PROXY` environment variable into a WSL shell, which has
-    // no meaning for an Android subsystem.
+    // What the platform actually does here took three corrections to get right,
+    // and each one was a measurement that overturned something. Recorded in
+    // MAPPING 14; the short version, because the tests below are pointless
+    // without it:
+    //
+    //  1. Android has **two columns** of proxy globals. AOSP's `ProxyTracker`
+    //     writes and reads `global_http_proxy_host` / `_port` /
+    //     `_exclusion_list`; `http_proxy` (and `http_proxy_host` / `_port`,
+    //     which are a third, older set) are separate. The first version of this
+    //     feature wrote the column nobody reads.
+    //  2. `loadDeprecatedGlobalHttpProxy()` reads `http_proxy` **first** and, on
+    //     a hit, builds its `ProxyInfo` with an **empty exclusion list** -- so
+    //     setting the proxy has to *delete* that key, not write it.
+    //  3. `settings put global <name> ''` answers `Bad arguments` (exit 1), so
+    //     there is no write that means "no value": clearing must `delete`.
+    //
+    // Spec 3 line 239 makes this the network page's second tab, replacing the
+    // reference's approach -- the reference exports an `HTTP_PROXY` environment
+    // variable into a WSL shell, which has no meaning for an Android subsystem.
+    // Spec 1 line 116 said `global_http_proxy_host` / `_port` read back
+    // consistently after a combined write; they do not, and 14 records that
+    // correction.
 
-    /// Measured on this machine with no proxy configured: all three reads come
-    /// back the literal `null`, not an empty line. Reading `null` as a host
-    /// would render the page as "proxy: null" instead of "not set", so the
-    /// literal has to be recognised.
+    /// Measured on a factory state: every one of these reads back the literal
+    /// `null`, not an empty line. Reading `null` as a host would render the
+    /// page as "proxy: null" instead of "not set".
     ///
     /// `:0` is the third spelling of "off" -- the value this module writes when
-    /// clearing, read straight back through. The first version of this function
-    /// knew only `null` and empty, so a proxy the dashboard had just turned off
-    /// read back as the host `:0` on port `:0`.
+    /// clearing. The first version of this function knew only `null` and empty,
+    /// so a proxy the dashboard had just turned off read back as the host `:0`
+    /// on port `:0`.
     #[test]
     fn all_three_spellings_of_off_are_recognised() {
         assert_eq!(http_proxy_value("null", "null"), None);
@@ -1815,72 +1980,142 @@ R5CT30XXXXX\tunauthorized\n\
         assert_eq!(http_proxy_value("127.0.0.1", "null"), None);
     }
 
-    /// Turning the proxy off is `settings put global http_proxy :0` on Android,
-    /// not an empty value -- an empty value leaves the previous proxy in place,
-    /// which is the opposite of what the reader asked for.
+    /// The range is Android's, not ours: `ProxySelector.validate` rejects
+    /// `portVal <= 0 || portVal > 0xFFFF`, and `ProxyInfo.isValid()` enforces
+    /// the same when `loadGlobalProxy` builds the proxy. A value outside it
+    /// would be stored by `settings put` and then discarded by the reader --
+    /// the "looks applied and is not" case, which is why this refuses before
+    /// the write rather than after.
+    ///
+    /// Note 65535, and that the reference's own `network.proxy_error_port` says
+    /// 65534. Its number came from a netsh range; ours comes from the platform
+    /// we write to. MAPPING 14 records the off-by-one.
+    #[test]
+    fn a_port_outside_androids_range_is_refused() {
+        assert_eq!(http_proxy_value("10.0.2.2", "0"), None, "port 0 is invalid");
+        assert_eq!(http_proxy_value("10.0.2.2", "65536"), None, "above 0xFFFF");
+        assert_eq!(http_proxy_value("10.0.2.2", "1").as_deref(), Some("10.0.2.2:1"));
+        assert_eq!(
+            http_proxy_value("10.0.2.2", "65535").as_deref(),
+            Some("10.0.2.2:65535")
+        );
+        assert_eq!(http_proxy_value("10.0.2.2", "eighty"), None, "not a number");
+    }
+
+    /// Turning the proxy off is `settings put global http_proxy :0`, not an
+    /// empty value. AOSP's own reason, from `loadDeprecatedGlobalHttpProxy`:
+    /// `":0".split(':')` is `["", "0"]`, giving `ProxyInfo("", 0, "")`, whose
+    /// empty host is exactly what `setGlobalProxy`'s else-branch tests for.
     #[test]
     fn clearing_the_proxy_writes_androids_off_value() {
         assert_eq!(CLEARED_PROXY, ":0");
         assert!(http_proxy_value("", "").is_none());
     }
 
-    /// Setting a proxy must write **all three** globals.
+    /// **The test that would have caught the bug.**
     ///
-    /// This is the one measurement that changed the design. On this build the
-    /// platform stores them independently and derives nothing between them:
-    /// writing `http_proxy 10.0.2.2:8081` leaves `http_proxy_host` and
-    /// `http_proxy_port` answering `:0`, and the reverse holds too. An
-    /// implementation that writes only the combined string leaves the Settings
-    /// app showing "no proxy" next to a system that has one; one that writes
-    /// only the split pair leaves the system's own proxy tracker with `:0`.
-    /// Either half of that disagreement is invisible to a read of a single
-    /// global, which is exactly why this asserts the file, not the value.
+    /// Setting must land in the AOSP column and must leave *nothing* in the
+    /// deprecated one. Asserting only that the values we wrote came back would
+    /// have passed for the first version of this feature, which wrote
+    /// `http_proxy_host` / `http_proxy_port` / `http_proxy` -- three keys
+    /// `loadGlobalProxy` never reads. So this reads the stand-in's own files
+    /// for the two columns separately, because only a fake that models them
+    /// separately can tell "wrote the right key" from "wrote a key".
     #[tokio::test]
-    async fn setting_a_proxy_writes_the_combined_and_the_split_globals() {
+    async fn setting_a_proxy_writes_the_aosp_column_and_removes_the_deprecated_one() {
         let adb = FakeAdb::new();
         adb.dashboard()
-            .set_http_proxy("10.0.2.2", "8081")
+            .set_http_proxy("10.0.2.2", "8081", "localhost,127.0.0.1")
             .await
             .expect("set");
 
-        let state = adb.path();
         for (file, expected) in [
-            ("proxy.combined", "10.0.2.2:8081"),
-            ("proxy.host", "10.0.2.2"),
-            ("proxy.port", "8081"),
+            ("aosp.host", "10.0.2.2"),
+            ("aosp.port", "8081"),
+            ("aosp.excl", "localhost,127.0.0.1"),
         ] {
-            let actual = std::fs::read_to_string(state.join(file))
+            let actual = std::fs::read_to_string(adb.path().join(file))
                 .unwrap_or_else(|e| panic!("{file} was never written: {e}"));
             assert_eq!(actual.trim(), expected, "{file}");
         }
+
+        // The deprecated key must be *absent*, not holding the combined value.
+        // AOSP reads it first and, on a hit, overwrites our exclusion list with
+        // an empty one -- so this is the difference between an exclusion list
+        // that applies and one that silently does not.
+        assert!(
+            !adb.path().join("deprecated.proxy").exists(),
+            "the deprecated http_proxy key still holds a value, which makes AOSP \
+             discard the exclusion list we just wrote"
+        );
     }
 
-    /// And clearing must put the off value into all three, for the same reason:
-    /// a global left holding the old host is a proxy the reader cannot switch
-    /// off from this page.
+    /// The exclusion list round-trips, which is the one field of the two the
+    /// reference's page edits that has no analogue in its own mechanism -- the
+    /// reference sets env vars, we set an AOSP global.
     #[tokio::test]
-    async fn clearing_writes_the_off_value_into_all_three_globals() {
+    async fn the_exclusion_list_round_trips_on_its_own_accessors() {
         let adb = FakeAdb::new();
         let dash = adb.dashboard();
-        dash.set_http_proxy("10.0.2.2", "8081").await.expect("set");
+        assert_eq!(
+            dash.get_proxy_exclusion_list().await.expect("read unset"),
+            "",
+            "an unset list is empty, not an error"
+        );
+
+        dash.set_http_proxy("10.0.2.2", "8081", "localhost,127.0.0.1")
+            .await
+            .expect("set");
+        assert_eq!(
+            dash.get_proxy_exclusion_list().await.expect("read back"),
+            "localhost,127.0.0.1"
+        );
+
+        dash.set_http_proxy("10.0.2.2", "8081", "").await.expect("clear the list");
+        assert_eq!(
+            dash.get_proxy_exclusion_list().await.expect("read back"),
+            "",
+            "an emptied list must not survive"
+        );
+    }
+
+    /// Clearing must leave **no key a `loadGlobalProxy` would read as a proxy**.
+    ///
+    /// The deprecated key gets the off value (`:0`, per the constant above) and
+    /// the three AOSP keys are *deleted*, because `settings put` cannot write
+    /// the empty value AOSP itself uses for "no proxy" -- measured as
+    /// `Bad arguments`. A fake that let an empty put through would make a
+    /// regression into that write pass here and fail on the device.
+    #[tokio::test]
+    async fn clearing_leaves_nothing_a_load_would_read_as_a_proxy() {
+        let adb = FakeAdb::new();
+        let dash = adb.dashboard();
+        dash.set_http_proxy("10.0.2.2", "8081", "localhost")
+            .await
+            .expect("set");
         dash.clear_http_proxy().await.expect("clear");
 
-        for file in ["proxy.combined", "proxy.host", "proxy.port"] {
-            let actual = std::fs::read_to_string(adb.path().join(file))
-                .unwrap_or_else(|e| panic!("{file} vanished instead of being cleared: {e}"));
-            assert_eq!(actual.trim(), CLEARED_PROXY, "{file}");
+        assert_eq!(
+            std::fs::read_to_string(adb.path().join("deprecated.proxy"))
+                .expect("the deprecated key vanished instead of taking the off value")
+                .trim(),
+            CLEARED_PROXY
+        );
+        for file in ["aosp.host", "aosp.port", "aosp.excl"] {
+            assert!(
+                !adb.path().join(file).exists(),
+                "{file} survived the clear, so the next load reads it as a proxy"
+            );
         }
     }
 
-    /// The loop, on the stand-in: set, read back, clear, read back empty. The
-    /// stand-in gains a `settings` branch for this, because `settings` is a
-    /// `shell` subcommand and the existing fake only modelled five of them.
+    /// The loop: set, read back, clear, read back empty.
     #[tokio::test]
     async fn the_proxy_survives_a_set_read_clear_loop() {
         let adb = FakeAdb::new();
         let dash = adb.dashboard();
 
-        dash.set_http_proxy("127.0.0.1", "7890").await.expect("set");
+        dash.set_http_proxy("127.0.0.1", "7890", "").await.expect("set");
         assert_eq!(
             dash.get_http_proxy().await.expect("read back"),
             "127.0.0.1:7890"
@@ -1898,23 +2133,22 @@ R5CT30XXXXX\tunauthorized\n\
     /// accepts it and then ignores it -- a setting that looks applied and is
     /// not.
     ///
-    /// Also the assertion that the stand-in keeps the two globals **separate**.
-    /// The set/read/clear loop above would still pass if the fake stored one
-    /// combined string, so it cannot tell "the code asks for both globals" from
-    /// "the code asks for one". Writing the host file directly is the only way
-    /// to reach `get_http_proxy` in that state, and it answers "no port, so no
-    /// proxy" rather than half a proxy.
+    /// Also the assertion that the stand-in keeps host and port in **separate
+    /// files**. The set/read/clear loop above would still pass if the fake
+    /// stored one combined string, so it cannot tell "reads both globals" from
+    /// "reads one". Writing the host file directly is the only way to reach
+    /// `get_http_proxy` in that state.
     #[tokio::test]
     async fn a_host_with_no_port_reads_back_as_no_proxy_not_as_half_of_one() {
         let adb = FakeAdb::new();
-        adb.write("proxy.host", "10.0.2.2\n");
+        adb.write("aosp.host", "10.0.2.2\n");
         assert_eq!(
             adb.dashboard().get_http_proxy().await.expect("read back"),
             "",
             "a host with no port is not a proxy"
         );
 
-        adb.write("proxy.port", "8080\n");
+        adb.write("aosp.port", "8080\n");
         assert_eq!(
             adb.dashboard().get_http_proxy().await.expect("read back"),
             "10.0.2.2:8080",
@@ -1934,18 +2168,32 @@ R5CT30XXXXX\tunauthorized\n\
         );
     }
 
-    /// A host with no port must never reach `settings put`, because Android
-    /// accepts it and then ignores it -- a setting that looks applied and is
-    /// not.
+    /// A host with no port, and now also one outside Android's range, must
+    /// never reach `settings put`.
     #[tokio::test]
     async fn setting_a_proxy_without_a_port_is_refused() {
         let adb = FakeAdb::new();
         let err = adb
             .dashboard()
-            .set_http_proxy("127.0.0.1", "")
+            .set_http_proxy("127.0.0.1", "", "")
             .await
             .expect_err("half a proxy is not a proxy");
         assert!(err.to_string().contains("port"), "{err}");
+
+        // And the refusal happens before anything is written, not after: a
+        // partially-applied proxy is worse than none, because the next read
+        // reports a host with no port and the page shows an unset proxy while
+        // a half-written global sits there.
+        let err = adb
+            .dashboard()
+            .set_http_proxy("127.0.0.1", "70000", "")
+            .await
+            .expect_err("port above 0xFFFF is not a port");
+        assert!(err.to_string().contains("65535"), "{err}");
+        assert!(
+            !adb.path().join("aosp.host").exists(),
+            "a refused set must not have written anything"
+        );
     }
 
     /// The whole loop on the stand-in: forward a port, see it listed, remove it,

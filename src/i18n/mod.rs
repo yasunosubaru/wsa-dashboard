@@ -276,6 +276,74 @@ pub static ENGLISH: &[(&str, &str)] = &[
     // the lecture, because the home page says it every few seconds while
     // anything is busy.
     ("toast.distro_busy", "{0} is busy ({1})"),
+    // -- network: the port-forwarding / proxy page (P5b) --------------------
+    // Key names are the reference's own `[network]` block (Q12: identifiers,
+    // keys and config names keep the original). Values are its wherever the
+    // words are about what is being *looked at*, and ours wherever the words
+    // are about the *mechanism*, because the mechanism changed:
+    //
+    //   forward    the reference forwards to a WSL distro's IP through
+    //              `netsh interface portproxy`; ours is `adb forward` /
+    //              `adb reverse`, which has no distro and no address (spec 3
+    //              line 239). The nouns in the labels are still ports, so the
+    //              English is unchanged and only the data behind it differs.
+    //   firewall   kept verbatim -- spec 3 line 239 keeps the reference's netsh
+    //              firewall half even though the forwarding half is replaced.
+    //   staging    `apply_all_rules_btn` / `cancel_all_rules_btn` /
+    //              `rule_apply_tooltip` / `rule_cancel_tooltip` describe the
+    //              reference's "edit now, apply later" model. adb has no
+    //              staging: a mapping is in the table or it is not, and it is
+    //              in the table the moment you add it. The keys stay and the
+    //              cards no longer render them (same trade as P5a's
+    //              `MountDiskCard`; MAPPING 14).
+    //   initialize the reference's button installs the elevated helper netsh
+    //              needs. adb needs no helper, so the button is gated off; P7's
+    //              task scheduler is what gives it a real job here.
+    ("network.tab_port_forwarding", "Port Forwarding"),
+    ("network.tab_http_proxy", "HTTP Proxy"),
+    ("network.add_rule_btn", "Add Rule"),
+    ("network.apply_all_rules_btn", "Apply all rules"),
+    ("network.cancel_all_rules_btn", "Cancel all rules"),
+    ("network.initialize_btn", "Auto-Start Forwarding"),
+    ("network.no_rules", "No port forwarding rules configured"),
+    // The reference's wording says *it* has a mode. Ours does not -- `adb
+    // forward` works whatever the subsystem is doing -- but the key, the branch
+    // that renders it, and `{0}` all survive, because the reference's own
+    // non-NAT branch is compiled and simply unreachable on a NAT system.
+    ("network.nat_mode_required", "Port forwarding is only available in NAT mode. Your current mode is: {0}"),
+    ("network.rule_fw_on", "FW: On"),
+    ("network.rule_fw_off", "FW: Off"),
+    ("network.rule_apply_tooltip", "Apply Rule"),
+    ("network.rule_cancel_tooltip", "Cancel Rule"),
+    // The proxy tab. The reference is configuring a proxy for a WSL shell;
+    // ours is configuring Android's global HTTP proxy, so three of these
+    // values drop the reference's WSL context:
+    ("network.proxy_no_proxy", "No proxy"),
+    ("network.proxy_config", "Proxy configuration"),
+    ("network.proxy_host", "Host name:"),
+    ("network.proxy_port", "Port number:"),
+    ("network.proxy_no_proxy_label", "No proxy for:"),
+    ("network.proxy_auth", "Proxy authentication"),
+    ("network.proxy_user", "Login:"),
+    ("network.proxy_pass", "Password:"),
+    ("network.proxy_check_btn", "Check Connection"),
+    // The reference's says "Reopen the terminal", which is a WSL shell. Android
+    // reads the setting itself; nothing of ours has a terminal to reopen.
+    ("network.proxy_save_success", "Proxy saved."),
+    // "1 and 65534" is the reference's number, and its netsh range. Android's
+    // is 1..=0xFFFF (AOSP `ProxySelector.validate`), which is what
+    // `http_proxy_value` enforces -- so the sentence has to match the code
+    // rather than the key's original English. MAPPING 14 records the
+    // off-by-one.
+    ("network.proxy_error_port", "Port must be a number between 1 and 65535"),
+    ("network.proxy_error_invalid", "Invalid proxy config: {0}"),
+    ("network.proxy_error_localhost", "Localhost or 127.0.0.1 is not allowed"),
+    ("network.proxy_test_success", "Connection successful: HTTP {0}"),
+    ("network.proxy_test_failed", "Connection failed: {0}"),
+    ("network.rules_apply_success", "Port {0} successfully mapped to {1}"),
+    ("network.rules_apply_all_failed", "Apply all failed: {0}"),
+    ("network.rules_cancel_all_failed", "Cancel all failed: {0}"),
+    ("dialog.save", "Save"),
 ];
 
 #[cfg(test)]

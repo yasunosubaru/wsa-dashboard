@@ -99,6 +99,15 @@ pub enum OpsError {
     /// Carries the operation that got there first so the UI can map it to
     /// `toast.distro_busy` and name what is in the way.
     Busy(OpBusy),
+    /// The request needed a registered WSA package and there is not one -- so
+    /// there was nothing to act on, before any command ran.
+    ///
+    /// Its own variant rather than a `Rejected` string because the two mean
+    /// opposite things to a user: `Rejected` is "the operation ran and did not
+    /// do what you asked", this is "there is nothing here to ask". Folding it
+    /// into `Activate` would be worse still, since `Activate` means Windows
+    /// refused a URI we did try to open.
+    NotInstalled(String),
 }
 
 impl From<ExecError> for OpsError {
@@ -121,6 +130,7 @@ impl std::fmt::Display for OpsError {
                 write!(f, "{detail}")
             }
             Self::NoData(detail) => write!(f, "{detail}"),
+            Self::NotInstalled(detail) => write!(f, "{detail}"),
             Self::Busy(busy) => write!(f, "{busy}"),
         }
     }
@@ -274,6 +284,28 @@ const START_TRIGGER_PACKAGE: &str = "com.android.settings";
 
 fn start_uri() -> String {
     format!("wsa://{START_TRIGGER_PACKAGE}")
+}
+
+/// The URI that opens WSA's own Settings app (spec 2 line 223).
+///
+/// `shell:AppsFolder\<aumid>`, handed to `ShellExecute` as a single URI -- not
+/// an `explorer` process with arguments, because `explorer.exe shell:...`
+/// happens to work and is not the mechanism: what the shell namespace resolves
+/// is the package registration.
+///
+/// `None` for a blank AUMID, and the reason is worth spelling out. Bare
+/// `shell:AppsFolder\` opens as an ordinary *folder*: a user who clicked
+/// Settings on a machine where WSA is not installed would get a blank Explorer
+/// window and no message at all, which reads as a broken WSA rather than as
+/// this program having no package to open. So it refuses, and the op turns that
+/// into words.
+fn settings_uri(aumid: &str) -> Option<String> {
+    let aumid = aumid.trim();
+    if aumid.is_empty() {
+        None
+    } else {
+        Some(format!("shell:AppsFolder\\{aumid}"))
+    }
 }
 
 /// Build an `AppInfo` from a listing entry plus whatever `dumpsys` said.
@@ -635,6 +667,29 @@ impl WsaDashboard {
     pub async fn launch_app(&self, package: &str) -> Result<(), OpsError> {
         let _guard = WsaOpGuard::create(self, op_guard::LAUNCHING)?;
         activate(&launch_uri(package))
+    }
+
+    /// Open WSA's own Settings app (spec 2 line 223).
+    ///
+    /// **No guard.** It activates a Windows shell namespace, not an Android
+    /// operation: nothing here touches the subsystem's state, so there is no
+    /// slot for it to hold and nothing for it to exclude. Spec 2.2's five
+    /// guarded names are all operations against the subsystem, and borrowing
+    /// `LAUNCHING` for this would make the busy toast claim something was
+    /// running that was not.
+    ///
+    /// **No `WsaCommand` variant either**, for the reason `command.rs`'s own
+    /// module comment gives: this shells out to the shell namespace rather than
+    /// to adb, so it has no argv and never reaches the executor.
+    pub async fn open_settings(&self) -> Result<(), OpsError> {
+        let uri = settings_uri(&self.paths.settings_aumid).ok_or_else(|| {
+            OpsError::NotInstalled(
+                "WSA is not installed, so it has no settings app to open (no Appx package \
+                 registered for this user)."
+                    .to_owned(),
+            )
+        })?;
+        activate(&uri)
     }
 
     /// Stop one Android app the way Android itself does.
@@ -1239,6 +1294,48 @@ R5CT30XXXXX\tunauthorized\n\
     #[test]
     fn start_uri_uses_a_package_that_exists_while_booting() {
         assert_eq!(start_uri(), "wsa://com.android.settings");
+    }
+
+    /// Spec 2 line 223: `explorer shell:AppsFolder\…!SettingsApp`. The
+    /// single-URI form, because that is what `ShellExecute` wants -- there is
+    /// no `explorer` process to spawn and hand arguments to.
+    #[test]
+    fn settings_uri_is_the_apps_folder_registration_not_a_wsa_scheme() {
+        assert_eq!(
+            settings_uri("MicrosoftCorporationII.WindowsSubsystemForAndroid_8wekyb3d8bbwe!SettingsApp")
+                .unwrap(),
+            "shell:AppsFolder\\MicrosoftCorporationII.WindowsSubsystemForAndroid_8wekyb3d8bbwe!SettingsApp"
+        );
+        assert!(!settings_uri("X!SettingsApp").unwrap().contains("wsa://"));
+    }
+
+    /// An empty AUMID would otherwise produce `shell:AppsFolder\`, which
+    /// Explorer opens as a *folder* -- a blank-looking window with no error,
+    /// which reads as a broken WSA rather than as "we never found WSA".
+    #[test]
+    fn settings_uri_refuses_an_empty_aumid() {
+        assert!(settings_uri("").is_none());
+        assert!(settings_uri("   ").is_none());
+        assert!(settings_uri("X!SettingsApp").is_some());
+    }
+
+    /// WSA is not installed, so there is no Settings app to open. The op has to
+    /// say so rather than hand Explorer a registration that does not exist --
+    /// and it has to say so *without* launching anything, which is why this is
+    /// worth a test at all: `open::that` on a real machine opens a window, and a
+    /// test that does that is worse than no test.
+    #[tokio::test]
+    async fn opening_settings_without_a_resolved_package_refuses() {
+        let paths = WsaPaths {
+            settings_aumid: String::new(),
+            ..paths_fixture()
+        };
+        let dash = dashboard_for("adb", paths);
+        let err = dash
+            .open_settings()
+            .await
+            .expect_err("no aumid means nothing to open");
+        assert!(err.to_string().contains("settings"), "{err}");
     }
 
     #[test]

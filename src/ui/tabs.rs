@@ -29,12 +29,13 @@
 //! |---|---|---|
 //! | P3 | 0 | home (the only one P3 could show a page for) |
 //! | P4 | 0, 1, 2 | + install APK (1), + device (2) |
-//! | P5 | 3, 5 | network, storage |
+//! | P5a | 5 | storage -- the half of P5 that verifies with the subsystem stopped |
+//! | P5b | 3 | network |
 //! | P6 | 7, 8 | settings, about |
 //! | P7 | 4 | task scheduler |
 //! | — | 6 | donate: spec section 3 maps it 1:1, but section 10 assigns it to no
 //! phase, so it stays out until something does |
-pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2];
+pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2, 5];
 
 /// The nine entries a `SidebarItem` can select, whatever has a page.
 ///
@@ -64,25 +65,27 @@ pub fn has_a_view(tab: i32) -> bool {
 mod tests {
     use super::{TABS_WITH_A_VIEW, has_a_view, is_sidebar_entry};
 
-    /// Three pages behind nine entries, and exactly which three.
+    /// Four pages behind nine entries, and exactly which four.
     ///
-    /// The count is asserted rather than inferred, and the loop over all nine
+    /// The list is asserted rather than inferred, and the loop over all nine
     /// is what ties it to `is_sidebar_entry` -- a value that reached `has_a_view`
     /// for an index no sidebar item can select would pass an `assert_eq` on the
-    /// list and still be wrong. Six of the nine still open onto nothing, which
-    /// is the planned state of P4 rather than a gap; see the table on
+    /// list and still be wrong. Five of the nine still open onto nothing, which
+    /// is the planned state of P5a rather than a gap; see the table on
     /// `TABS_WITH_A_VIEW`.
     #[test]
-    fn home_install_and_device_have_a_page_and_the_rest_do_not() {
-        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2]);
+    fn home_install_device_and_storage_have_a_page_and_the_rest_do_not() {
+        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2, 5]);
         for tab in 0..=8 {
             assert_eq!(
                 has_a_view(tab),
-                tab <= 2,
+                TABS_WITH_A_VIEW.contains(&tab),
                 "tab {tab} disagrees with the sidebar switch that shows it"
             );
         }
-        assert!(is_sidebar_entry(0) && is_sidebar_entry(1) && is_sidebar_entry(2));
+        for &tab in TABS_WITH_A_VIEW {
+            assert!(is_sidebar_entry(tab), "tab {tab} is not one of the nine");
+        }
     }
 
     /// Everything in the list is something the side bar can select. An

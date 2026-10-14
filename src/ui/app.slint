@@ -137,7 +137,7 @@ export component AppWindow inherits Window {
     in-out property <bool> sidebar_usb: true;
     in-out property <bool> sidebar_network: false;
     in-out property <bool> sidebar_scheduler: false;
-    in-out property <bool> sidebar_mount: false;
+    in-out property <bool> sidebar_mount: true;
     in-out property <bool> sidebar_donate: false;
     in-out property <bool> sidebar_about: false;
     in-out property <bool> sidebar_toggle: true;
@@ -163,6 +163,10 @@ export component AppWindow inherits Window {
     callback install_clicked(string);
     callback select_tab(int);
     callback home_clicked();
+    // Ours, not the reference's: it names a disk-mount dialog's result, and this
+    // page has no dialog. Both are "open something in Explorer".
+    callback disk_refresh_list();
+    callback disk_open_folder(string);
     callback save_sidebar_state();
     callback window_pin_toggle();
     callback window_minimize();
@@ -366,6 +370,12 @@ export component AppWindow inherits Window {
                                 images: root.disk_images;
                                 empty_note: root.disk_empty_note;
                                 folder_to_open: root.disk_folder_to_open;
+                                refresh_list => {
+                                    root.disk_refresh_list();
+                                }
+                                open_folder(path) => {
+                                    root.disk_open_folder(path);
+                                }
                             }
                         }
                     }

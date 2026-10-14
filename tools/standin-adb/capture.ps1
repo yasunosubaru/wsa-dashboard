@@ -631,6 +631,11 @@ try {
             # is what happened.
             'go-install-page'  { @{ x = 27; y = 154 } }
             'go-device-page'   { @{ x = 27; y = 194 } }
+            # P5a turned on `show_mount`, which inserts the storage entry directly
+            # below the device one -- they are adjacent in `sidebar.slint`, and the
+            # entries between them (network, scheduler) are still off. So the row
+            # is another 36px plus the 4px gap: 194 + 40 = 234.
+            'go-storage-page'  { @{ x = 27; y = 234 } }
             'device-expand'    { @{ x = 756; y = 80 } }
             default {
                 throw ("no coordinates known for -Act '{0}'; add it beside the others in " +

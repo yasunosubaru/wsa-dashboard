@@ -100,13 +100,32 @@ export component MountDiskCard inherits Rectangle {
 
             Rectangle { horizontal-stretch: 1; }
 
+            // The reference's right column is one line of `mount_time`. WSA
+            // needs a second, and the second is the important one: spec 3 line
+            // 241 asks this page for the images' *sizes*, and a page called
+            // "Storage" that does not say how big anything is answers nothing.
+            // The reference could afford to leave it out because its size lived
+            // in the information dialog, which this page does not have.
             VerticalLayout {
                 alignment: center;
+                spacing: 2px;
+                horizontal-stretch: 0;
+
+                Text {
+                    text: image.size_text;
+                    font-size: 12px * LayoutConstants.font-scale;
+                    font-weight: 500;
+                    font-family: Theme.default_font;
+                    color: Theme.text_primary;
+                    horizontal-alignment: right;
+                }
+
                 Text {
                     text: image.modified_text;
                     font-size: 11px * LayoutConstants.font-scale;
                     font-family: Theme.default_font;
                     color: Theme.text_secondary;
+                    horizontal-alignment: right;
                     vertical-alignment: center;
                 }
             }
@@ -150,13 +169,27 @@ export component MountDiskCard inherits Rectangle {
                 }
             }
 
+            // Mirrored: size over modified, left-aligned in RTL.
             VerticalLayout {
                 alignment: center;
+                spacing: 2px;
+                horizontal-stretch: 0;
+
+                Text {
+                    text: image.size_text;
+                    font-size: 12px * LayoutConstants.font-scale;
+                    font-weight: 500;
+                    font-family: Theme.default_font;
+                    color: Theme.text_primary;
+                    horizontal-alignment: left;
+                }
+
                 Text {
                     text: image.modified_text;
                     font-size: 11px * LayoutConstants.font-scale;
                     font-family: Theme.default_font;
                     color: Theme.text_secondary;
+                    horizontal-alignment: left;
                     vertical-alignment: center;
                 }
             }

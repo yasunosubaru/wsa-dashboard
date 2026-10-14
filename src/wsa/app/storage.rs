@@ -22,14 +22,6 @@
 //! WSA renumbers its images, which is why [`images_in`] matches a prefix and
 //! the exact `.vhdx` extension and nothing in between.
 
-// The GUI bin compiles this module and, until P5a's disk handler lands, calls
-// nothing in it -- which is `dead_code` in a binary no matter that every item is
-// `pub`, because that only silences the lint in a library. `wsadash` does use
-// it, from the `vhdx` verb. Delete this allow in the commit that adds
-// `ui/handlers/disk.rs`; if it is still needed by then, the handler was never
-// actually wired.
-#![allow(dead_code)]
-
 /// The package family WSA's per-user data lives under. Fixed rather than
 /// derived from [`crate::wsa::app::wsa_path`]: this module is the one place
 /// that must work when WSA is *not* installed, and `WsaPaths` is precisely

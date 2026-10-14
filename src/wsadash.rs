@@ -46,6 +46,15 @@ mod tabs;
 #[path = "i18n/mod.rs"]
 mod i18n;
 
+// The storage page's view model, for the same reason: plain Rust in, plain Rust
+// out, and its tests have to run in the CLI. It deliberately does not name the
+// `StorageImageUI` struct from `theme.slint` -- that one exists only in the GUI
+// binary, so naming it here would make the module unmountable and its tests
+// would never compile. The conversion happens in `ui/handlers/disk.rs`, exactly
+// as `data::row` turns a `home_model::AppRow` into a `Distro`.
+#[path = "ui/disk_model.rs"]
+mod disk_model;
+
 use adb::path::adb_path;
 use std::io::Write;
 use std::path::Path;

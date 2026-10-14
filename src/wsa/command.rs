@@ -73,6 +73,14 @@ pub enum WsaCommand {
     ReverseAdd { device: u16, host: u16 },
     /// `adb reverse --remove tcp:<device>`
     ReverseRemove { device: u16 },
+    /// `adb forward --list` -- one line per mapping: `<serial> tcp:<local> tcp:<remote>`.
+    ///
+    /// A top-level `adb` verb rather than a `shell` one, so none of the four
+    /// mutating variants above can express it. Measured output on this machine:
+    /// `127.0.0.1:58526 tcp:18081 tcp:18081`.
+    ForwardList,
+    /// `adb reverse --list`, same shape. Measured: `host-16 tcp:18080 tcp:18080`.
+    ReverseList,
     /// `adb shell <args...>`: the escape hatch for anything not worth its own
     /// variant.
     Shell { args: Vec<String> },
@@ -125,6 +133,8 @@ impl WsaCommand {
             Self::ReverseRemove { device } => {
                 vec!["reverse".into(), "--remove".into(), format!("tcp:{device}")]
             }
+            Self::ForwardList => vec!["forward".into(), "--list".into()],
+            Self::ReverseList => vec!["reverse".into(), "--list".into()],
             Self::Shell { args } => {
                 let mut argv = Vec::with_capacity(args.len() + 1);
                 argv.push("shell".into());
@@ -148,6 +158,9 @@ impl WsaCommand {
             | Self::PackageInfo { .. }
             | Self::ListPackages { .. } => false,
             Self::Shell { args } => !args.iter().any(|arg| arg == "--list"),
+            // Listings, and the wildcards in `_ => true` would have handed them
+            // the 45s write tier for reading a table that is already in memory.
+            Self::ForwardList | Self::ReverseList => false,
             _ => true,
         }
     }
@@ -186,6 +199,8 @@ impl WsaCommand {
             Self::ForwardRemove { local } => format!("remove forward tcp:{local}"),
             Self::ReverseAdd { device, host } => format!("reverse tcp:{device} to tcp:{host}"),
             Self::ReverseRemove { device } => format!("remove reverse tcp:{device}"),
+            Self::ForwardList => "list forward mappings".into(),
+            Self::ReverseList => "list reverse mappings".into(),
             Self::Shell { args } => format!("shell {}", squeeze(&args.join(" "))),
         }
     }
@@ -431,6 +446,24 @@ mod tests {
             WsaCommand::ReverseRemove { device: 18080 }.argv(),
             vec!["reverse", "--remove", "tcp:18080"]
         );
+    }
+
+    /// The two listings are top-level verbs, not `shell` ones -- the four
+    /// mutating variants above could not have expressed them.
+    #[test]
+    fn argv_of_the_two_listings() {
+        assert_eq!(WsaCommand::ForwardList.argv(), vec!["forward", "--list"]);
+        assert_eq!(WsaCommand::ReverseList.argv(), vec!["reverse", "--list"]);
+    }
+
+    /// A listing that inherited the 45s write tier would be classified
+    /// `is_write`, and a network page that pauses for three quarters of a
+    /// minute every time it opens is the kind of thing nobody notices until
+    /// they are the user waiting for it.
+    #[test]
+    fn the_two_listings_are_reads() {
+        assert!(!WsaCommand::ForwardList.is_write());
+        assert!(!WsaCommand::ReverseList.is_write());
     }
 
     /// `shell` must forward every argument verbatim -- the executor never

@@ -366,6 +366,15 @@ mod tests {
     /// The `PackageRootFolder` fallback's *only* pure part: which of two
     /// answers to believe.
     ///
+    /// **What was measured** (MAPPING 13.2): with WSA's root folder deleted,
+    /// `InstallLocation` came back empty and `resolve()` said "not installed";
+    /// with the folder restored, the very same development-mode registration
+    /// reported it normally. So the empty value was a *consequence of the missing
+    /// folder* and not a property of development-mode registration -- which is
+    /// what this test's own first version claimed, and was wrong. Both
+    /// properties name the same path here, so the fallback cannot rescue a
+    /// deleted folder; what it does is cover the two sources disagreeing.
+    ///
     /// A development-mode registration (`Add-AppxPackage -Register`, which is
     /// how WSA is sideloaded and therefore how it is registered on this
     /// machine) reports an **empty `InstallLocation`** while the Appx repository

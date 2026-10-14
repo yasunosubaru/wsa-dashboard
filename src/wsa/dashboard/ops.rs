@@ -940,12 +940,17 @@ impl WsaDashboard {
     /// accepts a host-only value and ignores it, and `ProxyInfo.isValid()`
     /// rejects port 0 and anything above 0xFFFF.
     pub async fn set_http_proxy(&self, host: &str, port: &str, no_proxy: &str) -> Result<(), OpsError> {
-        let Some(value) = http_proxy_value(host, port) else {
+        // Validation only, and deliberately not bound to anything: nothing here
+        // writes the combined `host:port` string. The three globals take host
+        // and port separately, and the deprecated key takes *nothing*, so the
+        // joined value would have no consumer -- binding it would have been
+        // the first step back toward writing the column nobody reads.
+        if http_proxy_value(host, port).is_none() {
             return Err(OpsError::Invalid(format!(
                 "a proxy needs a host and a port in {PROXY_PORT_MIN}..={PROXY_PORT_MAX} \
                  (got host={host:?}, port={port:?})"
             )));
-        };
+        }
         self.put_global(PROXY_HOST_GLOBAL, host.trim()).await?;
         self.put_global(PROXY_PORT_GLOBAL, port.trim()).await?;
 

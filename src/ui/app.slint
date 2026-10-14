@@ -39,6 +39,7 @@ import { MainView } from "views/main_view.slint";
 import { AddInstanceView } from "views/add_view.slint";
 import { DeviceView } from "views/device_view.slint";
 import { DiskView } from "views/disk_view.slint";
+import { NetworkView } from "views/network/mod.slint";
 import { TaskStatusToast } from "components/task_status_toast.slint";
 import { ModalManager } from "components/modal_manager.slint";
 import { TitleBar } from "components/title_bar.slint";
@@ -408,6 +409,32 @@ export component AppWindow inherits Window {
                                 open_folder(path) => {
                                     root.disk_open_folder(path);
                                 }
+                            }
+                            // Tab 4 in spec section 3's table (index 3 here):
+                            // `views/network/{mod,components,port_forwarding,
+                            // http_proxy}.slint` plus `components/
+                            // network_rule_card.slint`, all carried over from
+                            // the reference.
+                            //
+                            // `z` follows the same rule as the disk page's --
+                            // tab index + 3.
+                            //
+                            // Instantiated in the same change that wrote the
+                            // views, for the reason the disk view's comment
+                            // gives: Slint only parses files reachable from
+                            // `app.slint`, so an unreferenced view would not
+                            // fail to compile at all until something happened to
+                            // mention it. This task stops at instantiation
+                            // deliberately; the data binding, the callbacks and
+                            // the `sidebar_network` switch are the next task's,
+                            // which is why `is_helper_installed` and
+                            // `networking_mode` are not set yet and fall back to
+                            // their own defaults.
+                            NetworkView {
+                                visible: true;
+                                z: 6;
+                                opacity: selected_tab == 3 ? 1 : 0;
+                                x: selected_tab == 3 ? 0px : 10000px;
                             }
                         }
                     }

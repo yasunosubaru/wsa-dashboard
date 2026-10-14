@@ -1,0 +1,149 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Carried over from the reference's src/ui/views/network/mod.slint
+// (wsl-dashboard 0.12.0, GPL-3.0-only) verbatim apart from the header.
+//
+// The two tabs, the RTL duplication of the tab bar, the divider, and every
+// callback signature are the reference's. The data behind two of the
+// properties is not:
+//
+//   `distro_names` / `local_ips`  declared because the reference declares
+//                                 them. The reference resolves a WSL distro's
+//                                 IP to forward to; WSA has no distro list and
+//                                 `adb forward` needs no address (the device is
+//                                 named by adb itself), so nothing reads them.
+//                                 They stay rather than being pruned: the
+//                                 signature is what a diff against the
+//                                 reference is taken on.
+//   `networking_mode`             `"NAT"` at the call site -- `adb forward`
+//                                 has no mode.
+//   `is_helper_installed`         `true` at the call site; see
+//                                 `port_forwarding.slint`.
+
+import { Theme, AppI18n, PortProxyRuleUI } from "../../theme.slint";
+import { NetworkTab } from "components.slint";
+import { PortForwardingView } from "port_forwarding.slint";
+import { HttpProxyView } from "http_proxy.slint";
+
+export component NetworkView inherits Rectangle {
+    in property <bool> is_admin: false;
+    in property <bool> is_helper_installed: false;
+    in property <string> networking_mode: "NAT";
+
+    in property <[string]> distro_names: [];
+    in property <[string]> local_ips: [];
+    in property <[PortProxyRuleUI]> rules: [];
+    in-out property <bool> proxy_is_enabled: false;
+    in-out property <string> proxy_host: "";
+    in-out property <string> proxy_port: "";
+    in-out property <bool> proxy_auth_enabled: false;
+    in-out property <string> proxy_username: "";
+    in-out property <string> proxy_password: "";
+    in-out property <string> proxy_no_proxy: "";
+
+    in property <string> proxy_default_host: "";
+    in property <string> proxy_default_port: "";
+    in property <string> proxy_default_no_proxy: "";
+
+    property <int> active_tab: 0;
+
+    callback initialize_task_clicked();
+    callback open_add_rule_dialog();
+    callback add_rule(string, string, string, string, bool);
+    callback delete_rule(string);
+    callback process_rule(string);
+    callback cancel_rule(string);
+    callback apply_all_rules();
+    callback cancel_all_rules();
+
+    callback save_proxy_settings(bool, string, string, string, bool, string, string);
+    callback open_check_proxy_dialog();
+    callback show_proxy_help();
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // Tab Bar
+        HorizontalLayout {
+            height: 40px;
+            padding-top: 8px;
+            padding-bottom: 0px;
+            padding-left: 4px;
+            padding-right: 8px;
+            spacing: 4px;
+            alignment: AppI18n.is-rtl ? end : start;
+
+            if (AppI18n.is-rtl): NetworkTab {
+                text: AppI18n.t("network.tab_http_proxy", [AppI18n.version]);
+                active: root.active_tab == 1;
+                clicked => { root.active_tab = 1; }
+            }
+
+            if (AppI18n.is-rtl): NetworkTab {
+                text: AppI18n.t("network.tab_port_forwarding", [AppI18n.version]);
+                active: root.active_tab == 0;
+                clicked => { root.active_tab = 0; }
+            }
+
+            if (!AppI18n.is-rtl): NetworkTab {
+                text: AppI18n.t("network.tab_port_forwarding", [AppI18n.version]);
+                active: root.active_tab == 0;
+                clicked => { root.active_tab = 0; }
+            }
+
+            if (!AppI18n.is-rtl): NetworkTab {
+                text: AppI18n.t("network.tab_http_proxy", [AppI18n.version]);
+                active: root.active_tab == 1;
+                clicked => { root.active_tab = 1; }
+            }
+        }
+
+        // Divider
+        HorizontalLayout {
+            padding-left: AppI18n.is-rtl ? 16px : 4px;
+            padding-right: AppI18n.is-rtl ? 4px : 16px;
+            Rectangle {
+                height: 1px;
+                background: Theme.border_color;
+            }
+        }
+
+        // Tab Content
+        Rectangle {
+            if (root.active_tab == 0): PortForwardingView {
+                is_helper_installed: root.is_helper_installed;
+                networking_mode: root.networking_mode;
+                rules: root.rules;
+
+                initialize_task_clicked => { root.initialize_task_clicked(); }
+                open_add_rule_dialog => { root.open_add_rule_dialog(); }
+                delete_rule(id) => { root.delete_rule(id); }
+                process_rule(id) => { root.process_rule(id); }
+                cancel_rule(id) => { root.cancel_rule(id); }
+                apply_all_rules => { root.apply_all_rules(); }
+                cancel_all_rules => { root.cancel_all_rules(); }
+            }
+
+            if (root.active_tab == 1): HttpProxyView {
+                proxy_is_enabled <=> root.proxy_is_enabled;
+                proxy_host <=> root.proxy_host;
+                proxy_port <=> root.proxy_port;
+                proxy_auth_enabled <=> root.proxy_auth_enabled;
+                proxy_username <=> root.proxy_username;
+                proxy_password <=> root.proxy_password;
+                proxy_no_proxy <=> root.proxy_no_proxy;
+                default_host: root.proxy_default_host;
+                default_port: root.proxy_default_port;
+                default_no_proxy: root.proxy_default_no_proxy;
+
+                save_proxy_settings(en, h, p, no, au, u, ps) => {
+                    root.save_proxy_settings(en, h, p, no, au, u, ps);
+                }
+                open_check_proxy_dialog => { root.open_check_proxy_dialog(); }
+                show_proxy_help => { root.show_proxy_help(); }
+            }
+        }
+    }
+}

@@ -136,6 +136,34 @@ pub static ENGLISH: &[(&str, &str)] = &[
     // two things it can say when it comes back.
     ("add.installed", "Installed"),
     ("add.file_missing", "That file does not exist."),
+    // -- mount_disk: the storage page (P5a) ---------------------------------
+    // Key names are the reference's `[mount_disk]` block (Q12). Values are ours
+    // throughout, because the page means something else: spec section 3 line 241
+    // turns "mount a physical disk or VHD into WSL" into "WSA storage
+    // management", and WSA mounts nothing.
+    //
+    //   refresh    the reference's and ours: the same verb.
+    //   mount_btn  "Mount Disk" -> "Open Folder". The reference's opens a dialog
+    //              to pick a disk; there is nothing here to pick, so it opens
+    //              the directory the images live in.
+    //   mount      the card's tooltip, same substitution as `mount_btn`.
+    //   no_mounted the empty state. Ours says *where* it looked, because on a
+    //              machine where WSA has never run the empty list is the normal
+    //              answer and a bare "no mounted disks" would read as a fault.
+    //              No `{0}` placeholder: `tr` fills `{0}`, `{1}`, ... only, and
+    //              the real path is appended by Rust instead -- it knows where
+    //              it looked and this string does not.
+    //
+    // `mount_disk.unmount` and `mount_disk.delete` are deliberately absent: the
+    // card does not render the two icons that would ask for them, and a key
+    // nothing asks for is a line to keep honest. See MAPPING section 12.
+    ("mount_disk.refresh", "Refresh"),
+    ("mount_disk.mount_btn", "Open Folder"),
+    ("mount_disk.mount", "Open Folder"),
+    (
+        "mount_disk.no_mounted",
+        "No WSA storage images in the data folder:",
+    ),
     // -- main: the home page ---------------------------------------------
     ("main.loading", "Loading..."),
     // The reference names a WSL distribution; we list Android packages, so

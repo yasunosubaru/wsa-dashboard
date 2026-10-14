@@ -74,6 +74,32 @@ export struct DeviceProp {
     value: string,
 }
 
+/// One WSA storage image, as the disk page draws it (P5a).
+///
+/// Not the reference's `MountedDiskInfo`: that describes a disk *this program
+/// mounted into WSL*, and WSA mounts nothing. Spec 3 line 241 redefines this
+/// page as "WSA storage management" -- the images themselves -- while keeping
+/// the card's structure and interaction. Every field is filled from a local
+/// file, so the page renders identically whether or not a device is attached.
+///
+/// `usage_text` is the one exception, and it is the exception on purpose: it is
+/// the Android-side usage (`adb shell df`), so it is empty whenever no device
+/// is connected. `has_usage` exists so the card can say so rather than show a
+/// blank column that looks like zero.
+export struct StorageImageUI {
+    file_name: string,
+    path: string,
+    /// Binary units with one decimal, formatted in Rust: "2.79 GB".
+    size_text: string,
+    /// `%Y-%m-%d %H:%M`, the reference's `MountedDiskInfo.mount_time` format.
+    modified_text: string,
+    /// "userdata" or "metadata". The card picks its icon and colour off this,
+    /// exactly as the reference picked them off `disk_type == "physical"`.
+    role_text: string,
+    usage_text: string,
+    has_usage: bool,
+}
+
 
 export global Theme {
     in property <bool> dark_mode: false;

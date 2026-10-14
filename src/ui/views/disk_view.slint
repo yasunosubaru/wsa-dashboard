@@ -1,0 +1,168 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Ported from the reference's src/ui/views/mount_disk_view.slint
+// (wsl-dashboard 0.12.0, GPL-3.0-only), renamed per spec 3 line 241
+// (`mount_disk_view.slint` -> `disk_view.slint`) with the data source changed.
+//
+// Structure is the reference's and stays: a Flickable list of `MountDiskCard`,
+// an empty state with the hard-drive glyph and a line of copy, and a bottom
+// action bar carrying a refresh and a primary button, each written twice for
+// LTR and RTL the way the reference writes it.
+//
+// Two differences, both forced by the page's meaning:
+//
+//   * The list is `StorageImageUI`, not `MountedDiskInfo`. WSA mounts nothing,
+//     so there is no "mounted disk" to be in a list.
+//
+//   * The reference's primary button opens a dialog for picking a disk to
+//     mount. There is nothing to pick -- the images already exist and WSA owns
+//     them -- so that button opens the `LocalCache` directory instead, and each
+//     card's folder icon opens that one file. Both arrive as the same
+//     `open_folder(string)` callback; `disk_model::explorer_arg_for` decides
+//     whether the argument is a directory to open or a file to select.
+//
+// `unmount_disk` and `delete_disk` are not declared, because nothing in this
+// page can raise them. See `components/mount_disk_card.slint` for why the card
+// renders one action rather than three.
+
+import { Theme, AppI18n, LayoutConstants, StorageImageUI } from "../theme.slint";
+import { CustomButton } from "../components/form_widgets.slint";
+import { CustomScrollbar } from "../components/scrollbar.slint";
+import { MountDiskCard } from "../components/mount_disk_card.slint";
+
+export component DiskView inherits Rectangle {
+    in property <[StorageImageUI]> images: [];
+    /// Shown instead of the list when `images` is empty. Empty means "nothing
+    /// to say", which is not the same as "nothing found".
+    in property <string> empty_note: "";
+
+    callback refresh_list();
+    callback open_folder(string);
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+
+            flick := Flickable {
+                viewport-height: container.preferred-height;
+                width: parent.width;
+                height: 100%;
+
+                container := VerticalLayout {
+                    spacing: 8px;
+                    padding-top: 4px;
+                    padding-bottom: 6px;
+                    padding-left: 4px;
+                    padding-right: 16px;
+
+                    for img in root.images: MountDiskCard {
+                        image: img;
+                        mount_clicked(path) => {
+                            root.open_folder(path);
+                        }
+                    }
+
+                    if (root.images.length == 0): VerticalLayout {
+                        alignment: center;
+                        spacing: 14px;
+                        padding: 60px;
+
+                        Text {
+                            text: "\u{e772}"; // Hard drive icon
+                            font-family: Theme.icon_font;
+                            font-size: 32px;
+                            color: Theme.accent;
+                            horizontal-alignment: center;
+                            opacity: 0.3;
+                        }
+
+                        Text {
+                            text: root.empty_note;
+                            font-size: 14px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                            color: Theme.text_secondary;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                }
+            }
+
+            CustomScrollbar {
+                opacity: (flick.viewport-height > flick.height) ? 1 : 0;
+                visible: flick.viewport-height > flick.height;
+                x: AppI18n.is-rtl ? 2px : parent.width - 8px;
+                y: 0;
+                width: 8px;
+                height: 100%;
+                maximum: flick.viewport-height - flick.height;
+                page_size: flick.height;
+                value: -flick.viewport-y;
+                scroll_to(v) => {
+                    flick.viewport-y = -v;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            padding-top: 6px;
+            padding-bottom: 4px;
+            padding-right: AppI18n.is-rtl ? 4px : 12px;
+            padding-left: AppI18n.is-rtl ? 12px : 4px;
+            spacing: 8px;
+
+            if (!AppI18n.is-rtl): CustomButton {
+                text: AppI18n.t("mount_disk.refresh", [AppI18n.version]);
+                height: 32px;
+                clicked => {
+                    root.refresh_list();
+                }
+            }
+
+            if (!AppI18n.is-rtl): Rectangle {
+                horizontal-stretch: 1;
+            }
+
+            if (!AppI18n.is-rtl): CustomButton {
+                text: AppI18n.t("mount_disk.mount_btn", [AppI18n.version]);
+                primary: true;
+                height: 32px;
+                clicked => {
+                    root.open_folder(root.folder_to_open);
+                }
+            }
+
+            if (AppI18n.is-rtl): CustomButton {
+                text: AppI18n.t("mount_disk.mount_btn", [AppI18n.version]);
+                primary: true;
+                height: 32px;
+                clicked => {
+                    root.open_folder(root.folder_to_open);
+                }
+            }
+
+            if (AppI18n.is-rtl): Rectangle {
+                horizontal-stretch: 1;
+            }
+
+            if (AppI18n.is-rtl): CustomButton {
+                text: AppI18n.t("mount_disk.refresh", [AppI18n.version]);
+                height: 32px;
+                clicked => {
+                    root.refresh_list();
+                }
+            }
+        }
+    }
+
+    /// The directory the bottom bar opens: where the images live. Supplied by
+    /// Rust rather than built from `LOCALAPPDATA` in Slint, because the same
+    /// `storage::cache_dir()` has to answer for the CLI and for the tests, and
+    /// two places that compute a path is one more place to be wrong.
+    in property <string> folder_to_open: "";
+}

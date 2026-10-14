@@ -1,0 +1,211 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Ported from the reference's src/ui/components/mount_disk_card.slint
+// (wsl-dashboard 0.12.0, GPL-3.0-only), with the data source changed.
+//
+// What is the reference's and stays: the component name, the three callback
+// signatures, the 48px card, the two-column information block, the LTR and RTL
+// pairs written out separately, the icon/colour split driven by a string
+// comparison, and the ActionIcon shape. Every icon codepoint below was checked
+// against `assets/font/icons.ttf`'s own `cmap` before this file was written --
+// `\u{eda2}`, `\u{e958}`, `\u{E8B7}` are all in the subset.
+//
+// What changes is the meaning. The reference's card describes a disk the user
+// mounted into WSL and offers to unmount it or delete the record. WSA mounts
+// nothing, so there is nothing to unmount -- and the nearest thing to "delete
+// this disk" is deleting `userdata.vhdx`, which wipes the whole subsystem.
+//
+// **Two of the three callbacks are deliberately not rendered.** `mount_clicked`
+// survives, and its copy says "Open folder" rather than "Mount": it runs
+// `explorer /select,` on the file, which is honest and useful. `unmount_clicked`
+// and `delete_clicked` have no WSA operation behind them, and this project's
+// rule is that a control which renders must do something honest -- a control
+// that renders and silently does nothing is worse than one that is absent. The
+// declarations stay so the signature is unchanged (Q12) and so a future WSA
+// operation can fill them in.
+//
+// docs/MAPPING.md section 12 records this as the one intentional interaction
+// divergence in P5a; P9's page-by-page comparison will see it.
+
+import { Theme, AppI18n, LayoutConstants, StorageImageUI } from "../theme.slint";
+import { ActionIcon } from "common.slint";
+
+export component MountDiskCard inherits Rectangle {
+    in property <StorageImageUI> image;
+    in property <bool> busy: false;
+    callback unmount_clicked(string);
+    callback delete_clicked(string);
+    callback mount_clicked(string);
+
+    // The reference branches on `disk_type == "physical"` for its icon and
+    // colour; the branch is the same, only the string being compared changed.
+    private property <bool> is_user_data: image.role_text == "userdata";
+
+    height: 48px;
+    background: Theme.card_bg;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border_color;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+
+        // --- LTR layout: Icon | Info | Spacer | modified | Actions ---
+        if (!AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: root.is_user_data ? "\u{eda2}" : "\u{e958}"; // HardDrive / StorageOptical
+                    font-family: Theme.icon_font;
+                    font-size: 18px;
+                    color: root.is_user_data ? #0284c7 : #8b5cf6;
+                }
+            }
+
+            Rectangle {
+                max-width: 400px;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        horizontal-stretch: 0;
+                        Text {
+                            text: image.file_name;
+                            font-size: 12px * LayoutConstants.font-scale;
+                            font-weight: 500;
+                            font-family: Theme.default_font;
+                            color: Theme.text_primary;
+                            overflow: elide;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: image.path;
+                            font-size: 11px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                            color: Theme.text_secondary;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: image.modified_text;
+                    font-size: 11px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    color: Theme.text_secondary;
+                    vertical-alignment: center;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+
+                VerticalLayout {
+                    alignment: center;
+                    ActionIcon {
+                        icon: "\u{E8B7}"; // OpenFolder
+                        is_font_icon: true;
+                        show_shield: true;
+                        icon_type: "sky";
+                        tooltip: AppI18n.t("mount_disk.mount", [AppI18n.version]);
+                        clicked => { root.mount_clicked(image.path); }
+                    }
+                }
+            }
+        }
+
+        // --- RTL layout (mirrored): Actions | modified | Spacer | Info | Icon ---
+        if (AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+
+                VerticalLayout {
+                    alignment: center;
+                    ActionIcon {
+                        icon: "\u{E8B7}"; // OpenFolder
+                        is_font_icon: true;
+                        show_shield: true;
+                        icon_type: "sky";
+                        tooltip: AppI18n.t("mount_disk.mount", [AppI18n.version]);
+                        clicked => { root.mount_clicked(image.path); }
+                    }
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: image.modified_text;
+                    font-size: 11px * LayoutConstants.font-scale;
+                    font-family: Theme.default_font;
+                    color: Theme.text_secondary;
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Rectangle {
+                max-width: 400px;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        horizontal-stretch: 0;
+                        Text {
+                            text: image.file_name;
+                            font-size: 12px * LayoutConstants.font-scale;
+                            font-weight: 500;
+                            font-family: Theme.default_font;
+                            color: Theme.text_primary;
+                            overflow: elide;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: end;
+                        Text {
+                            text: image.path;
+                            font-size: 11px * LayoutConstants.font-scale;
+                            font-family: Theme.default_font;
+                            color: Theme.text_secondary;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: root.is_user_data ? "\u{eda2}" : "\u{e958}";
+                    font-family: Theme.icon_font;
+                    font-size: 18px;
+                    color: root.is_user_data ? #0284c7 : #8b5cf6;
+                }
+            }
+        }
+    }
+}

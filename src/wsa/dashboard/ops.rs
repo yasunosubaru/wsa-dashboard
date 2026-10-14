@@ -255,6 +255,33 @@ fn op_succeeded(out: &CommandOutput) -> bool {
     out.exit_code == 0 && out.stdout.lines().any(|line| line.trim() == "Success")
 }
 
+/// Turn a result into an `Ok` or an explained `Err`.
+///
+/// **Not** [`require_success`], and the difference is the whole point of this
+/// function. `adb install` and `adb uninstall` print a literal `Success` line, and
+/// a zero exit without it is how "printed `Failure [...]` while returning 0"
+/// surfaces -- so for those two, exit code alone would be a lie.
+/// `adb forward` / `adb reverse` are the opposite: they succeed **silently**, and
+/// exit 0 with no output is success. Asking them for a `Success` line makes every
+/// successful call look like `adb exited 0 without reporting success`, which is
+/// exactly what the first version of the forward round-trip test reported.
+///
+/// So: exit code decides, and whatever adb *did* print becomes the error text
+/// when the exit code is non-zero.
+fn silent_success(out: CommandOutput) -> Result<(), OpsError> {
+    if out.exit_code == 0 {
+        return Ok(());
+    }
+    let detail = if !out.stderr.trim().is_empty() {
+        out.stderr.trim().to_string()
+    } else if !out.stdout.trim().is_empty() {
+        out.stdout.trim().to_string()
+    } else {
+        format!("adb exited {}", out.exit_code)
+    };
+    Err(OpsError::Rejected(detail))
+}
+
 /// Turn an install/uninstall result into an `Ok` or an explained `Err`.
 fn require_success(out: CommandOutput) -> Result<(), OpsError> {
     if op_succeeded(&out) {
@@ -306,6 +333,65 @@ fn settings_uri(aumid: &str) -> Option<String> {
     } else {
         Some(format!("shell:AppsFolder\\{aumid}"))
     }
+}
+
+/// One port mapping, either direction.
+///
+/// `serial` is opaque and is *not* parsed: `adb forward --list` puts
+/// `127.0.0.1:58526` there and `adb reverse --list` puts `host-16`, so a type
+/// that tried to read a port out of it would have to be wrong half the time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortMapping {
+    pub serial: String,
+    pub local: u16,
+    pub remote: u16,
+}
+
+/// `adb forward --list` / `adb reverse --list`, both of the shape
+/// `<serial> tcp:<local> tcp:<remote>`.
+///
+/// One routine for both, and the two public names are aliases rather than
+/// wrappers over different logic -- they are the same format, and a parser that
+/// treated `reverse` as a special case would be a parser with two chances to be
+/// wrong about the same grammar.
+pub fn parse_forward_list(stdout: &str) -> Vec<PortMapping> {
+    parse_port_mappings(stdout)
+}
+
+pub fn parse_reverse_list(stdout: &str) -> Vec<PortMapping> {
+    parse_port_mappings(stdout)
+}
+
+/// A line is kept only when all three columns are present and both ports
+/// parse. A line that does not parse is dropped rather than aborting the read:
+/// one malformed row must not empty the page.
+fn parse_port_mappings(stdout: &str) -> Vec<PortMapping> {
+    let mut rules = Vec::new();
+    for line in stdout.lines() {
+        let mut columns = line.split_whitespace();
+        let (Some(serial), Some(local), Some(remote)) =
+            (columns.next(), columns.next(), columns.next())
+        else {
+            continue;
+        };
+        let (Some(local), Some(remote)) = (tcp_port(local), tcp_port(remote)) else {
+            continue;
+        };
+        rules.push(PortMapping {
+            serial: serial.to_owned(),
+            local,
+            remote,
+        });
+    }
+    rules
+}
+
+/// `tcp:18081` -> `18081`. Anything else, including a bare number, is `None`:
+/// the prefix is what distinguishes a mapping from some other kind of row, and
+/// accepting a bare number would let a future adb version's output through as a
+/// rule with a different meaning.
+fn tcp_port(column: &str) -> Option<u16> {
+    column.strip_prefix("tcp:")?.parse().ok()
 }
 
 /// Build an `AppInfo` from a listing entry plus whatever `dumpsys` said.
@@ -669,7 +755,63 @@ impl WsaDashboard {
         activate(&launch_uri(package))
     }
 
+    /// `adb forward tcp:<local> tcp:<remote>` (spec 2 line 224).
+    ///
+    /// `local` is the **host** port a reader connects to, `remote` the port on
+    /// the device.
+    ///
+    /// **No `WsaOpGuard`, deliberately**, on the same reasoning `stop_app`
+    /// gives: spec 2.2 authorises exactly five operation names and a sixth would
+    /// need an i18n key the spec never asked for. There is also nothing to
+    /// exclude here. The slot exists so two operations cannot corrupt the same
+    /// *device* state; a forwarding rule lives in the adb **server's** table,
+    /// which adb serialises itself. Two forwards to different ports coexist, and
+    /// two forwards to the same port are a replace -- which is what a reader who
+    /// double-clicked "Add" meant anyway.
+    ///
+    /// **No probe first.** This page has to work with the subsystem stopped --
+    /// the same reason the disk page does (spec 11 line 348) -- and adb keeps a
+    /// forwarding rule across a subsystem stop. Refusing because the device is
+    /// down would make the page depend on something it does not need.
+    pub async fn forward_add(&self, local: u16, remote: u16) -> Result<(), OpsError> {
+        let out = self
+            .run(WsaCommand::ForwardAdd { local, remote })
+            .await?;
+        silent_success(out)
+    }
+
+    pub async fn forward_remove(&self, local: u16) -> Result<(), OpsError> {
+        let out = self.run(WsaCommand::ForwardRemove { local }).await?;
+        silent_success(out)
+    }
+
+    pub async fn reverse_add(&self, device: u16, host: u16) -> Result<(), OpsError> {
+        let out = self
+            .run(WsaCommand::ReverseAdd { device, host })
+            .await?;
+        silent_success(out)
+    }
+
+    pub async fn reverse_remove(&self, device: u16) -> Result<(), OpsError> {
+        let out = self.run(WsaCommand::ReverseRemove { device }).await?;
+        silent_success(out)
+    }
+
+    /// What adb currently has forwarded. Never a `NoData`: an empty listing is
+    /// the ordinary state of a machine with no rules, and reporting it as a
+    /// failure would put an error on a page that is working correctly.
+    pub async fn forward_list(&self) -> Result<Vec<PortMapping>, OpsError> {
+        let out = self.run(WsaCommand::ForwardList).await?;
+        Ok(parse_forward_list(&out.stdout))
+    }
+
+    pub async fn reverse_list(&self) -> Result<Vec<PortMapping>, OpsError> {
+        let out = self.run(WsaCommand::ReverseList).await?;
+        Ok(parse_reverse_list(&out.stdout))
+    }
+
     /// Open WSA's own Settings app (spec 2 line 223).
+    ///
     ///
     /// **No guard.** It activates a Windows shell namespace, not an Android
     /// operation: nothing here touches the subsystem's state, so there is no
@@ -837,6 +979,8 @@ if "%~1"=="connect" goto connect
 if "%~1"=="disconnect" goto disconnect
 if "%~1"=="install" goto op
 if "%~1"=="uninstall" goto op
+if "%~1"=="forward" goto mapping
+if "%~1"=="reverse" goto mapping
 if "%~1"=="shell" goto shell
 echo fake-adb: no rule for %* 1>&2
 exit /b 1
@@ -899,6 +1043,48 @@ goto :eof
 findstr /v /l /c:"package:%~2" "%S%packages.txt" >"%S%packages.tmp" 2>nul
 move /y "%S%packages.tmp" "%S%packages.txt" >nul
 goto :eof
+
+rem -- adb port mappings (P5b) ----------------------------------------------
+rem `forward` and `reverse` share this because adb's two verbs share a grammar:
+rem `add tcp:<a> tcp:<b>`, `--remove tcp:<a>`, `--list`. One implementation for
+rem both is also the honest one -- a fake that modelled them separately would be
+rem testing two different fakes.
+rem
+rem The serial column is written as adb writes it: `forward` names the device by
+rem `host:port`, `reverse` by the literal `host-N`. The parser carries it
+rem opaquely, so the fake does not have to reproduce which is which -- only the
+rem shape, which is what the parser actually reads.
+rem
+rem Every step is a jump rather than an `if ( ... )` block, for the same reason
+rem `:apply` is: a `set` inside parentheses is not visible to the `%VAR%`s in
+rem that same block, which are expanded when the whole block is parsed.
+:mapping
+set "VERB=%~1"
+set "TBL=%S%%VERB%.txt"
+if "%~2"=="--list" goto :maplist
+if "%~2"=="--remove" goto :mapdel
+goto :mapadd
+
+:maplist
+type "%TBL%"
+exit /b 0
+
+rem `--remove` is `%~2` and the port is `%~3`; a plain `add` has the port in
+rem `%~2` and the remote in `%~3`. Matching on the wrong slot removes nothing and
+rem says nothing, which is what the first version did.
+:mapdel
+findstr /v /l /c:"%~3 " "%TBL%" >"%TBL%.tmp" 2>nul
+move /y "%TBL%.tmp" "%TBL%" >nul
+exit /b 0
+
+rem Adding over an existing local port replaces it, which is what adb does and
+rem what `re_forwarding_the_same_local_port_replaces_rather_than_duplicates`
+rem pins. `%~2` is `tcp:<local>` here, so the match is on that whole token.
+:mapadd
+findstr /v /l /c:"%~2 " "%TBL%" >"%TBL%.tmp" 2>nul
+>>"%TBL%.tmp" echo %~1 %~2 %~3
+move /y "%TBL%.tmp" "%TBL%" >nul
+exit /b 0
 
 :shell
 if "%~2"=="getprop" goto getprop
@@ -994,6 +1180,12 @@ exit /b 0
             // somewhere, and an empty file means "this fake was not told", which
             // `:apply` treats as nothing to add rather than as a blank name.
             fake.write("install.package", "");
+            // The adb forwarding table, per verb. Empty because a machine with
+            // no rules is the ordinary state, and a fake that started with a
+            // rule would make `an_empty_listing_is_an_empty_list` untestable
+            // without first removing something.
+            fake.write("forward.txt", "");
+            fake.write("reverse.txt", "");
             fake
         }
 
@@ -1336,6 +1528,118 @@ R5CT30XXXXX\tunauthorized\n\
             .await
             .expect_err("no aumid means nothing to open");
         assert!(err.to_string().contains("settings"), "{err}");
+    }
+
+    // --- adb port mappings (P5b) --------------------------------------------
+    //
+    // The stand-in adb gains a real `forward`/`reverse` branch backed by a list
+    // file, so the six operations can be exercised as a loop -- add, list,
+    // remove, list -- the way the VHDX round trip was. Without it every test
+    // here would assert "adb was called" and prove nothing about whether the
+    // two halves agree.
+
+    /// `adb forward --list` prints `<serial> tcp:<local> tcp:<remote>`; a rule
+    /// that does not parse is dropped rather than aborting the read, because one
+    /// malformed line must not empty the page.
+    #[test]
+    fn forward_list_parses_the_measured_shape_and_drops_junk() {
+        let rules = parse_forward_list(
+            "127.0.0.1:58526 tcp:18081 tcp:18081\n\
+             garbage line with no ports\n\
+             \n\
+             host-16 tcp:18080 tcp:9999\n",
+        );
+        assert_eq!(rules.len(), 2, "{rules:?}");
+        assert_eq!(rules[0].serial, "127.0.0.1:58526");
+        assert_eq!(rules[0].local, 18081);
+        assert_eq!(rules[0].remote, 18081);
+        assert_eq!(rules[1].local, 18080);
+        assert_eq!(rules[1].remote, 9999);
+    }
+
+    /// `reverse` puts a *host name* in the column where `forward` puts
+    /// `serial:port`. A parser that expected a serial with a colon would drop
+    /// every reverse rule and the page would show an empty list while rules
+    /// exist -- the failure this pins is not hypothetical, it is the reason the
+    /// serial column is carried as an opaque string rather than parsed.
+    #[test]
+    fn reverse_list_accepts_a_host_name_in_the_serial_column() {
+        let rules = parse_reverse_list("host-16 tcp:18080 tcp:18080\n");
+        assert_eq!(rules.len(), 1, "{rules:?}");
+        assert_eq!(rules[0].serial, "host-16");
+        assert_eq!(rules[0].local, 18080);
+        assert_eq!(rules[0].remote, 18080);
+    }
+
+    /// An empty listing is the normal state, not a failure.
+    #[test]
+    fn an_empty_listing_is_an_empty_list() {
+        assert!(parse_forward_list("").is_empty());
+        assert!(parse_forward_list("\n\n").is_empty());
+    }
+
+    /// A port that is not a number must not become 0: a rule on port 0 is not a
+    /// rule, and rendering one is how a page offers to delete something that
+    /// does not exist.
+    #[test]
+    fn a_port_that_is_not_a_number_is_dropped_not_zeroed() {
+        let rules = parse_forward_list("serial tcp:abc tcp:18081\nserial tcp:80 tcp:18081\n");
+        assert_eq!(rules.len(), 1, "{rules:?}");
+        assert_eq!(rules[0].local, 80);
+    }
+
+    /// The whole loop on the stand-in: forward a port, see it listed, remove it,
+    /// see it gone. This is the assertion that the two halves agree.
+    #[tokio::test]
+    async fn a_forward_mapping_survives_the_add_list_remove_loop() {
+        let adb = FakeAdb::new();
+        let dash = adb.dashboard();
+
+        dash.forward_add(18081, 18081).await.expect("forward_add");
+        let listed = dash.forward_list().await.expect("forward_list");
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].local, 18081);
+
+        dash.forward_remove(18081).await.expect("forward_remove");
+        assert!(
+            dash.forward_list().await.expect("forward_list again").is_empty(),
+            "removed but still listed"
+        );
+    }
+
+    /// Same loop for `reverse`: it is a different adb verb, and a parser that
+    /// had only ever seen `forward --list` would look fine until it did not.
+    #[tokio::test]
+    async fn a_reverse_mapping_survives_the_add_list_remove_loop() {
+        let adb = FakeAdb::new();
+        let dash = adb.dashboard();
+
+        dash.reverse_add(18080, 18080).await.expect("reverse_add");
+        let listed = dash.reverse_list().await.expect("reverse_list");
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].local, 18080);
+
+        dash.reverse_remove(18080).await.expect("reverse_remove");
+        assert!(
+            dash.reverse_list().await.expect("reverse_list again").is_empty(),
+            "removed but still listed"
+        );
+    }
+
+    /// `adb forward` over an existing local port is a *replace*: after it the
+    /// list shows one rule with the new remote, not two rules and not the old
+    /// remote. The stand-in models this the way adb does.
+    #[tokio::test]
+    async fn re_forwarding_the_same_local_port_replaces_rather_than_duplicates() {
+        let adb = FakeAdb::new();
+        let dash = adb.dashboard();
+
+        dash.forward_add(18081, 1111).await.expect("first");
+        dash.forward_add(18081, 2222).await.expect("second");
+
+        let listed = dash.forward_list().await.expect("list");
+        assert_eq!(listed.len(), 1, "duplicated: {listed:?}");
+        assert_eq!(listed[0].remote, 2222);
     }
 
     #[test]

@@ -1020,3 +1020,152 @@ P7 拿到提权机制之后才谈得上。在那之前徽章读 "FW: Off"，`net
 
 **端口校验和代理页同一条规则**（1..=65535 之外拒绝），拒绝发生在 `forward_add` 之前：adb 接受
 端口 0 并且什么都不转发，那会是一条页面上显示不出、也删不掉的规则。
+---
+
+## 15. P6：设置页、关于页，以及真正的语言包（2026-10-15）
+
+### 15.1 这一阶段推翻了 §3 的一条
+
+§3 写的是「键名一个都不改，值里改领域词，50 个语言各改一遍」。P6 实际做出来的是另一件事，而且
+比那件更对：**我们自己的英文是权威，其余 49 个包是叠加层，叠加不得覆盖我们的措辞。**
+
+理由是 §3 自己列的词表暴露出来的矛盾。`operation.deleting` 在参照里是 "Deleting ..."，我们改成
+"Uninstalling ..."（卸载 APK）；`sidebar.mount` 是 "Mount"，我们写 "Storage"；`network.
+proxy_error_port` 写 65534，而我们代码校验的是 65535（AOSP 的 1..=65535 才是真范围，参照那个
+是它自己 `netsh` 的范围）。这 54 个键的句子是**照着参照的句子翻译的**——`ja.toml` 里
+`operation.deleting` 那句 Japanese 描述的是删一个 WSL 发行版。让它盖上来，得到的不是一份翻译过
+的面板，而是一份用另一种语言、彬彬有礼地描述另一个软件的说明书。
+
+所以：
+
+- `assets/i18n/en.toml` **由 `ENGLISH` 表生成**（`tools/install-language-packs.py`），一条测试
+  断言两者一致，手改文件会被抓到。
+- `OURS` 列出 54 个措辞是我们的键，`lookup` 拒绝对它们做覆盖。
+- **`OURS` 不靠人手判断**：`ours_list_is_exactly_the_keys_whose_wording_changed` 拿参照自己的
+  `en.toml` 和我们的表逐键比对，两个方向都要一致。多一个键是错（白白放弃一个能翻译的键），少一个
+  键更糟（我们自己的句子被盖成别的东西）。`tools/apply-ours-keys.py` 从两个文件重新生成它。
+
+顺带作废 §3.1 那张词表：它描述的是批量改 50 个语言包的做法，我们没有批量改任何一个包。
+
+### 15.2 `normalize_language_code`：参照 160 行 if 链 → 匹配已发布的包名
+
+参照用一百六十行的 `if lower == "..."` 链，一个包一行。那件事只有一个含义：**这个区域设置对应我们
+发布了哪个包**——而发布的列表已经在二进制里了。所以链换成匹配器：精确 → 前面 → 两条真正的别名
+（`fil` ← `tl`，`no` ← `nb`/`nn`）→ 两个中文包（Windows 给 `zh-CN` / `zh-TW`，而 `zh`、
+`zh-Hans`、`zh-HK`、`zh-MO` 也都可达，`zh` 单独出现时按简体解，和参照一致）。一条测试对全部 50 个
+包名逐个断言「能选中自己」。
+
+### 15.3 设置页：五处语义改写，没有一个是死控件
+
+参照的设置页有六行描述这个程序没有的东西。每一行都改成一件**真的会发生**的事，而不是"存一个没人
+读的字符串"——后者比少一个复选框更糟：勾上它、保存、关掉、再回来看到没变化。
+
+| 键（参照的） | 参照的含义 | 这里 | 真活在哪 |
+|---|---|---|---|
+| `distro_location` | WSL 发行版安装目录 | WSA 数据目录 | 从包注册读出的 `LocalCache`，按钮打开它 |
+| `backup_location` | 发行版导出/备份目录 | 程序自己的数据目录 | `~/.wsadashboard`，按钮打开它 |
+| `sparse_vhd` | 新建镜像默认稀疏 | 优先显示已分配大小 | `disk_model` 读 VHDX footer 的两个尺寸 |
+| `mount_auto_probe` | 启动发行版以读挂载表 | 窗口打开时刷新存储 | 我们的磁盘页不需要子系统跑着 |
+| `select_folder` 按钮 | `rfd` 弹选择器 | 打开它自己写的那行目录 | `open::that`，磁盘页已有同款 |
+| `stop_wsl` 按钮 | 停止 WSL（要二次确认） | 停止子系统（不二次确认） | 确认已经在首页那个 Stop 按钮上了 |
+
+`select_*_folder` 三个回调没有用 `rfd`：那两行是**事实**不是选择，没有东西可选，弹一个只有唯一
+答案的选择框是白弹。标签也从 "Select Folder" 改成 "Open Folder"。
+
+`logs_location` **故意不回写**：那一行显示的是日志器真正写的目录，接受编辑就等于允许页面声称一个
+日志器根本不看的目录。
+
+### 15.4 配置：三个字段去掉、两个加回来、一个段落照搬
+
+`UserSettings` 去掉五个字段：实例目录、备份目录、临时目录、temp（我们不装东西，没有目录可选），
+以及 mount 的"自动启动发行版以探测挂载表"（磁盘页按 spec §11 第 348 行要求在子系统停着时也能用，
+所以它根本不探测）。
+
+**`sparse-vhd` 和 `mount-auto-probe` 在 Task 2 被我当 WSL 专属删掉了，Task 3 给它们找到真活之后又
+加回来**，键名照参照。留着这两个字段而不改名，是 15.3 那张表的另一半。
+
+`[system]` 段（`system-language` / `timezone`）照搬参照加进来，系统语言用
+`GetUserDefaultLocaleName` 读（为此给 `windows` crate 加了 `Win32_Globalization`）。`get_font_for`
+需要它——非中文 Windows 上必须显式给 CJK 字体，否则 Skia 画不出中文。
+
+两个字段留了但没人读：`show_drag`（参照的发行版列表有拖拽手柄 ours 是固定九项，顺序有意义，默认
+**false** 而不是照搬 true，存一个 true 是在承诺一个不存在的控件）和 `auto_shutdown`（P7 回答"退出时
+停不停 WSA"）。
+
+读永远不失败：文件不存在、解析不了、是新版本写的键，三种情况答案一样——带默认值打开并在日志里说
+一句。参照的 `load` 也是这么做的。
+
+### 15.5 侧栏开关：配置默认值不能直接灌进窗口
+
+`SidebarConfig::default()` 八个开关全 `true`（参照九个页面都做了）。P6 在启动时读配置直接灌进窗口
+之后，Donate / Task scheduler / About 三个入口冒了出来，后面什么都没有——`tabs::has_a_view` 存在的
+全部意义就是防这个。
+
+改成 `offered(wanted, tab) = wanted && has_a_view(tab)`：**文件说读者要什么，`has_a_view` 说这个
+build 有什么，两个都对上才显示。** 附带的好处是阶段落地时文件不用改，之前就写着的 `true` 会自己
+开始生效。
+
+### 15.6 语言选择器：P6 唯一一处签名改动
+
+参照的 `selected(int)` 发的是**索引**，调用方再去 `LanguageData.lang-codes` 里查表。那张表是硬编码
+在 `language_data.slint` 里的 51 项，而我们的列表来自 `available_languages()`（二进制里的文件列表），
+所以改成 `selected(string)` 直接发代码。
+
+**这不是理论上的改动。** 第一版我只改了文档没改代码，Slint 把 int 强转成 string，
+`normalize_language_code("5")` 回答 `en`，点一下看起来什么都没发生——而且 `t()` 退回英文让好几条
+断言**看起来像**通过了一半。另外 `callback selected(string)` 是显式写出来的：Slint 的类型推断会拿
+第一个调用点定类型，同一个错误会在三百行之外再冒一次，报成 "Cannot convert string to int"。
+
+### 15.7 关于页：五分之四的 handler 不能存在
+
+参照的 `handlers/about.rs` 五分之四是一次 fetch：向 `api1.wslui.com` 要文档地址、讨论区地址，再按
+读者的语言和时区去列表里匹配一张群组图片。spec Q6 禁止调那个服务，所以这些一个都不存在。
+
+| 参照 | 这里 |
+|---|---|
+| `group_clicked` 弹出群图片 | 什么都不做——正是参照自己在图片没就绪时的分支（`about.rs:15-22`） |
+| `check_update_clicked` 查 GitHub | 一句「这个 build 里没有更新检查」，P8 换掉这句话 |
+| `open_url` 打开服务器刚给的地址 | 打开配置了的地址，没有就说没有 |
+
+`open_url` 的守卫放在 `handlers/home.rs` 而不是 about 里：窗口上只有**一个** `open_url`，主页的卡片
+也走它。`openable_url` 拒空串和没见过的 scheme——`open::that("")` 不是错误，是一条没有参数的 shell
+命令，点下去看起来就像坏了。`file:` 在白名单里，因为磁盘页就是靠它打开资源管理器的。
+
+`PROJECT_REPOSITORY` 现在是空的，所以"Project website"和"Project repository"两行后面没有地址，
+点它们会得到那句 toast。P3 记过这件事："宁可没有链接，也不要错的链接"。
+
+### 15.8 实测推翻的两条
+
+1. **语言包的加载顺序不是"英文打底 + 目标语言无条件覆盖"。** 见 15.1。
+2. **`SystemConfig.system_language` 不是 Windows API 的实时查询**，是配置文件里的一个字段（参照
+   `settings.rs:42` 读的是 `get_config().system.system_language`）。我们照搬了这个形状：本阶段读一次
+   写进文件。理由和参照一样——`get_font_for` 的答案不该因为用户在会话中途翻了 Windows 设置就
+   在运行中的窗口底下变掉。
+
+### 15.9 截图工具链：这一阶段侧栏坐标变了四次
+
+P6 里 `go-settings-page` / `go-about-page` 的坐标改了四次，其中三次的原因是**某一行出现或消失**，
+不是布局变了：
+
+| 值 | 为什么 |
+|---|---|
+| 540 | 从一张 Donate 还亮着的截图上数的行 |
+| 488 | 猜「隐藏 Donate 少 40px」 |
+| 526 / 566 | 真的：底部那组贴底边对齐，加一行会把**上面的行往上推**，不是把下面的往下挪 |
+
+这一条值得写下来，因为它和这个工具链其余部分的注释是反的：`go-*` 的坐标一直是**从布局算出来
+再验**的，而底部那一组算不出来——它同时取决于上面的行数和窗口高度，只有图知道。P7 加 scheduler
+那一行时两个数字都要再动一次。
+
+另外这一轮里 `capture.ps1` 报告的缩放在 125% 和 150% 之间来回跳（输出 1000x750 和 1200x900 两种），
+`settings-language-de` 的点击坐标因此失效——它留在步骤表里但标了 UNVERIFIED，并从 `$setsState`
+里拿掉，因为一个不能安全重复的步骤不该待在以可重复为唯一目的的运行里。
+
+### 15.10 P6 验证到什么程度
+
+- 三个页签各一张截图，标签和路径都是真值（`docs/screenshots/p6-settings-*.png`、`p6-about.png`）。
+- `settings.toml` 落盘并回读正确，`[system] system-language = "zh-CN"` 是从 OS 读出来的。
+- 语言对话框打开、列出 50 个包、当前语言高亮——**选了 `de` 之后整个窗口是否重算，没验成**（见
+  15.9）。`i18n` 的加载、`OURS` 保护、缺键退回英文有 14 条测试；`AppI18n.version` 自增那一段是
+  照参照 `settings.rs:52` 抄的三行。
+- 276 passed / 0 failed / 3 ignored；GUI 零 error 零 warning。

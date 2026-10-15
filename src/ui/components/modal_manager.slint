@@ -35,14 +35,19 @@
 // through the proxy and needs an HTTP client P8 brings -- and a fourth family
 // (26 more dialogs) waits on the pages that own them.
 //
-// docs/MAPPING.md sections 12 and 14 record the subset, so P9's page-by-page
-// comparison is not surprised by a 4-block manager next to a 60-block one.
+// P6 adds the language picker, which is the first of the reference's dialogs
+// that has no page of its own behind it -- it is raised from the settings page
+// and lands back there.
+//
+// docs/MAPPING.md sections 12, 14 and 15 record the subset, so P9's page-by-page
+// comparison is not surprised by a 5-block manager next to a 60-block one.
 
 import { Theme, AppI18n, LayoutConstants, Information } from "../theme.slint";
 import { ConfirmationDialog } from "dialogs/confirmation_dialog.slint";
 import { InformationDialog } from "dialogs/information_dialog.slint";
 import { NetworkAddRuleDialog } from "dialogs/network_add_rule_dialog.slint";
 import { ProxyHelpDialog } from "dialogs/proxy_help_dialog.slint";
+import { LanguageSelectDialog } from "dialogs/language_select_dialog.slint";
 
 export component ModalManager inherits Rectangle {
     // ---- the home page's delete confirmation (reference `show_delete`) ------
@@ -84,6 +89,21 @@ export component ModalManager inherits Rectangle {
     // that one waits.
     in-out property <bool> show_network_proxy_help: false;
     callback close_proxy_help();
+
+    // ---- the language picker (P6) ------------------------------------------
+    // Reference `app.slint`:164, 484-486, 970-973 and the block at
+    // `modal_manager.slint`:675-688. Ours differs in one place and it is the
+    // interesting one: the reference's `language_selected` takes an **index**
+    // and looks the code up in `LanguageData.lang-codes`, a table hardcoded in
+    // `language_data.slint` whose entry 0 is "auto". Ours takes the code
+    // directly. Same reason our list is filled from `available_languages()`
+    // rather than from that table: the list of languages is the list of files in
+    // the binary, and a second hardcoded copy of it is a second thing to forget.
+    // See MAPPING 15.
+    in-out property <bool> show_language_dialog: false;
+    in property <[string]> language_options: [];
+    in property <int> language_current_index: 0;
+    callback language_selected(string);
 
     // Every dialog is stretched over the whole window; the manager is mounted
     // once, above the pages, so a dialog covers whichever page raised it.
@@ -147,6 +167,21 @@ export component ModalManager inherits Rectangle {
         }
         ProxyHelpDialog {
             close => { root.close_proxy_help(); }
+        }
+    }
+
+    if (show_language_dialog): LanguageSelectDialog {
+        width: 100%;
+        height: 100%;
+        title: AppI18n.t("settings.language", [AppI18n.version]);
+        languages: root.language_options;
+        current_index: root.language_current_index;
+        close => {
+            root.show_language_dialog = false;
+        }
+        selected(code) => {
+            root.language_selected(code);
+            root.show_language_dialog = false;
         }
     }
 }

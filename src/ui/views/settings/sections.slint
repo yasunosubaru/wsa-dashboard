@@ -1,0 +1,331 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Carried over from the reference's src/ui/views\settings\sections.slint
+// (wsl-dashboard 0.12.0, GPL-3.0-only) verbatim apart from this header.
+//
+// Added in P6's Task 3. MAPPING 15 records what the data behind these strings
+// becomes, and which of them have no counterpart on the WSA side.
+import {
+    Theme,
+    AppI18n,
+    SettingsStrings,
+    LayoutConstants,
+} from "../../theme.slint";
+import {
+    CustomLineEdit,
+    CustomComboBox,
+    CustomCheckBox,
+    CustomButton,
+} from "../../components/form_widgets.slint";
+
+export component GeneralSettingsSection inherits VerticalLayout {
+    in property <SettingsStrings> strings;
+    in-out property <int> selected_language_index;
+    in-out property <int> selected_check_update_index;
+    in property <[string]> language_options;
+    in property <[string]> check_update_options;
+
+    in-out property <bool> show_language_dialog: false;
+
+    in-out property <bool> tray_autostart;
+    in-out property <bool> tray_start_minimized;
+    in-out property <bool> tray_close_to_tray;
+    
+    spacing: 16px;
+
+    // 1. Software language and Update check
+    Rectangle {
+        z: 50;
+        height: lang-grid.preferred-height;
+        lang-grid := GridLayout {
+            spacing: 12px;
+            Row {
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    preferred-width: 0;
+                    min-width: 0;
+                    spacing: 10px;
+                    Text {
+                        text: root.strings.language;
+                        font-size: 13px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: Theme.text_secondary;
+                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    }
+
+                    Rectangle {
+                        height: 32px;
+                        background: Theme.input_bg;
+                        border-width: 1px;
+                        border-color: Theme.input_border;
+                        border-radius: 4px;
+
+                        HorizontalLayout {
+                            padding-left: 15px;
+                            padding-right: 15px;
+                            alignment: space-between;
+
+                            // RTL: arrow on left, text on right
+                            if (AppI18n.is-rtl): Text {
+                                text: "▼";
+                                color: Theme.text_secondary;
+                                vertical-alignment: center;
+                                font-size: 10px * LayoutConstants.font-scale;
+                            }
+                            Text {
+                                text: root.language_options[root.selected_language_index];
+                                color: Theme.text_primary;
+                                font-family: Theme.default_font;
+                                font-size: 13px * LayoutConstants.font-scale;
+                                vertical-alignment: center;
+                                horizontal-alignment: AppI18n.is-rtl ? right : left;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                                min-width: 0;
+                            }
+                            // LTR: text on left, arrow on right
+                            if (!AppI18n.is-rtl): Text {
+                                text: "▼";
+                                color: Theme.text_secondary;
+                                vertical-alignment: center;
+                                font-size: 10px * LayoutConstants.font-scale;
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.show_language_dialog = true;
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    preferred-width: 0;
+                    min-width: 0;
+                    spacing: 10px;
+                    Text {
+                        text: root.strings.auto_update;
+                        font-size: 13px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: Theme.text_secondary;
+                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                    }
+
+                    CustomComboBox {
+                        model: root.check_update_options;
+                        current-index <=> root.selected_check_update_index;
+                        height: 32px;
+                        dropdown-height: 100px;
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle { height: 1px; background: Theme.border_color; }
+
+    // Behavior Section
+    Rectangle {
+        background: Theme.card_bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border_color;
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 12px;
+
+            CustomCheckBox { checked <=> root.tray_autostart; text: root.strings.auto_start; }
+            CustomCheckBox { checked <=> root.tray_start_minimized; text: root.strings.minimize_tray; }
+            CustomCheckBox { checked <=> root.tray_close_to_tray; text: root.strings.close_to_tray; }
+        }
+    }
+}
+
+export component AdvancedSettingsSection inherits VerticalLayout {
+    in property <SettingsStrings> strings;
+    
+    in-out property <string> distro_location;
+    in-out property <string> backup_location;
+    in-out property <string> logs_location;
+    in-out property <int> selected_log_level_index;
+    in-out property <int> selected_log_days_index;
+    in property <[string]> log_level_options;
+    in property <[string]> log_days_options;
+    in-out property <bool> auto_shutdown;
+    in-out property <bool> sparse_vhd;
+    in-out property <bool> mount_auto_probe;
+    
+    callback select_distro_folder();
+    callback select_backup_folder();
+    callback select_logs_folder();
+    
+    spacing: 16px;
+
+    // Distro & Log paths
+    Text { text: root.strings.install_dir; font-size: 13px * LayoutConstants.font-scale; font-family: Theme.default_font; color: Theme.text_secondary; horizontal-alignment: AppI18n.is-rtl ? right : left; }
+    HorizontalLayout {
+        spacing: 8px;
+        if (AppI18n.is-rtl): CustomButton { text: root.strings.select_folder; height: 32px; clicked => { root.select_distro_folder(); } }
+        CustomLineEdit { text: root.distro_location; enabled: false; horizontal-stretch: 1; }
+        if (!AppI18n.is-rtl): CustomButton { text: root.strings.select_folder; height: 32px; clicked => { root.select_distro_folder(); } }
+    }
+
+    Rectangle { height: 1px; background: Theme.border_color; }
+    Text { text: root.strings.backup_dir; font-size: 13px * LayoutConstants.font-scale; font-family: Theme.default_font; color: Theme.text_secondary; horizontal-alignment: AppI18n.is-rtl ? right : left; }
+    HorizontalLayout {
+        spacing: 8px;
+        if (AppI18n.is-rtl): CustomButton { text: root.strings.select_folder; height: 32px; clicked => { root.select_backup_folder(); } }
+        CustomLineEdit { text: root.backup_location; enabled: false; horizontal-stretch: 1; }
+        if (!AppI18n.is-rtl): CustomButton { text: root.strings.select_folder; height: 32px; clicked => { root.select_backup_folder(); } }
+    }
+    
+    Rectangle { height: 1px; background: Theme.border_color; }
+    Text { text: root.strings.log_path; font-size: 13px * LayoutConstants.font-scale; font-family: Theme.default_font; color: Theme.text_secondary; horizontal-alignment: AppI18n.is-rtl ? right : left; }
+    HorizontalLayout {
+        spacing: 6px;
+        if (AppI18n.is-rtl): CustomButton { text: root.strings.select_folder; height: 32px; clicked => { root.select_logs_folder(); } }
+        CustomLineEdit { text: root.logs_location; enabled: false; horizontal-stretch: 1; }
+        if (!AppI18n.is-rtl): CustomButton { text: root.strings.select_folder; height: 32px; clicked => { root.select_logs_folder(); } }
+    }
+
+    Rectangle { height: 1px; background: Theme.border_color; }
+
+    // Logs
+    Rectangle {
+        z: 40;
+        height: log-grid.preferred-height;
+        log-grid := GridLayout {
+            spacing: 12px;
+            Row {
+                VerticalLayout {
+                    horizontal-stretch: 1; preferred-width: 0; min-width: 0; spacing: 10px;
+                    Text { text: root.strings.log_level; font-size: 13px * LayoutConstants.font-scale; font-family: Theme.default_font; color: Theme.text_secondary; horizontal-alignment: AppI18n.is-rtl ? right : left; }
+                    CustomComboBox { model: root.log_level_options; current-index <=> root.selected_log_level_index; height: 32px; dropdown-height: 130px; }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1; preferred-width: 0; min-width: 0; spacing: 10px;
+                    Text { text: root.strings.log_retention; font-size: 13px * LayoutConstants.font-scale; font-family: Theme.default_font; color: Theme.text_secondary; horizontal-alignment: AppI18n.is-rtl ? right : left; }
+                    CustomComboBox { model: root.log_days_options; current-index <=> root.selected_log_days_index; height: 32px; dropdown-height: 100px; }
+                }
+            }
+        }
+    }
+
+    Rectangle { height: 1px; background: Theme.border_color; }
+
+    // Behavior
+    Rectangle {
+        background: Theme.card_bg; border-radius: 8px; border-width: 1px; border-color: Theme.border_color;
+        VerticalLayout {
+            padding: 12px; spacing: 12px;
+            CustomCheckBox { checked <=> root.auto_shutdown; text: root.strings.auto_close; }
+            VerticalLayout {
+                spacing: 4px;
+                CustomCheckBox { 
+                    checked <=> root.sparse_vhd; 
+                    text: root.strings.sparse_vhd; 
+                }
+                HorizontalLayout {
+                    padding-left: AppI18n.is-rtl ? 0px : 30px;
+                    padding-right: AppI18n.is-rtl ? 30px : 0px;
+                    Text {
+                        text: root.strings.sparse_vhd_desc;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: Theme.text_secondary;
+                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            VerticalLayout {
+                spacing: 4px;
+                CustomCheckBox {
+                    checked <=> root.mount_auto_probe;
+                    text: root.strings.mount_auto_probe;
+                }
+                HorizontalLayout {
+                    padding-left: AppI18n.is-rtl ? 0px : 30px;
+                    padding-right: AppI18n.is-rtl ? 30px : 0px;
+                    Text {
+                        text: root.strings.mount_auto_probe_desc;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        font-family: Theme.default_font;
+                        color: Theme.text_secondary;
+                        horizontal-alignment: AppI18n.is-rtl ? right : left;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component InterfaceSettingsSection inherits VerticalLayout {
+    in property <SettingsStrings> strings;
+    in-out property <bool> sidebar_add: true;
+    in-out property <bool> sidebar_toggle: true;
+    in-out property <bool> sidebar_usb: true;
+    in-out property <bool> sidebar_network: true;
+    in-out property <bool> sidebar_scheduler: true;
+    in-out property <bool> sidebar_mount: true;
+    in-out property <bool> sidebar_donate: true;
+    in-out property <bool> sidebar_about: true;
+    in-out property <bool> system_color;
+    in-out property <bool> colorful_icons;
+    in-out property <bool> mail_icon_always;
+    in-out property <bool> hide_pin_icon;
+    in-out property <bool> show_drag;
+
+    spacing: 16px;
+
+    VerticalLayout {
+        spacing: 12px;
+        Text { 
+            text: root.strings.sidebar_features; 
+            font-size: 13px * LayoutConstants.font-scale; 
+            font-family: Theme.default_font; 
+            color: Theme.text_secondary; 
+            horizontal-alignment: AppI18n.is-rtl ? right : left; 
+        }
+        GridLayout {
+            spacing: 12px;
+            Row {
+                CustomCheckBox { text: AppI18n.t("sidebar.toggle", [AppI18n.version]); checked <=> root.sidebar_toggle; }
+                CustomCheckBox { text: AppI18n.t("sidebar.home", [AppI18n.version]); checked: true; enabled: false; }
+                CustomCheckBox { text: AppI18n.t("sidebar.add", [AppI18n.version]); checked <=> root.sidebar_add; }
+                CustomCheckBox { text: AppI18n.t("sidebar.usb", [AppI18n.version]); checked <=> root.sidebar_usb; }
+            }
+            Row {
+                CustomCheckBox { text: AppI18n.t("sidebar.network", [AppI18n.version]); checked <=> root.sidebar_network; }
+                CustomCheckBox { text: AppI18n.t("sidebar.scheduler", [AppI18n.version]); checked <=> root.sidebar_scheduler; }
+                CustomCheckBox { text: AppI18n.t("sidebar.mount", [AppI18n.version]); checked <=> root.sidebar_mount; }
+                CustomCheckBox { text: AppI18n.t("sidebar.donate", [AppI18n.version]); checked <=> root.sidebar_donate; }
+            }
+            Row {
+                CustomCheckBox { text: AppI18n.t("sidebar.settings", [AppI18n.version]); checked: true; enabled: false; }
+                CustomCheckBox { text: AppI18n.t("sidebar.about", [AppI18n.version]); checked <=> root.sidebar_about; }
+            }
+        }
+    }
+
+    Rectangle { height: 1px; background: Theme.border_color; }
+
+    Rectangle {
+        background: Theme.card_bg; border-radius: 8px; border-width: 1px; border-color: Theme.border_color;
+        VerticalLayout {
+            padding: 12px;
+            spacing: 12px;
+            CustomCheckBox { checked <=> root.mail_icon_always; text: root.strings.mail_icon_always; }
+            CustomCheckBox { checked <=> root.system_color; text: root.strings.system_color; }
+            CustomCheckBox { checked <=> root.hide_pin_icon; text: root.strings.hide_pin_icon; }
+            CustomCheckBox { checked <=> root.colorful_icons; text: root.strings.colorful_icons; }
+            CustomCheckBox { checked <=> root.show_drag; text: root.strings.show_drag_icon; }
+        }
+    }
+}
+

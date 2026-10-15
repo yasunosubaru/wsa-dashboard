@@ -582,6 +582,77 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("dialog.http_proxy_helper", "HTTP Proxy Usage"),
     ("dialog.http_proxy_helper_desc1", "1. When an app inside Android reaches the internet through a proxy you run."),
     ("dialog.http_proxy_helper_desc2", "2. Android reads it as a system-wide hint: apps that honour the system proxy are affected, apps that do not are not."),
+    // -- the settings page (P6) ---------------------------------------------
+    // Key names are the reference's whole `[settings]` block, plus the
+    // `[settings.languages]`-shaped sub-tables the picker reads
+    // (`log_levels`, `log_retention_options`, `update_options`). Values are
+    // its unless the row is about something WSA does not have, in which case the
+    // value is ours and the row says so:
+    //
+    //   distro_dir   the reference picks where WSL distributions are installed.
+    //                Ours names the directory WSA keeps its data in -- a real
+    //                path, read from the package registration, and the button
+    //                beside it opens that path. Calling it an install
+    //                directory would be a claim nothing implements.
+    //   backup_dir   the reference exports and backs up instances here. Ours
+    //                names the directory this program keeps everything it owns
+    //                in, which is the same honest trade at one level up.
+    //   stop_wsl / wsl_settings / wsl2_required / update_wsl
+    //                and the two sparse-VHD rows describe WSL. Their key names
+    //                stay -- the view renders them -- and MAPPING 15 says the
+    //                values are ours.
+    //   saved_success / saved_failed are ours because the reference's says
+    //                nothing about a file; ours does.
+    ("sidebar.toggle", "Toggle"),
+    ("settings.tab_general", "General"),
+    ("settings.tab_advanced", "Advanced"),
+    ("settings.tab_interface", "Interface"),
+    ("settings.language", "Software Language"),
+    ("settings.auto_update", "Automatic update check"),
+    ("settings.update_interval", "Automatic update check"),
+    ("settings.log_level", "Log level"),
+    ("settings.log_retention_days", "Log retention days"),
+    ("settings.log_path", "Log path"),
+    ("settings.distro_dir", "WSA data folder"),
+    ("settings.backup_dir", "App data folder"),
+    ("settings.select_folder", "Select Folder"),
+    ("settings.select_log_dir", "Select the folder the logs are written to"),
+    ("settings.select_distro_dir", "Open the folder WSA keeps its data in"),
+    ("settings.select_backup_dir", "Open the folder this program keeps its data in"),
+    ("settings.auto_shutdown_msg", "Stop WSA when the program exits."),
+    ("settings.system_color", "Use system color mode"),
+    ("settings.tray_autostart", "Automatically start on system startup."),
+    ("settings.tray_start_minimized", "Start minimised to the system tray."),
+    ("settings.tray_close_to_tray", "Close the window to the tray instead of exiting."),
+    ("settings.save", "Save"),
+    ("settings.saved_success", "Settings saved."),
+    ("settings.saved_failed", "Could not save the settings: {0}"),
+    ("settings.sidebar_features", "Sidebar features"),
+    ("settings.sparse_vhd", "Enable sparse VHD by default"),
+    ("settings.sparse_vhd_desc", "Any newly created VHD will be set to sparse automatically when enabled."),
+    ("settings.mount_auto_probe", "Auto-start WSA to probe storage"),
+    ("settings.mount_auto_probe_desc", "The storage page reads VHD images off disk and needs the subsystem for nothing, so this is off and its button is inert."),
+    ("settings.colorful_icons", "Enable colorful icons mode"),
+    ("settings.mail_icon_always", "Always show the messages icon"),
+    ("settings.hide_pin_icon", "Hide always-on-top button"),
+    ("settings.show_drag_icon", "Show list drag-sort handle"),
+    ("settings.wsl_settings", "WSL Settings (~/.wslconfig)"),
+    ("settings.wsl2_required", "This feature needs WSL 2.3.0 or newer."),
+    ("settings.update_wsl", "Visit the WSL download page."),
+    ("settings.stop_wsl", "Stop WSL"),
+    ("dialog.stop_wsl_success", "All WSL instances have been stopped."),
+    ("settings.log_levels.error", "Error level"),
+    ("settings.log_levels.warn", "Warning level"),
+    ("settings.log_levels.info", "Information level"),
+    ("settings.log_levels.debug", "Debug level"),
+    ("settings.log_levels.trace", "Trace level"),
+    ("settings.log_retention_options.seven_days", "seven days"),
+    ("settings.log_retention_options.half_month", "a half month"),
+    ("settings.log_retention_options.one_month", "one month"),
+    ("settings.update_options.daily", "Every day"),
+    ("settings.update_options.weekly", "Every week"),
+    ("settings.update_options.biweekly", "Every two weeks"),
+    ("settings.update_options.monthly", "Every month"),
     ("dialog.save", "Save"),
 ];
 
@@ -603,6 +674,7 @@ pub static OURS: &[&str] = &[
     "dialog.http_proxy_helper_desc1",
     "dialog.http_proxy_helper_desc2",
     "dialog.info_title",
+    "dialog.stop_wsl_success",
     "main.distro_not_found",
     "main.loading",
     "mount_disk.mount",
@@ -613,6 +685,23 @@ pub static OURS: &[&str] = &[
     "network.proxy_save_success",
     "network.target_distro",
     "operation.deleting",
+    "settings.auto_shutdown_msg",
+    "settings.backup_dir",
+    "settings.distro_dir",
+    "settings.log_retention_options.half_month",
+    "settings.mail_icon_always",
+    "settings.mount_auto_probe",
+    "settings.mount_auto_probe_desc",
+    "settings.saved_failed",
+    "settings.saved_success",
+    "settings.select_backup_dir",
+    "settings.select_distro_dir",
+    "settings.select_log_dir",
+    "settings.show_drag_icon",
+    "settings.tray_close_to_tray",
+    "settings.tray_start_minimized",
+    "settings.update_wsl",
+    "settings.wsl2_required",
     "sidebar.add",
     "sidebar.mount",
     "sidebar.usb",

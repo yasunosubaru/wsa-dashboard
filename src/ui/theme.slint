@@ -143,6 +143,45 @@ export struct StorageImageUI {
 ///                   (spec 3 line 239); only the forwarding mechanism changed.
 ///   `is_active`     always true for a rule read out of adb -- a mapping is in
 ///                   the table or it is not. Kept because the card reads it.
+/// Every string the settings page shows, resolved on the Rust side.
+///
+/// The reference's `SettingsStrings` field for field, and for the same reason:
+/// the reference fills it from Rust rather than calling `AppI18n.t` inside the
+/// view, because a `.slint` file with a few hundred `t()` calls is what makes
+/// the Slint compiler run out of stack. Ours keeps the struct for that reason
+/// and not because every field will end up used -- see MAPPING 15 for the four
+/// that describe a thing WSA does not have.
+export struct SettingsStrings {
+    language: string,
+    auto_update: string,
+    log_level: string,
+    log_retention: string,
+    log_path: string,
+    select_folder: string,
+    install_dir: string,
+    backup_dir: string,
+    auto_close: string,
+    system_color: string,
+    auto_start: string,
+    minimize_tray: string,
+    close_to_tray: string,
+    save: string,
+    wsl_settings: string,
+    sidebar_features: string,
+    tab_general: string,
+    tab_advanced: string,
+    tab_interface: string,
+    sparse_vhd: string,
+    sparse_vhd_desc: string,
+    mount_auto_probe: string,
+    mount_auto_probe_desc: string,
+    colorful_icons: string,
+    mail_icon_always: string,
+    hide_pin_icon: string,
+    show_drag_icon: string,
+    stop_wsl: string,
+}
+
 export struct PortProxyRuleUI {
     id: string,
     distro_name: string,

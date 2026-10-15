@@ -28,7 +28,7 @@
 // string still answers a second instance asking who is already open -- which is
 // why `runner` keeps overriding it with the application name.
 
-import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Information, StorageImageUI, PortProxyRuleUI } from "theme.slint";
+import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Information, StorageImageUI, PortProxyRuleUI, SettingsStrings } from "theme.slint";
 // ★ The reference re-exports its globals from the root (reference
 //    `src/ui/app.slint:43`) -- that is what puts `AppI18n` / `AppInfo` in the
 //    generated Rust re-export list, and therefore what makes
@@ -40,6 +40,7 @@ import { AddInstanceView } from "views/add_view.slint";
 import { DeviceView } from "views/device_view.slint";
 import { DiskView } from "views/disk_view.slint";
 import { NetworkView } from "views/network/mod.slint";
+import { SettingsView } from "views/settings/mod.slint";
 import { TaskStatusToast } from "components/task_status_toast.slint";
 import { ModalManager } from "components/modal_manager.slint";
 import { TitleBar } from "components/title_bar.slint";
@@ -151,6 +152,12 @@ export component AppWindow inherits Window {
     in-out property <bool> network_add_enable_fw: true;
     in property <string> network_add_error: "";
     in-out property <bool> show_network_proxy_help: false;
+    // The language picker (P6). Reference `app.slint`:164. It lives in the modal
+    // state rather than in the settings block because it is a dialog flag, and
+    // both the settings page and the manager bind to the same one -- so a
+    // language chosen on the page and a language chosen in the picker cannot
+    // drift apart into two different selections.
+    in-out property <bool> show_language_dialog: false;
 
     // ---- install page (P4) -------------------------------------------------
     // All six are the reference's own names for the same six things on its
@@ -198,6 +205,58 @@ export component AppWindow inherits Window {
     in-out property <bool> sidebar_about: false;
     in-out property <bool> sidebar_toggle: true;
 
+    // ---- the settings page (P6) --------------------------------------------
+    // Every name, type and default is the reference's (`app.slint`:57-67, 122-137),
+    // carried across whole even where this program has nothing behind the value.
+    // Two of them changed what they mean rather than what they are called, and
+    // the label next to each says which thing it now does -- see the block in
+    // `src/i18n/mod.rs` and MAPPING 15:
+    //
+    //   `distro_location`  the reference picks where WSL distributions install.
+    //                      Ours shows where WSA keeps its data, and the button
+    //                      beside it opens that folder.
+    //   `backup_location`  the reference exports instances here. Ours shows the
+    //                      directory this program owns, which is the same
+    //                      honest trade one level up.
+    //   `sparse_vhd`       WSL's default for newly created images. Ours says
+    //                      "prefer allocated size", which `disk_model` reads.
+    //   `mount_auto_probe` starts a distribution so the mount table can be
+    //                      read. Our storage page needs nothing running, so
+    //                      this is "refresh storage when the window opens".
+    //
+    // `auto_shutdown`, `show_drag`, `tray_*`, `mail_icon_always`, `hide_pin`
+    // and `system_color` are stored and wired as far as the phases that own
+    // them allow; the last three arrive with P7.
+    in-out property <string> ui_language: "en";
+    in-out property <string> distro_location: "";
+    in-out property <string> backup_location: "";
+    in-out property <string> logs_location: "";
+    in-out property <int> log_level: 4;
+    in-out property <int> log_days: 7;
+    in-out property <int> check_update_interval: 7;
+    in-out property <bool> system_color: false;
+    in-out property <bool> auto_shutdown: false;
+    in-out property <bool> tray_autostart: false;
+    in-out property <bool> tray_start_minimized: false;
+    in-out property <bool> tray_close_to_tray: true;
+    in-out property <bool> sparse_vhd: false;
+    in-out property <bool> mount_auto_probe: false;
+    in-out property <bool> colorful_icons: false;
+    in-out property <bool> mail_icon_always: true;
+    in-out property <bool> hide_pin_icon: false;
+    // False, where the reference's is `true`: it has a drag-sort handle on its
+    // instance list and ours is a fixed list of nine entries, so a stored `true`
+    // would describe a control that is not on screen.
+    in-out property <bool> show_drag: false;
+    in property <SettingsStrings> settings_strings;
+    /// Resolved on the Rust side, because `available_languages()` is a list of
+    /// files in the binary rather than something `.slint` can enumerate.
+    in property <[string]> settings_language_options;
+    /// Index into `settings_language_options`, not a language code. The
+    /// reference's `LanguageData.lang-codes` has "auto" at 0; ours does not, so
+    /// English is 0 and the default is 0.
+    in-out property <int> selected_language_index: 0;
+
     // ---- callbacks -----------------------------------------------------------
     // P2's four, plus the shell's. The reference forwards sixteen of
     // MainView's plus its dialogs'; those land with their pages.
@@ -219,6 +278,20 @@ export component AppWindow inherits Window {
     callback install_clicked(string);
     callback select_tab(int);
     callback home_clicked();
+    // The settings page's nine, all the reference's spellings
+    // (`app.slint`:1002-1024). Three of them do something here rather than what
+    // they say: `stop_wsl` stops the subsystem, `open_wsl_settings` opens this
+    // program's settings directory, and the three `select_*_folder` callbacks
+    // open the folder each row names.
+    callback save_general_settings();
+    callback save_advanced_settings();
+    callback save_interface_settings();
+    callback select_distro_folder();
+    callback select_logs_folder();
+    callback select_backup_folder();
+    callback open_wsl_settings();
+    callback stop_wsl();
+    callback language_selected(string);
 
     // ---- modal state (P5a) -------------------------------------------------
     // The reference's names, with the one exception noted. `show_delete_confirmation`
@@ -558,6 +631,69 @@ export component AppWindow inherits Window {
                                 // request through the proxy and needs an HTTP client
                                 // P8's update check brings; see MAPPING 14.
                             }
+                            SettingsView {
+                                visible: true;
+                                z: 8;
+                                opacity: selected_tab == 7 ? 1 : 0;
+                                x: selected_tab == 7 ? 0px : 10000px;
+                                ui_language <=> root.ui_language;
+                                distro_location <=> root.distro_location;
+                                backup_location <=> root.backup_location;
+                                logs_location <=> root.logs_location;
+                                log_level <=> root.log_level;
+                                log_days <=> root.log_days;
+                                check_update_interval <=> root.check_update_interval;
+                                system_color <=> root.system_color;
+                                auto_shutdown <=> root.auto_shutdown;
+                                tray_autostart <=> root.tray_autostart;
+                                tray_start_minimized <=> root.tray_start_minimized;
+                                tray_close_to_tray <=> root.tray_close_to_tray;
+                                sidebar_add <=> root.sidebar_add;
+                                sidebar_toggle <=> root.sidebar_toggle;
+                                sidebar_usb <=> root.sidebar_usb;
+                                sidebar_network <=> root.sidebar_network;
+                                sidebar_scheduler <=> root.sidebar_scheduler;
+                                sidebar_mount <=> root.sidebar_mount;
+                                sidebar_donate <=> root.sidebar_donate;
+                                sidebar_about <=> root.sidebar_about;
+                                sparse_vhd <=> root.sparse_vhd;
+                                mount_auto_probe <=> root.mount_auto_probe;
+                                colorful_icons <=> root.colorful_icons;
+                                mail_icon_always <=> root.mail_icon_always;
+                                hide_pin_icon <=> root.hide_pin_icon;
+                                show_drag <=> root.show_drag;
+                                strings: root.settings_strings;
+                                language_options: root.settings_language_options;
+                                selected_language_index <=> root.selected_language_index;
+                                show_language_dialog <=> root.show_language_dialog;
+                                save_general_settings => {
+                                    root.save_general_settings();
+                                }
+                                save_advanced_settings => {
+                                    root.save_advanced_settings();
+                                }
+                                save_interface_settings => {
+                                    root.save_interface_settings();
+                                }
+                                select-distro-folder => {
+                                    root.select_distro_folder();
+                                }
+                                select-logs-folder => {
+                                    root.select_logs_folder();
+                                }
+                                select-backup-folder => {
+                                    root.select_backup_folder();
+                                }
+                                open-wsl-settings => {
+                                    root.open_wsl_settings();
+                                }
+                                stop-wsl => {
+                                    root.stop_wsl();
+                                }
+                                language_selected(code) => {
+                                    root.language_selected(code);
+                                }
+                            }
                         }
                     }
                 }
@@ -595,6 +731,12 @@ export component AppWindow inherits Window {
         network_add_enable_fw <=> root.network_add_enable_fw;
         network_add_error: root.network_add_error;
         show_network_proxy_help <=> root.show_network_proxy_help;
+        show_language_dialog <=> root.show_language_dialog;
+        language_options: root.settings_language_options;
+        language_current_index: root.selected_language_index;
+        language_selected(code) => {
+            root.language_selected(code);
+        }
         add_network_rule(distro, ip, lp, tp, fw) => {
             root.add_network_rule(distro, ip, lp, tp, fw);
         }

@@ -37,10 +37,11 @@ use crate::wsa::dashboard::dashboard_for;
 /// path, not a name, and the reference's `~/.wsl-dashboard` has no reason to
 /// be carried to a product that is not about WSL).
 pub fn logs_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".wsadashboard")
-        .join("logs")
+    // The arithmetic lives in `config` so that there is one answer to "where do
+    // the logs go": the settings page's default is the same call. Two copies of
+    // this expression is how a settings page ends up naming a directory the
+    // logger never writes to.
+    crate::config::logs_dir()
 }
 
 /// Rolling daily file at `<logs_dir>/wsadashboard.log`, level from

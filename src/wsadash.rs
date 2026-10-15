@@ -74,6 +74,18 @@ mod disk_model;
 #[path = "ui/network_model.rs"]
 mod network_model;
 
+// The settings store, for the same reason as the two above: the decisions worth
+// testing here are "a file that does not parse falls back to defaults" and "a
+// retention count is clamped rather than refused", and neither can be reached
+// from the GUI binary's test run.
+//
+// Not `cfg(test)`-only in the way `disk_model` is: `config` is already part of
+// the GUI's module tree, so the CLI mount here is the *only* copy it sees, and
+// the tests below are the only ones that will ever run for it.
+#[cfg(test)]
+#[path = "config/mod.rs"]
+mod config;
+
 use adb::path::adb_path;
 use std::io::Write;
 use std::path::Path;

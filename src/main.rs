@@ -26,6 +26,7 @@
 
 mod adb;
 mod app;
+mod config;
 mod i18n;
 mod ui;
 mod wsa;

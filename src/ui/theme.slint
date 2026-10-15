@@ -182,6 +182,35 @@ export struct SettingsStrings {
     stop_wsl: string,
 }
 
+/// Every string the about page shows, resolved on the Rust side.
+///
+/// The reference's `AboutStrings` field for field. `github` is in the reference
+/// too and unused there -- `data.rs:144` says so -- and is kept for the same
+/// reason: a struct with one unused field is one with one fewer question about
+/// it.
+
+export struct AboutStrings {
+    title: string,
+    description: string,
+    version: string,
+    updates: string,
+    check_update: string,
+    website: string,
+    repository: string,
+    group: string,
+    issues: string,
+    announcements: string,
+    talk: string,
+    documents: string,
+    star: string,
+    love: string,
+    github: string,
+    license: string,
+    copyright: string,
+    privacy_policy: string,
+    terms_of_service: string,
+}
+
 export struct PortProxyRuleUI {
     id: string,
     distro_name: string,

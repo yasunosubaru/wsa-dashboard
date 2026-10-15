@@ -32,11 +32,11 @@
 //! | P5a | 5 | storage -- the half of P5 that verifies with the subsystem stopped |
 //! | P5b | 3 | network |
 //! | P6 | 7 | settings |
-//! | P6 | 7 | settings -- and 8 with it, in Task 5 |
+//! | P6 | 7, 8 | settings, about |
 //! | P7 | 4 | task scheduler |
 //! | — | 6 | donate: spec section 3 maps it 1:1, but section 10 assigns it to no
 //! phase, so it stays out until something does |
-pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2, 3, 5, 7];
+pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2, 3, 5, 7, 8];
 
 /// The nine entries a `SidebarItem` can select, whatever has a page.
 ///
@@ -80,8 +80,8 @@ mod tests {
     /// settings is a test whose name is now a partial statement, and a partial
     /// statement in a test name is read as the whole truth.
     #[test]
-    fn home_install_device_network_storage_and_settings_have_a_page_and_the_rest_do_not() {
-        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2, 3, 5, 7]);
+    fn every_built_page_has_one_and_the_two_unbuilt_ones_do_not() {
+        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2, 3, 5, 7, 8]);
         for tab in 0..=8 {
             assert_eq!(
                 has_a_view(tab),
@@ -123,9 +123,13 @@ mod tests {
     /// is written as the positive statement about the ones that *do* have pages
     /// plus this enumeration, and P7 will have to delete the scheduler half.
     #[test]
-    fn only_the_about_donate_and_scheduler_entries_still_lead_nowhere() {
+    fn only_the_scheduler_and_donate_entries_still_lead_nowhere() {
         let without_a_page: Vec<i32> = (0..=8).filter(|tab| !has_a_view(*tab)).collect();
-        assert_eq!(without_a_page, vec![4, 6, 8], "about is P6 Task 5, donate unassigned, scheduler P7");
+        assert_eq!(
+            without_a_page,
+            vec![4, 6],
+            "scheduler is P7; donate has no phase in spec section 10 at all"
+        );
     }
 
     /// The home page is the one that must never be refused. `has_a_view(0)` is

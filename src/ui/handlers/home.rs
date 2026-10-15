@@ -294,6 +294,16 @@ fn open_url(handle: Weak<AppWindow>) -> impl Fn(SharedString) + 'static {
         if url.starts_with("wsa://") {
             toast(&handle, i18n::t("operation.starting"));
         }
+        // An address this build has no value for, or a scheme we will not hand
+        // to the shell, gets the about page's explanation rather than
+        // `open::that("")` -- which is not an error, it is a shell command with
+        // no arguments, and the click would look like it did nothing. Most of the
+        // rows that can produce one are on the about page, but the test lives here
+        // because this is the one `open_url` the window has.
+        if crate::ui::handlers::about::openable_url(url.as_str()).is_none() {
+            crate::ui::handlers::about::open(&handle, url.to_string());
+            return;
+        }
         match open::that(url.as_str()) {
             Ok(_) => info!(%url, "opened"),
             Err(error) => warn!(%url, ?error, "could not open"),

@@ -748,7 +748,20 @@ try {
             # picture knows either. The `tab selected` read-back is what turns a
             # stale coordinate into a failure instead of a plausible-looking
             # picture of the wrong page.
-            'go-settings-page' { @{ x = 27; y = 566 } }
+            'go-settings-page' { @{ x = 27; y = 526 } }
+            # The about page (P6, Task 5). Adding a row to the bottom group pushes
+            # the rows *above* it up, not the rows below it down: the group is
+            # anchored to the bottom of the sidebar, so settings moved 566 -> 526
+            # and about took 566. Writing it the other way round -- "one row lower
+            # than settings" -- is what this comment originally said, and it landed
+            # the click 40px off the bottom of the window.
+            #
+            # This is the fourth time this pair of coordinates has moved in P6 and
+            # the third time the reason was a row appearing or disappearing rather
+            # than a layout change. Anything that adds a side-bar entry moves both
+            # numbers, and there are two more entries to come (scheduler in P7,
+            # donate whenever it is assigned).
+            'go-about-page'      { @{ x = 27; y = 566 } }
             # The settings page's three tabs. Measured off the P6 capture
             # (1000x750 at this monitor's 1.25 scale): the tab row's boxes read at
             # General (275..360, 70..113), Advanced (375..475, 70..113) and

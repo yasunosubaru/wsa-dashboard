@@ -8,6 +8,29 @@
 # reference labels; see docs/MAPPING.md. The other 49 packs in this
 # folder are the reference's own translations.
 
+[about]
+announcements = "Project announcements"
+check_update = "Checking for updates..."
+copyright = "Copyright © {0} WSA Dashboard Contributors\nFree & open source · Beware of unofficial paid versions"
+description = "A desktop dashboard for Windows Subsystem for Android: start and stop the subsystem, see what it is using, install packages onto it, and forward ports to and from it. Built with Rust and Slint."
+documents = "Project documents"
+group = "Join the official communication group"
+issues = "Issues (Submit bugs, request new features)"
+license = "GPL-3.0 license"
+link_not_configured = "No address is configured for this build."
+love = "Labor of love"
+new_version = "A new version is available: v{0}"
+privacy_policy = "Privacy Policy"
+repository = "Project repository"
+star = "If something here was useful, or something was not, an issue is the fastest way to say so. Reports of a wrong number on a page are as welcome as requests for a new one."
+talk = "Project discussions"
+terms_of_service = "Terms of Service"
+title = "Software Introduction"
+update_check_unavailable = "The update check is not available in this build."
+updates = "(Check for updates)"
+version = "Version"
+website = "Project website"
+
 [add]
 apk_file = "APK file"
 create = "Install APK"

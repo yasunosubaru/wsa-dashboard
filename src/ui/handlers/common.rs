@@ -74,6 +74,14 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppSta
         if tab == 7 {
             crate::ui::handlers::settings::reload(ah.clone());
         }
+        // Tab 8 is the about page, and it has nothing to read -- but its strings
+        // are resolved on this side of the i18n bridge, so a language chosen on
+        // the settings page does not reach them unless they are resolved again.
+        // Re-filling on arrival is what makes that true without the settings page
+        // having to know a second page exists.
+        if tab == 8 {
+            crate::ui::handlers::about::reload(ah.clone());
+        }
     });
 
     // The reference persists this through `ConfigManager`, and each of its

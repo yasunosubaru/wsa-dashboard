@@ -14,6 +14,8 @@
 //!   `disk`    the storage page (P5a)
 //!   `network` the port-forwarding and proxy page (P5b)
 //!   `settings` the settings page, its language picker and `settings.toml` (P6)
+//!   `about`    the about page -- the reference's is mostly a fetch this build
+//!              does not make (spec Q6), and what is left is here (P6)
 //!
 //! The rest arrive with the pages that own them. The reference's `setup`
 //! signature is kept so that adding one is one line rather than a rethink.
@@ -36,6 +38,7 @@ use slint::Weak;
 use crate::AppWindow;
 use crate::app::state::AppState;
 
+pub mod about;
 pub mod app;
 pub mod common;
 pub mod device;
@@ -54,6 +57,8 @@ pub async fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<
     disk::setup(app, app_handle.clone(), app_state.clone());
     network::setup(app, app_handle.clone(), app_state.clone());
     settings::setup(app, app_handle.clone(), app_state.clone());
+    about::setup(app, app_handle.clone(), app_state.clone());
+    about::setup_callbacks(app, app_handle.clone());
     common::setup(app, app_handle.clone(), app_state.clone());
     window::setup(app, app_handle.clone());
 }

@@ -655,6 +655,53 @@ pub static ENGLISH: &[(&str, &str)] = &[
     // Ours stops the subsystem. The key is the reference's (Q12).
     ("settings.stop_wsl", "Stop WSA"),
     ("dialog.stop_wsl_success", "The subsystem has been stopped."),
+    // -- the about page (P6, Task 5) ----------------------------------------
+    // Key names are the reference's whole `[about]` block. Four values are ours,
+    // and the reason is the same in each case: the reference's sentence is about
+    // WSL or about a project that is not this one.
+    //
+    //   description     the reference describes WSL instance management. Ours
+    //                   describes what this window does, which is a different
+    //                   list of things.
+    //   copyright       "WSL Dashboard Contributors" -> ours. Same licence, our
+    //                   name; leaving theirs in would credit a project that is
+    //                   not shipping this binary.
+    //   star / love     the reference asks for a GitHub star and calls itself a
+    //                   labour of love. Ours keeps `love` (it is a true and
+    //                   cheerful thing to say about free software) and points
+    //                   `star` at the issue tracker instead, because that is the
+    //                   address that exists.
+    //   group / talk / documents / announcements
+    //                   the reference fetches all four from api1.wslui.com
+    //                   (`handlers/about.rs:38`), which spec Q6 forbids calling.
+    //                   The rows stay and the wording stays; the handler says
+    //                   the address is not configured instead of opening nothing.
+    ("about.title", "Software Introduction"),
+    ("about.description", "A desktop dashboard for Windows Subsystem for Android: start and stop the subsystem, see what it is using, install packages onto it, and forward ports to and from it. Built with Rust and Slint."),
+    ("about.version", "Version"),
+    ("about.updates", "(Check for updates)"),
+    ("about.check_update", "Checking for updates..."),
+    ("about.website", "Project website"),
+    ("about.repository", "Project repository"),
+    ("about.group", "Join the official communication group"),
+    ("about.issues", "Issues (Submit bugs, request new features)"),
+    ("about.announcements", "Project announcements"),
+    ("about.talk", "Project discussions"),
+    ("about.documents", "Project documents"),
+    ("about.star", "If something here was useful, or something was not, an issue is the fastest way to say so. Reports of a wrong number on a page are as welcome as requests for a new one."),
+    ("about.love", "Labor of love"),
+    ("about.license", "GPL-3.0 license"),
+    ("about.copyright", "Copyright © {0} WSA Dashboard Contributors\nFree & open source · Beware of unofficial paid versions"),
+    ("about.privacy_policy", "Privacy Policy"),
+    ("about.terms_of_service", "Terms of Service"),
+    ("about.new_version", "A new version is available: v{0}"),
+    // Ours, and they exist because the rows they answer for have no address in
+    // this build. `about.group`, `about.talk`, `about.documents` and
+    // `about.announcements` all came from a service spec Q6 forbids, so the
+    // click on those rows gets one of these two sentences instead of opening
+    // nothing.
+    ("about.link_not_configured", "No address is configured for this build."),
+    ("about.update_check_unavailable", "The update check is not available in this build."),
     ("settings.log_levels.error", "Error level"),
     ("settings.log_levels.warn", "Warning level"),
     ("settings.log_levels.info", "Information level"),
@@ -680,6 +727,9 @@ pub static ENGLISH: &[(&str, &str)] = &[
 ///
 /// `tools/derive-ours-keys.py` regenerates this list from the two files.
 pub static OURS: &[&str] = &[
+    "about.copyright",
+    "about.description",
+    "about.star",
     "add.create",
     "add.note",
     "common.app_name",

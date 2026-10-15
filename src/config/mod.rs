@@ -166,6 +166,17 @@ pub fn log_level_name(level: u8) -> &'static str {
     }
 }
 
+/// Log verbosity into the 1..=5 the reference uses.
+///
+/// The `settings/mod.slint` index arithmetic assumes it: the picker writes
+/// `index + 1`, so a 0 would turn the "Error" row into a selection nothing
+/// matches and a 6 would name a level no row holds. Clamped rather than
+/// refused, for the same reason [`clamp_log_days`] clamps: this is a number in a
+/// file, not an invitation to argue about it.
+pub fn clamp_log_level(level: i64) -> u8 {
+    level.clamp(1, 5) as u8
+}
+
 /// Days between update checks, accepting the reference's four choices and any
 /// positive day count.
 ///
@@ -284,6 +295,19 @@ mod tests {
         assert_eq!(clamp_log_days(7), 7);
         assert_eq!(clamp_log_days(30), 30);
         assert_eq!(clamp_log_days(4000), 255, "a u8 is the ceiling, not an error");
+    }
+
+    /// The picker writes `index + 1`, so 0 and 6 are not "levels", they are
+    /// indices that land outside the table. Clamping is what keeps a hand-edited
+    /// file from rendering a blank where the selection should be.
+    #[test]
+    fn log_levels_are_clamped_into_the_pickers_range() {
+        assert_eq!(clamp_log_level(0), 1);
+        assert_eq!(clamp_log_level(-3), 1);
+        assert_eq!(clamp_log_level(1), 1);
+        assert_eq!(clamp_log_level(5), 5);
+        assert_eq!(clamp_log_level(6), 5);
+        assert_eq!(clamp_log_level(999), 5);
     }
 
     #[test]

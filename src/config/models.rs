@@ -101,6 +101,25 @@ pub struct UserSettings {
     /// Stored and inert: ours has no drag-sort handle. See the header.
     #[serde(rename = "show-drag", default)]
     pub show_drag: bool,
+    /// The reference's "enable sparse VHD by default", which it applies to each
+    /// newly created WSL image.
+    ///
+    /// Not dropped with the other WSL-only fields, because P6 found it a real
+    /// job: the storage page already reads a VHDX footer, and a footer carries
+    /// both sizes -- the logical one and the one actually allocated. Preferring
+    /// the allocated one is what a person asking this question wants to see, and
+    /// it is a switch that changes what the page says. Key name and default are
+    /// the reference's; MAPPING 15 records the change of meaning.
+    #[serde(rename = "sparse-vhd", default)]
+    pub sparse_vhd: bool,
+    /// The reference's "auto-start a distribution so the mount table can be
+    /// read". Ours cannot need that -- the storage page reads images off disk
+    /// and spec section 11 line 348 holds it to working with the subsystem
+    /// stopped -- so it became "refresh storage when the window opens", which
+    /// is the same switch pointed at the thing this program does have to wait
+    /// for.
+    #[serde(rename = "mount-auto-probe", default)]
+    pub mount_auto_probe: bool,
 }
 
 impl Default for UserSettings {
@@ -121,6 +140,8 @@ impl Default for UserSettings {
             mail: true,
             hide_pin: false,
             show_drag: false,
+            sparse_vhd: false,
+            mount_auto_probe: false,
         }
     }
 }
@@ -174,6 +195,52 @@ impl Default for TraySettings {
 /// `mount` keeps the reference's `alias = "mount_disk"`: a file written by an
 /// older build of this program, or by the reference, spells it the other way
 /// and should still be honoured rather than silently defaulting to true.
+/// What Windows itself says, remembered.
+///
+/// The reference keeps these two beside the user's settings rather than asking
+/// the OS each time, and for the same reason it keeps `system-language` at all:
+/// `get_font_for` needs to know whether DirectWrite will render CJK on this
+/// machine before it decides which font to ask Skia for, and that answer should
+/// not change underneath a running window because a user flipped a Windows
+/// setting mid-session.
+///
+/// Field names are the reference's; `timezone` has no reader here and is kept
+/// only because the section is the reference's and a file with half of a section
+/// in it is worse than one with all of it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SystemConfig {
+    #[serde(rename = "system-language", default = "default_system_language")]
+    pub system_language: String,
+    #[serde(rename = "timezone", default)]
+    pub timezone: String,
+}
+
+impl Default for SystemConfig {
+    fn default() -> Self {
+        Self {
+            system_language: default_system_language(),
+            timezone: String::new(),
+        }
+    }
+}
+
+/// The locale Windows reports, as a locale name (`zh-CN`, `en-US`).
+///
+/// `GetUserDefaultLocaleName` rather than `LANG`: this program only runs on
+/// Windows, and a Unix environment variable would answer on a host that is not
+/// the one being asked about. Empty when the call fails, which is a real answer
+/// and the one `get_font_for` treats as "ask Windows to fall back".
+pub fn default_system_language() -> String {
+    use windows::Win32::Globalization::GetUserDefaultLocaleName;
+
+    let mut buffer = [0_u16; 85];
+    let length = unsafe { GetUserDefaultLocaleName(&mut buffer) };
+    if length <= 1 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buffer[..(length as usize).saturating_sub(1)])
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SidebarConfig {
     #[serde(default = "default_true")]
@@ -212,6 +279,9 @@ impl Default for SidebarConfig {
 /// The whole file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Config {
+    /// Read once from the OS and written back. See [`SystemConfig`].
+    #[serde(default)]
+    pub system: SystemConfig,
     #[serde(default)]
     pub user: UserSettings,
     #[serde(default)]

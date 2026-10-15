@@ -13,6 +13,7 @@
 //!   `app`     the install-APK page (P4)
 //!   `disk`    the storage page (P5a)
 //!   `network` the port-forwarding and proxy page (P5b)
+//!   `settings` the settings page, its language picker and `settings.toml` (P6)
 //!
 //! The rest arrive with the pages that own them. The reference's `setup`
 //! signature is kept so that adding one is one line rather than a rethink.
@@ -41,6 +42,7 @@ pub mod device;
 pub mod disk;
 pub mod home;
 pub mod network;
+pub mod settings;
 pub mod window;
 
 /// `async` to match the reference's signature (`handlers/mod.rs:23`). Nothing
@@ -51,6 +53,7 @@ pub async fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<
     device::setup(app, app_handle.clone(), app_state.clone());
     disk::setup(app, app_handle.clone(), app_state.clone());
     network::setup(app, app_handle.clone(), app_state.clone());
+    settings::setup(app, app_handle.clone(), app_state.clone());
     common::setup(app, app_handle.clone(), app_state.clone());
     window::setup(app, app_handle.clone());
 }

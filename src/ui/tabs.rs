@@ -31,11 +31,12 @@
 //! | P4 | 0, 1, 2 | + install APK (1), + device (2) |
 //! | P5a | 5 | storage -- the half of P5 that verifies with the subsystem stopped |
 //! | P5b | 3 | network |
-//! | P6 | 7, 8 | settings, about |
+//! | P6 | 7 | settings |
+//! | P6 | 7 | settings -- and 8 with it, in Task 5 |
 //! | P7 | 4 | task scheduler |
 //! | — | 6 | donate: spec section 3 maps it 1:1, but section 10 assigns it to no
 //! phase, so it stays out until something does |
-pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2, 3, 5];
+pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2, 3, 5, 7];
 
 /// The nine entries a `SidebarItem` can select, whatever has a page.
 ///
@@ -65,22 +66,22 @@ pub fn has_a_view(tab: i32) -> bool {
 mod tests {
     use super::{TABS_WITH_A_VIEW, has_a_view, is_sidebar_entry};
 
-    /// Five pages behind nine entries, and exactly which five.
+    /// Six pages behind nine entries, and exactly which six.
     ///
-    /// The list is asserted rather than inferred, and the loop over all nine
-    /// is what ties it to `is_sidebar_entry` -- a value that reached `has_a_view`
+    /// The list is asserted rather than inferred, and the loop over all nine is
+    /// what ties it to `is_sidebar_entry` -- a value that reached `has_a_view`
     /// for an index no sidebar item can select would pass an `assert_eq` on the
-    /// list and still be wrong. Four of the nine still open onto nothing, which
-    /// is the planned state of P6/P7 rather than a gap; see the table on
+    /// list and still be wrong. Three of the nine still open onto nothing, which
+    /// is the planned state of P6's Task 5 and P7; see the table on
     /// `TABS_WITH_A_VIEW`.
     ///
     /// Renamed each time an index is added, because the old name *is* the
     /// assertion: a test called `..._and_storage_...` that also has a page for
-    /// network is a test whose name is now a partial statement, and a partial
+    /// settings is a test whose name is now a partial statement, and a partial
     /// statement in a test name is read as the whole truth.
     #[test]
-    fn home_install_device_network_and_storage_have_a_page_and_the_rest_do_not() {
-        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2, 3, 5]);
+    fn home_install_device_network_storage_and_settings_have_a_page_and_the_rest_do_not() {
+        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2, 3, 5, 7]);
         for tab in 0..=8 {
             assert_eq!(
                 has_a_view(tab),
@@ -105,14 +106,26 @@ mod tests {
         }
     }
 
-    /// The settings entry is visible in P3 while its page is P6. If either
-    /// half of that changes without the other -- the entry gaining a page before
-    /// it is added here, or being removed from here while it is still visible --
-    /// clicking Settings blanks the screen.
+    /// The settings entry got its page in P6. The test that used to say the
+    /// opposite -- that it was offered and led nowhere -- now says it works,
+    /// because the failure it was guarding against (an entry visible with no
+    /// page behind it, so a click sets `selected_tab` to an index no opacity
+    /// binding matches and the content area goes empty) is now the failure P7
+    /// would introduce if it turned the scheduler entry on without adding 4 here.
     #[test]
-    fn settings_is_offered_but_not_yet_available() {
+    fn the_settings_entry_has_a_page_now() {
         assert!(is_sidebar_entry(7));
-        assert!(!has_a_view(7));
+        assert!(has_a_view(7));
+    }
+
+    /// The three entries that still lead nowhere, named. A test that asserts a
+    /// negative is easy to leave behind when the thing it names arrives, so it
+    /// is written as the positive statement about the ones that *do* have pages
+    /// plus this enumeration, and P7 will have to delete the scheduler half.
+    #[test]
+    fn only_the_about_donate_and_scheduler_entries_still_lead_nowhere() {
+        let without_a_page: Vec<i32> = (0..=8).filter(|tab| !has_a_view(*tab)).collect();
+        assert_eq!(without_a_page, vec![4, 6, 8], "about is P6 Task 5, donate unassigned, scheduler P7");
     }
 
     /// The home page is the one that must never be refused. `has_a_view(0)` is

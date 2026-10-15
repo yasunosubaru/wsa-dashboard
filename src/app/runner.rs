@@ -27,14 +27,13 @@ use crate::app::state::AppState;
 use crate::i18n;
 use crate::{app, ui};
 
-/// The languages shipped so far.
+/// The languages this build can render.
 ///
-/// One entry, deliberately: `i18n` has a single table until P6 builds the
-/// `en.toml` set out, and offering a language picker with one language in it is
-/// a control that cannot be used. The array is built here rather than written
-/// into `theme.slint` for the reason the reference records at this point --
-/// a literal long enough to matter has caused a Slint compiler stack overflow.
-fn language_options() -> ModelRc<slint::SharedString> {
+/// Built rather than written into `theme.slint`, for the reason the reference
+/// records at this point -- a literal long enough to matter has caused a Slint
+/// compiler stack overflow -- and because `i18n::available_languages()` is the
+/// list of files in the binary. Fifty packs, one source.
+pub(crate) fn language_options() -> ModelRc<slint::SharedString> {
     let options: Vec<slint::SharedString> = i18n::available_languages()
         .into_iter()
         .map(slint::SharedString::from)
@@ -59,6 +58,17 @@ pub async fn run_app(state: AppState) {
     // default for the P7 single-instance scan to find.
     app.set_window_title(APP_NAME.into());
 
+    // -- the settings, before the first paint (P6) ----------------------------
+    // Read here rather than inside `handlers::settings::setup` because three of
+    // these have to be true before anything is drawn: the window opens in the
+    // saved language, not in English with the English swapped a moment later;
+    // `Theme.dark_mode` and the side-bar switches are already right rather than
+    // flipping on the reader's first click.
+    //
+    // `reload` is the same function the settings page calls when it is opened,
+    // so the page and the file cannot disagree about what the settings are.
+    ui::handlers::settings::reload(app.as_weak());
+
     // -- the i18n bridge (reference runner.rs:78-97) ---------------------------
     app.global::<AppI18n>().on_t(|key, args| {
         let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
@@ -66,6 +76,14 @@ pub async fn run_app(state: AppState) {
     });
     app.global::<AppI18n>()
         .set_locale_code(i18n::current_lang().into());
+    // Whatever the file asked for, loaded before the version bump below, so the
+    // first `t(...)` a `.slint` file evaluates already has the right table behind
+    // it. `load_resources` normalises, so a pack that is not shipped lands on
+    // English rather than on an empty table.
+    i18n::load_resources(&crate::config::load().user.ui_language);
+    app.global::<AppI18n>()
+        .set_locale_code(i18n::current_lang().into());
+    app.global::<AppI18n>().set_is_rtl(i18n::is_rtl(&i18n::current_lang()));
     // Not a timestamp or a build number: a value bumped when the table changes,
     // so that every `AppI18n.t(...)` expression re-evaluates. Setting it is what
     // makes the first paint translated rather than the second.

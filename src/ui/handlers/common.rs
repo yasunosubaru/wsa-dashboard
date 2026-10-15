@@ -47,8 +47,8 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppSta
         }
 
         // Each page that has work to do asks for it when it is opened. The
-        // reference does the same from here -- efresh_usb, efresh_tasks,
-        // efresh_mounted_disks, three fetches -- and it is why this handler
+        // reference does the same from here -- `refresh_usb`, `refresh_tasks`,
+        // `refresh_mounted_disks`, three fetches -- and it is why this handler
         // has the state: switching to a page is the moment its data is
         // known-to-be-wanted, and a page that only refreshed on a timer would
         // be blank for as long as the first visit takes.
@@ -66,6 +66,13 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppSta
         // terminal since would be missing from it.
         if tab == 3 {
             crate::ui::handlers::network::refresh(ah.clone(), app_state.clone());
+        }
+        // Tab 7 is the settings page, and what it shows is the settings file.
+        // There is nothing to fetch from a subsystem -- but a file the reader
+        // edited by hand between two visits should be what they see when they
+        // come back, which is what the reference does from here too.
+        if tab == 7 {
+            crate::ui::handlers::settings::reload(ah.clone());
         }
     });
 

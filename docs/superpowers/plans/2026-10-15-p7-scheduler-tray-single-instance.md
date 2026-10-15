@@ -84,30 +84,30 @@ cargo test --release --bin wsadash
 列名是系统语言，日期格式跟着区域设置。参照用固定列号解析——那在非英文 Windows 上是坏的。
 我们的做法：按**表头**找列，而不是按位置，并在表头不认识时返回空而不是猜。
 
-- [ ] **Step 1: 写失败的测试**（至少八条）
+- [x] **Step 1: 写失败的测试**（至少八条）
   英文 CSV 表头能解析；表头顺序变了仍能解析；**德文表头**（`TaskName` → `Auftragsname`）能解析；
   缺列返回空；空输出返回空；`/Query` 失败时（stdout 有 "ERROR"）返回空而不是一条假记录；
   一次 `--query` 多条任务；末行没有换行符不吞掉最后一条。
-- [ ] **Step 2: 跑测试确认失败**
-- [ ] **Step 3: 实现**（`schtasks` 调用 + 解析）
-- [ ] **Step 4: 跑测试确认通过**
-- [ ] **Step 5: 挂进 `wsadash.rs` 的 `#[cfg(test)]` 区，跑全套**
-- [ ] **Step 6: 提交** `feat(scheduler): schtasks 解析器，按表头不按列号`
+- [x] **Step 2: 跑测试确认失败**
+- [x] **Step 3: 实现**（`schtasks` 调用 + 解析）
+- [x] **Step 4: 跑测试确认通过**
+- [x] **Step 5: 挂进 `wsadash.rs` 的 `#[cfg(test)]` 区，跑全套**
+- [x] **Step 6: 提交** `feat(scheduler): schtasks 解析器，按表头不按列号`
 
 ## Task 2：单实例 + 开机自启 + 启动信息
 
 **Files:** Create `src/app/{single_instance,autostart,startup_info}.rs`；Modify `app/runner.rs`、`app/mod.rs`
 
-- 单实例：照参照的 `CreateMutexW` + `FindWindowW`。**第二实例要把第一���的窗口带回来**——
+- 单实例：照参照的 `CreateMutexW` + `FindWindowW`。**第二实例要把第一个的窗口带回来**——
   `ShowWindow(SW_RESTORE)` + `SetForegroundWindow`，这是参照的全部意义，否则单实例只是"关掉第二个"。
 - 开机自启：注册表 `Run` 键，值指向当前 exe。**要用 `tray_autostart` 这个字段**，P6 已经在存它。
 - 启动信息：参照的 `startup_info.rs` 给日志用。
 - 这三个都是 GUI/系统侧，但**注册表路径和命令行拼装是纯的**——拆成纯函数 + 薄壳，纯函数挂进 CLI 测试。
 
-- [ ] Step 1: 写失败的测试（注册表 Run 值的拼装、命令行转义、是否该注册的条件）
-- [ ] Step 2–4: 红 → 实现 → 绿
-- [ ] Step 5: 接进 `runner.rs`（窗口起来**之前**做单实例判断）
-- [ ] Step 6: 提交 `feat(app): 单实例、开机自启、启动信息`
+- [x] Step 1: 写失败的测试（注册表 Run 值的拼装、命令行转义、是否该注册的条件）
+- [x] Step 2–4: 红 → 实现 → 绿
+- [x] Step 5: 接进 `runner.rs`（窗口起来**之前**做单实例判断）
+- [x] Step 6: 提交 `feat(app): 单实例、开机自启、启动信息`
 
 ## Task 3：托盘
 

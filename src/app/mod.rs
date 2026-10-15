@@ -15,6 +15,13 @@ pub mod state;
 pub mod tasks;
 pub mod window;
 
+/// One instance, and waking it (`single_instance`), the Run entry
+/// (`autostart`), and the startup log line (`startup_info`). All three are the
+/// reference's, and all three are app-level rather than page-level.
+pub mod autostart;
+pub mod single_instance;
+pub mod startup_info;
+
 /// Scheduled tasks (P7). The pure layer only: what a task is, what a cron
 /// means, and what Windows exports. The commands that create and delete tasks
 /// arrive in P7 Task 2.

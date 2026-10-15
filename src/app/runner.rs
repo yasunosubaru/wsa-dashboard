@@ -20,7 +20,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::app::constants::{APP_NAME, PROJECT_REPOSITORY};
 use crate::app::state::AppState;
@@ -43,6 +43,27 @@ pub(crate) fn language_options() -> ModelRc<slint::SharedString> {
 
 /// Open the window and run the event loop until it closes.
 pub async fn run_app(state: AppState) {
+    // -- the single-instance handshake, before any window (P7) ---------------
+    // Before `AppWindow::new`, not after: creating the window is the step that
+    // puts a caption on screen, and a second launch that has already drawn one
+    // flash is a launch the reader saw.
+    let _single_instance = crate::app::single_instance::SingleInstance::new(
+        &crate::app::single_instance::mutex_name(),
+    );
+    if !_single_instance.is_single() {
+        if crate::app::single_instance::try_activate_existing_instance() {
+            info!("another instance is running and has been woken; this one exits");
+        } else {
+            // The mutex was owned but nobody answered the pipe and no window was
+            // found: the other process is starting, or it is dying. Returning
+            // rather than proceeding is the safe half of that choice -- a second
+            // window appearing over a first that is mid-startup is the confusing
+            // version -- and the reader's second double-click gets the answer.
+            info!("the mutex is owned but nothing answered; exiting");
+        }
+        return;
+    }
+
     let app = match AppWindow::new() {
         Ok(app) => app,
         Err(error) => {
@@ -111,6 +132,23 @@ pub async fn run_app(state: AppState) {
     let state = Arc::new(state);
 
     ui::handlers::setup(&app, app.as_weak(), state.clone()).await;
+
+    // -- the Run entry, and the startup line (P7) -----------------------------
+    // Both after the handlers, because the tray switches the Run entry follows are
+    // read by `handlers::settings` when it sets up, and both before `app.run`, so a
+    // failure is logged before the window's first paint rather than after.
+    //
+    // The switches are read again here rather than reused from the settings page,
+    // and the reason is that the Run entry has to be written whether or not the
+    // reader ever opens that page.
+    //
+    // The startup line is spawned rather than awaited: it runs `cmd /c ver`, and a
+    // reader should not see the window later because a process they did not launch
+    // was slow to start.
+    let tray = crate::config::load().tray;
+    let _ = crate::app::autostart::apply_tray_autostart(tray.autostart, tray.start_minimized).await;
+    let _ = tokio::spawn(crate::app::startup_info::log_startup_system_info());
+
     app::tasks::spawn_home_monitor(app.as_weak(), state);
 
     if let Err(error) = app.run() {

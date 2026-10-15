@@ -101,6 +101,56 @@ mod config;
 #[path = "app/scheduler_task/mod.rs"]
 mod scheduler_task;
 
+// App-level modules with decisions worth pinning, mounted here for the same
+// reason as `scheduler_task`: `cargo test --bin wsadash` is the only test run
+// this project has, and tests written in `app::startup_info` or `app::autostart`
+// sit in the GUI binary where nothing runs them. That is not a hypothetical: the
+// first version of `parse_windows_build` split on the English label `"Version "`,
+// `ver` on this machine answers in Chinese, and its test would have said `N/A`
+// was correct -- while never once being executed.
+//
+// The files below reach their one shared constant through
+// `super::constants::APP_ID` rather than `crate::app::constants::APP_ID`, which
+// is why `constants` is mounted beside them here -- that path resolves in the
+// GUI (`super` = `app`) and here (`super` = the crate root, where this file puts
+// `constants`). The other spelling works in one and not the other, and the error
+// names the module that cannot be found rather than the mount that is missing.
+#[cfg(test)]
+#[path = "app/constants.rs"]
+mod constants;
+
+#[cfg(test)]
+#[path = "app/startup_info.rs"]
+mod startup_info;
+
+#[cfg(test)]
+#[path = "app/autostart.rs"]
+mod autostart;
+
+// `window` and `single_instance`, mounted together because they have to be: the
+// one function in `single_instance` that is not a name is
+// `try_activate_existing_instance`, and it reaches its window through
+// `super::window`. Mounting only the second would leave that path unresolved.
+//
+// `window.rs` is the one GUI file with no Slint in it -- Win32 window handles
+// from top to bottom -- which is what makes it mountable here at all. Everything
+// in it is `#[cfg(target_os = "windows")]`, so this is a Windows-only mount, and
+// the `#![allow(dead_code)]` at the top of each file is what keeps the shell
+// quiet: the tests call the names, not the handles.
+//
+// The test worth the pair is one design difference with a regression attached:
+// the reference finds the running instance's window by trying three *titles*, and
+// ours finds it by process id. The title list is asserted empty, which is the only
+// thing standing between this and the reference's silent "double-click does
+// nothing" failure coming back.
+#[cfg(test)]
+#[path = "app/window.rs"]
+mod window;
+
+#[cfg(test)]
+#[path = "app/single_instance.rs"]
+mod single_instance;
+
 use adb::path::adb_path;
 use std::io::Write;
 use std::path::Path;

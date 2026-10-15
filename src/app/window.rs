@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026
 // SPDX-License-Identifier: GPL-3.0-only
 
+// `find_main_window`, `set_always_on_top` and `activate_window_by_hwnd` are
+// called by the GUI build -- the last of them by `single_instance`. Under the
+// CLI's `#[cfg(test)] #[path]` mount only the tests are compiled against this
+// file, so the handles are unreachable by construction from there, not dead.
+// Same reason and same shape as `scheduler_task/models.rs` and `config/mod.rs`.
+#![allow(dead_code)]
+
 //! The window handle, and the one thing P3 does with it: pin it on top.
 //!
 //! The reference's `src/app/window.rs` is 441 lines. Almost all of it belongs to
@@ -14,7 +21,10 @@
 //! What is deliberately absent, so that P7 can go and fetch it:
 //!
 //!   `set_skip_taskbar`, `hide_window_completely`, `set_window_opacity*`,
-//!   `show_and_center`, `activate_window_by_hwnd`, `rename_app_windows`.
+//!   `show_and_center`, `rename_app_windows`. (`activate_window_by_hwnd` was
+//!   listed here through P3-P6; P7's `single_instance` came to fetch it, because
+//!   waking a window that was minimised to the tray is the one thing it cannot do
+//!   without it.)
 //!
 //! # The title candidates are this project's
 //!
@@ -132,6 +142,114 @@ pub fn find_main_window() -> Option<HWND> {
         }
     }
     data.main_window
+}
+
+/// Bring this process's window back: visible, on screen, and on top.
+///
+/// The counterpart of the reference's `activate_window_by_hwnd`
+/// (`window.rs`:329-373), which P7 came to collect -- this file's header listed
+/// it as deliberately absent from P3 onward. Copied with the same four steps in
+/// the same order, and the order matters: a window that was minimised to the tray
+/// has both its extended style and its layered alpha changed, and restoring the
+/// style *after* showing it leaves a taskbar-less window invisible for a frame.
+///
+/// The reference does its own window lookup by title before calling this. Ours is
+/// handed a handle by `find_main_window`, which finds it by process id -- see
+/// `single_instance.rs` for why that replaced the title list.
+///
+/// One deliberate change inside: the reference centres a parked window on
+/// `MONITOR_DEFAULTTOPRIMARY`, and this centres it on `MONITOR_DEFAULTTONEAREST`.
+/// Restoring a window the reader had on their second monitor onto the primary one
+/// is how a program that "restored" them to the wrong screen gets remembered as
+/// broken; `MonitorFromWindow` already knows which monitor the handle belongs to.
+#[cfg(target_os = "windows")]
+pub fn activate_window_by_hwnd(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::UI::WindowsAndMessaging::LWA_ALPHA;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongW, GetWindowRect, SetForegroundWindow, SetLayeredWindowAttributes,
+        SetWindowLongW, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOP, SWP_FRAMECHANGED,
+        SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE, SW_SHOW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    };
+
+    unsafe {
+        // STYLE FIRST: not a tool window, and an app window, so it appears in the
+        // taskbar. This is the step a tray-hidden window needs before anything else
+        // touches it.
+        let style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        let style = (style & !WS_EX_TOOLWINDOW.0) | WS_EX_APPWINDOW.0;
+        SetWindowLongW(hwnd, GWL_EXSTYLE, style as i32);
+
+        // CLEAR TRANSPARENCY: the tray path sets alpha low, and a restored window
+        // that is still faded reads as a rendering bug rather than as a state.
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+
+        // RESTORE POSITION: a window parked off-screen sits at around -32000, and
+        // restoring it where it was means restoring it where the reader cannot see
+        // it. Centred on whichever monitor it belonged to, not the primary one.
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            if rect.left < -10000 || rect.top < -10000 {
+                let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                let mut info = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                if GetMonitorInfoW(monitor, &mut info).as_bool() {
+                    let work = info.rcWork;
+                    let x = work.left + (work.right - work.left - width) / 2;
+                    let y = work.top + (work.bottom - work.top - height) / 2;
+                    let _ = SetWindowPos(
+                        hwnd,
+                        Some(HWND_TOP),
+                        x,
+                        y,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_FRAMECHANGED,
+                    );
+                }
+            } else {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOP),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED,
+                );
+            }
+        }
+
+        // Then, and only then, activation.
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = SetForegroundWindow(hwnd);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn activate_window_by_hwnd(_hwnd: windows::Win32::Foundation::HWND) {}
+
+/// The one thing about `activate_window_by_hwnd` a test can hold: that the two
+/// `cfg` variants keep the same signature, so the file still compiles on the
+/// platform nobody here builds for. The behaviour -- does the window actually
+/// come back on screen -- needs a desktop and a second process, and is checked by
+/// hand (MAPPING section 8's method).
+#[cfg(all(target_os = "windows", test))]
+mod activate_tests {
+    use super::activate_window_by_hwnd;
+
+    #[test]
+    fn the_function_exists_for_the_non_windows_build_too() {
+        let _ = activate_window_by_hwnd;
+    }
 }
 
 /// The pin button: keep the window above everything else.

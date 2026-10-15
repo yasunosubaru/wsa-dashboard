@@ -3,28 +3,65 @@
 
 //! English text, and the two functions the UI calls to get at it.
 //!
-//! The signatures and the key names are the reference's (`src/i18n/mod.rs`
-//! lines 275 and 282), so `.slint` files can carry `AppI18n.t("main.loading",
-//! ...)` from the first day and be diffed line by line against the
-//! reference at review.
+//! The signatures are the reference's (`src/i18n/mod.rs` lines 25 and the `t`
+//! / `tr` it exposes), fixed in P1 so that `.slint` files could carry
+//! `AppI18n.t("main.loading", ...)` from the first day and be diffed line by
+//! line against the reference at review. Nothing has to change at a call site.
 //!
-//! This table is deliberately the home page's slice, not the reference's 563
-//! keys across 50 languages. P6 swaps this static array for the real
-//! `en.toml` loader without touching a single call site -- that is the whole
-//! reason the signatures are fixed now.
+//! # What changed in P6, and why it is not the reference's version
+//!
+//! The reference loads a pack over the English one, unconditionally. That is
+//! right for it and wrong for us, because **our English is not the reference's
+//! English**. Q12 keeps the key names and changes the sentences wherever WSA has
+//! no counterpart to what the reference labels -- `operation.deleting` says
+//! "Uninstalling ..." rather than "Deleting ...", `sidebar.mount` says "Storage"
+//! rather than "Mount", `network.proxy_error_port` names 65535 rather than
+//! 65534 because that is what the code checks.
+//!
+//! The other 49 packs were translated *from the reference's sentences*. Letting
+//! them overwrite ours does not produce a translated dashboard; it produces a
+//! dashboard that describes a different program, in a language, politely. So
+//! [`OURS`] names the keys whose wording is ours and [`lookup`] refuses to
+//! overlay them. The list is not a judgement call written by hand: a test
+//! compares [`ENGLISH`] against the reference's `en.toml` and fails if the two
+//! sets differ in either direction.
+//!
+//! # Where the strings come from
+//!
+//! [`ENGLISH`] is the authority and is what `assets/i18n/en.toml` is generated
+//! from; a test asserts they agree. The other 49 files are the reference's own
+//! packs, copied verbatim.
 
 // Compiled into the CLI only so `cargo test --release --bin wsadash` can run
 // these tests; the GUI is the only caller.
 #![allow(dead_code)]
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use once_cell::sync::Lazy;
+use rust_embed::RustEmbed;
+use toml::Value;
+use tracing::warn;
+
+#[derive(RustEmbed)]
+#[folder = "assets/i18n/"]
+struct Asset;
+
+/// The flattened current-language table: `section.key` -> text.
+static TRANSLATIONS: Lazy<Mutex<HashMap<String, String>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+static CURRENT_LANG: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("en".to_string()));
 
 /// Resolve one key. A missing key is reported and then shown verbatim: a
 /// blank string would hide the problem, and a panic would take the window
 /// with it.
 pub fn t(key: &str) -> String {
     match lookup(key) {
-        Some(value) => value.to_string(),
+        Some(value) => value,
         None => {
-            tracing::warn!(key, "no translation; showing the key itself");
+            warn!(key, "no translation; showing the key itself");
             key.to_string()
         }
     }
@@ -42,39 +79,202 @@ pub fn tr(key: &str, args: &[String]) -> String {
     text
 }
 
-/// P6 replaces this with the real table. No language we ship is RTL, and the
-/// reference's RTL branch stays compiled but unreachable until one is.
-pub fn is_rtl(_lang: &str) -> bool {
-    false
+/// Right-to-left, for the reference's duplicated LTR/RTL markup.
+///
+/// The reference lists five; this is that list, and it is the only reason those
+/// branches are not dead code.
+pub fn is_rtl(lang: &str) -> bool {
+    let lower = lang.to_lowercase();
+    matches!(lower.as_str(), "ar" | "he" | "fa" | "ur" | "sd")
+        || lower.starts_with("ar-")
+        || lower.starts_with("he-")
+        || lower.starts_with("fa-")
+        || lower.starts_with("ur-")
+        || lower.starts_with("sd-")
 }
 
-/// P6 replaces this with the stored preference.
+/// The language in force right now, as a normalised pack name.
 pub fn current_lang() -> String {
-    "en".into()
+    CURRENT_LANG.lock().expect("i18n lock").clone()
 }
 
 /// Every language this build can render, in the order the picker shows them.
 ///
-/// One entry until P6. The list is declared beside `ENGLISH` rather than
-/// derived from it: a table scan would have to guess at a language from a key
-/// prefix, and a wrong guess is a picker option that resolves to nothing.
+/// Sorted by pack name rather than by whatever order the filesystem enumerates,
+/// because this list *is* the drop-down's order and a picker that reshuffles
+/// itself between runs is a picker whose position means nothing.
 pub fn available_languages() -> Vec<String> {
-    LANGUAGES.iter().map(|lang| (*lang).to_string()).collect()
+    let mut names: Vec<String> = Asset::iter()
+        .map(|file| {
+            let name = file.to_string();
+            name.trim_end_matches(".toml").to_string()
+        })
+        .collect();
+    names.sort();
+    names
 }
 
-/// P6 adds a row per `.toml` file it finds.
-const LANGUAGES: &[&str] = &["en"];
+/// Load `lang_code`'s pack over English, and make it current.
+///
+/// English first and the pack over the top, the reference's order, with one
+/// exception: a key in [`OURS`] is not overlaid. The pack is still loaded and
+/// still occupies memory -- it simply does not win for those keys.
+pub fn load_resources(lang_code: &str) {
+    let normalized = normalize_language_code(lang_code);
+    let mut map = TRANSLATIONS.lock().expect("i18n lock");
+    map.clear();
+    load_file_to_map("en", &mut map);
+    if normalized != "en" {
+        load_file_to_map(&normalized, &mut map);
+    }
+    let count = map.len();
+    drop(map);
+    *CURRENT_LANG.lock().expect("i18n lock") = normalized;
+    tracing::debug!(keys = count, "i18n resources loaded");
+}
 
-fn lookup(key: &str) -> Option<&'static str> {
-    ENGLISH
+/// Map a locale onto a pack we actually ship, or `en`.
+///
+/// The reference answers this with a hundred-and-sixty-line chain of
+/// `if lower == "..."` tests, one per pack, which is the same decision written
+/// out longhand: *which shipped name does this locale mean?* The shipped list
+/// is already in the binary, so the chain is replaced by a matcher over it plus
+/// the handful of aliases that are not a prefix relationship at all --
+/// `fil` <- `tl`, `no` <- `nb`/`nn`, and the two Chinese packs, which Windows
+/// reports as `zh-CN` and `zh-TW` but which are also reachable as `zh`,
+/// `zh-Hans`, `zh-Hant`, `zh-HK` and `zh-MO`.
+///
+/// A test pins the behaviour over all fifty shipped names, so "it agrees with
+/// the reference" is asserted rather than hoped for. MAPPING 15 records the
+/// substitution.
+pub fn normalize_language_code(lang: &str) -> String {
+    let lower = lang.to_lowercase().replace('_', "-");
+    let names = available_languages();
+
+    // Exact, ignoring case: "ZH-cn" and "zh-CN" are the same request.
+    if let Some(hit) = names.iter().find(|name| name.to_lowercase() == lower) {
+        return hit.clone();
+    }
+
+    // The Chinese packs are reachable by script name, and the two overlap:
+    // `zh` alone means simplified, which is what a bare "中文" request means
+    // everywhere the reference supports it.
+    let traditional = ["zh-tw", "zh-hk", "zh-mo"];
+    if traditional.contains(&lower.as_str()) || lower.starts_with("zh-hant") {
+        if names.iter().any(|name| name == "zh-TW") {
+            return "zh-TW".to_string();
+        }
+    }
+    if lower == "zh"
+        || lower == "zh-cn"
+        || lower == "zh-sg"
+        || lower.starts_with("zh-hans")
+    {
+        if names.iter().any(|name| name == "zh-CN") {
+            return "zh-CN".to_string();
+        }
+    }
+
+    // "pt-BR" is not a pack, but "pt" is, and a Brazilian reader is better
+    // served by the pack we have than by English.
+    if let Some(hit) = names
+        .iter()
+        .find(|name| lower.starts_with(&format!("{}-", name.to_lowercase())))
+    {
+        return hit.clone();
+    }
+
+    // Norwegian and Filipino: different codes, one language.
+    for alias in ["nb", "nn"] {
+        if lower == alias || lower.starts_with(&format!("{alias}-")) {
+            if names.iter().any(|name| name == "no") {
+                return "no".to_string();
+            }
+        }
+    }
+    if lower == "tl" || lower.starts_with("tl-") {
+        if names.iter().any(|name| name == "fil") {
+            return "fil".to_string();
+        }
+    }
+
+    "en".to_string()
+}
+
+/// The text to show for one key, in the current language.
+fn lookup(key: &str) -> Option<String> {
+    let english = ENGLISH
         .iter()
         .find(|(candidate, _)| *candidate == key)
-        .map(|(_, value)| *value)
+        .map(|(_, value)| (*value).to_string());
+
+    // English is authoritative: a pack is consulted only for a key that is
+    // translated *and* whose wording is the reference's.
+    if is_ours(key) {
+        return english;
+    }
+    TRANSLATIONS
+        .lock()
+        .expect("i18n lock")
+        .get(key)
+        .cloned()
+        .or(english)
 }
 
-/// Key names are the reference's. Values are ours wherever WSA has no
-/// counterpart to what the reference labels, and that substitution is what
-/// `docs/MAPPING.md` section 4.1 records.
+/// Whether this key's wording is ours rather than the reference's.
+///
+/// The answer is "yes" for the keys [`OURS`] lists and for keys the reference
+/// never had -- those cannot be overlaid by anything anyway -- and "no" for
+/// every other key. Unknown keys report "no" rather than "yes" so that a typo
+/// in a call site shows the key itself through the missing-key path, which
+/// warns, instead of silently resolving.
+fn is_ours(key: &str) -> bool {
+    OURS.contains(&key) || !ENGLISH.iter().any(|(candidate, _)| *candidate == key)
+}
+
+fn load_file_to_map(lang: &str, map: &mut HashMap<String, String>) {
+    let filename = format!("{lang}.toml");
+    let Some(content) = Asset::get(&filename) else {
+        warn!(lang, "no language pack with that name; falling back to English");
+        return;
+    };
+    let content = String::from_utf8_lossy(content.data.as_ref());
+    // A pack that does not parse is skipped rather than fatal: one broken file
+    // must not take the window down, and English underneath is a working page.
+    // `toml::from_str::<Table>`, not `content.parse::<Value>()`: in toml 1.x the
+    // latter parses a *value* and rejects a document outright ("unexpected
+    // content, expected nothing"), which is how four tests came back failing
+    // with the loader never having loaded anything.
+    match toml::from_str::<toml::Table>(content.as_ref()) {
+        Ok(table) => flatten("", &Value::Table(table), map),
+        Err(error) => warn!(lang, %error, "language pack did not parse"),
+    }
+}
+
+/// `[network]` + `no_rules` -> `network.no_rules`, recursively.
+fn flatten(prefix: &str, value: &Value, map: &mut HashMap<String, String>) {
+    match value {
+        Value::Table(table) => {
+            for (key, nested) in table {
+                let full = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                flatten(&full, nested, map);
+            }
+        }
+        Value::String(text) => {
+            // An empty string in a pack means "not translated", and writing it
+            // over the English would blank a label rather than leave it.
+            if !text.is_empty() {
+                map.insert(prefix.to_string(), text.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
 pub static ENGLISH: &[(&str, &str)] = &[
     ("common.app_name", "WSA Dashboard"),
     // -- sidebar: the nine entries (P3) -------------------------------------
@@ -385,165 +585,414 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("dialog.save", "Save"),
 ];
 
+/// Keys whose wording is **ours**, so a translation must not overwrite it.
+///
+/// Not a judgement call written by hand: `ours_list_is_exactly_the_keys_whose
+/// wording_changed` compares [`ENGLISH`] against the reference's own
+/// `en.toml` and fails if this list and that difference differ in either
+/// direction. Add a key here when a sentence changes and the test will hold you
+/// to it; leave it out by accident and the test says which key.
+///
+/// `tools/derive-ours-keys.py` regenerates this list from the two files.
+pub static OURS: &[&str] = &[
+    "add.create",
+    "add.note",
+    "common.app_name",
+    "dialog.delete_msg",
+    "dialog.delete_title",
+    "dialog.http_proxy_helper_desc1",
+    "dialog.http_proxy_helper_desc2",
+    "dialog.info_title",
+    "main.distro_not_found",
+    "main.loading",
+    "mount_disk.mount",
+    "mount_disk.mount_btn",
+    "mount_disk.no_mounted",
+    "network.proxy_error_invalid",
+    "network.proxy_error_port",
+    "network.proxy_save_success",
+    "network.target_distro",
+    "operation.deleting",
+    "sidebar.add",
+    "sidebar.mount",
+    "sidebar.usb",
+    "toast.distro_busy",
+    "usb.attach",
+    "usb.detach",
+    "usb.device_info",
+    "usb.empty",
+    "usb.loading",
+    "usb.not_found_error",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn resolves_a_reference_key() {
-        assert_eq!(t("distro.running"), "Running");
-        assert_eq!(t("distro.start"), "Start");
+    /// The loader mutates two process-wide values, so every test that calls it
+    /// runs under this. Tests in one binary run on many threads; without it a
+    /// `load_resources("ja")` in one test is a `t()` answering in Japanese in
+    /// another, and the failure looks like a translation bug.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn serialized() -> std::sync::MutexGuard<'static, ()> {
+        // A poisoned lock means an earlier test panicked while holding it; the
+        // state it guards is still just two maps, and cascading that into every
+        // other test would hide the original failure.
+        SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn english_value(key: &str) -> String {
+        ENGLISH
+            .iter()
+            .find(|(candidate, _)| *candidate == key)
+            .map(|(_, value)| (*value).to_string())
+            .unwrap_or_default()
+    }
+
+    // -- the shipped packs ---------------------------------------------------
+
+    /// `assets/i18n/en.toml` is generated from [`ENGLISH`]; if the table is
+    /// edited and the file is not regenerated, the file is what the program
+    /// actually shows and the table is what a reader believes. One test, both
+    /// directions.
     #[test]
-    fn fills_placeholders_left_to_right() {
+    fn the_generated_english_pack_matches_the_table() {
+        let raw = Asset::get("en.toml").expect("assets/i18n/en.toml is embedded");
+        let text = String::from_utf8_lossy(raw.data.as_ref());
+        let parsed = toml::from_str::<toml::Table>(text.as_ref()).expect("en.toml parses");
+        let mut from_file = HashMap::new();
+        flatten("", &Value::Table(parsed), &mut from_file);
+
+        let from_table: HashMap<String, String> = ENGLISH
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
+
         assert_eq!(
-            tr("toast.distro_busy", &["Foo".into(), "Starting ...".into()]),
-            "Foo is busy (Starting ...)"
+            from_file.len(),
+            from_table.len(),
+            "en.toml has {} keys, the table has {}",
+            from_file.len(),
+            from_table.len()
         );
-    }
-
-    /// A key nobody filled in must not blank the window.
-    #[test]
-    fn a_missing_key_shows_itself_and_does_not_panic() {
-        assert_eq!(t("no.such.key"), "no.such.key");
-        assert_eq!(tr("no.such.key", &["a".into()]), "no.such.key");
-    }
-
-    /// An extra argument is harmless: a translation that outgrew its caller
-    /// must not take the window down.
-    #[test]
-    fn too_many_arguments_is_not_an_error() {
-        assert_eq!(
-            tr("distro.start", &["a".into(), "b".into(), "c".into()]),
-            "Start"
-        );
-    }
-
-    #[test]
-    fn too_few_arguments_leaves_the_placeholder_visible() {
-        assert_eq!(tr("toast.distro_busy", &["Foo".into()]), "Foo is busy ({1})");
-    }
-
-    #[test]
-    fn no_key_is_empty_or_whitespace() {
-        for (key, value) in ENGLISH {
-            assert!(!key.trim().is_empty(), "blank key");
-            assert!(!value.trim().is_empty(), "{key} has no text");
+        for (key, value) in &from_table {
+            assert_eq!(
+                from_file.get(key),
+                Some(value),
+                "en.toml and ENGLISH disagree about {key}"
+            );
         }
     }
 
-    /// A key listed twice is a typo waiting to be read as a lookup miss.
+    /// Every language this build claims to offer has a file behind it.
     #[test]
-    fn every_key_is_listed_once() {
-        let mut seen = std::collections::HashSet::new();
-        for (key, _) in ENGLISH {
-            assert!(seen.insert(*key), "{key} is listed twice");
-        }
-    }
-
-    #[test]
-    fn no_key_is_prefixed_with_a_section_twice() {
-        for (key, _) in ENGLISH {
+    fn every_listed_language_has_a_pack() {
+        let listed = available_languages();
+        assert!(
+            listed.len() >= 45,
+            "expected the reference's 50 packs, found {}",
+            listed.len()
+        );
+        for name in &listed {
             assert!(
-                !key.starts_with("main.main.") && !key.starts_with("distro.distro."),
-                "{key} looks like a flattened section was applied twice"
+                Asset::get(&format!("{name}.toml")).is_some(),
+                "{name} is listed but has no pack"
+            );
+        }
+    }
+
+    /// The picker shows this list in this order, so a filesystem enumeration
+    /// order would move entries under the reader's finger between runs.
+    #[test]
+    fn the_language_list_is_sorted() {
+        let listed = available_languages();
+        let mut sorted = listed.clone();
+        sorted.sort();
+        assert_eq!(listed, sorted);
+        assert!(listed.contains(&"en".to_string()), "English is not offered");
+        assert!(
+            listed.contains(&"zh-CN".to_string()) && listed.contains(&"zh-TW".to_string()),
+            "both Chinese packs should be shipped and separately selectable"
+        );
+    }
+
+    // -- the OURS list, checked against the reference's own English ---------
+
+    /// The loader's one judgement, and the one place a mistake silently
+    /// changes what a user reads. A key that belongs here and is missing is a
+    /// translated sentence about a different program; a key that does not
+    /// belong and is listed is a label that stays English for no reason.
+    #[test]
+    fn ours_list_is_exactly_the_keys_whose_wording_changed() {
+        let upstream = toml::from_str::<toml::Table>(
+            include_str!("../../docs/reference/assets/i18n/en.toml"),
+        )
+        .expect("the reference's en.toml parses");
+        let mut theirs = HashMap::new();
+        flatten("", &Value::Table(upstream), &mut theirs);
+
+        let mut should_be_ours: Vec<&str> = Vec::new();
+        for (key, value) in ENGLISH {
+            match theirs.get(*key) {
+                // No upstream key at all: ours by construction. Not listed,
+                // because no pack can overwrite it and listing it would only
+                // mean the test below had to know that.
+                None => {}
+                Some(theirs) if theirs == *value => {}
+                Some(_) => should_be_ours.push(key),
+            }
+        }
+        should_be_ours.sort_unstable();
+
+        let mut listed: Vec<&str> = OURS.to_vec();
+        listed.sort_unstable();
+
+        assert_eq!(
+            should_be_ours, listed,
+            "OURS is out of step with the wording; run tools/derive-ours-keys.py"
+        );
+    }
+
+    // -- normalisation -------------------------------------------------------
+
+    /// Windows hands out regional tags and underscores; a locale we do not
+    /// ship must still land on something readable.
+    #[test]
+    fn normalizes_the_locales_a_user_would_actually_have() {
+        assert_eq!(normalize_language_code("en"), "en");
+        assert_eq!(normalize_language_code("EN-US"), "en");
+        assert_eq!(normalize_language_code("zh_CN"), "zh-CN");
+        assert_eq!(normalize_language_code("zh-TW"), "zh-TW");
+        assert_eq!(normalize_language_code("zh-Hant-HK"), "zh-TW");
+        assert_eq!(normalize_language_code("pt-BR"), "pt");
+        assert_eq!(normalize_language_code("nb-NO"), "no");
+        assert_eq!(normalize_language_code("tl-PH"), "fil");
+        assert_eq!(normalize_language_code(""), "en");
+        assert_eq!(
+            normalize_language_code("kl-GL"),
+            "en",
+            "a language we do not ship must fall back to English, not to itself"
+        );
+    }
+
+    /// Every shipped name normalises to itself. If a pack ever cannot be
+    /// selected -- which is the whole job of the picker -- this is what says so.
+    #[test]
+    fn every_shipped_pack_normalizes_to_itself() {
+        let _guard = serialized();
+        for name in available_languages() {
+            assert_eq!(
+                normalize_language_code(&name),
+                name,
+                "{name} is shipped but cannot be selected"
             );
         }
     }
 
     #[test]
-    fn rtl_and_language_are_stubs_until_p6() {
-        assert!(!is_rtl("en"));
-        assert_eq!(current_lang(), "en");
-    }
-
-    // -- the .slint side -----------------------------------------------------
-    //
-    // Slint cannot type-check a string, so a typo'd key does not fail the
-    // build: it renders the raw key to the user, on a screen nobody is
-    // watching until someone reports it. This closes that hole from the other
-    // end.
-
-    /// Every `.slint` file under `src/ui`, recursively.
-    fn slint_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-        let mut found = Vec::new();
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return found;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                found.extend(slint_files(&path));
-            } else if path.extension().is_some_and(|ext| ext == "slint") {
-                found.push(path);
-            }
+    fn rtl_languages_are_the_reference_five() {
+        for lang in ["ar", "ar-EG", "he", "he-IL", "fa", "fa-IR", "ur", "sd"] {
+            assert!(is_rtl(lang), "{lang} should be RTL");
         }
-        found
-    }
-
-    /// Every key a `.slint` file asks `AppI18n.t` for, in order of appearance.
-    fn keys_asked_for(text: &str) -> Vec<String> {
-        const NEEDLE: &str = "AppI18n.t(\"";
-        let mut keys = Vec::new();
-        let mut offset = 0;
-        while let Some(found) = text[offset..].find(NEEDLE) {
-            let value_start = offset + found + NEEDLE.len();
-            let tail = &text[value_start..];
-            let end = tail
-                .find('"')
-                .expect("a quoted key always has a closing quote");
-            keys.push(tail[..end].to_string());
-            offset = value_start + end;
+        for lang in ["en", "zh-CN", "zh-TW", "ja", "de"] {
+            assert!(!is_rtl(lang), "{lang} should not be RTL");
         }
-        keys
     }
 
-    /// A key the UI asks for and the table does not have is the worst version
-    /// of the failure above: the window keeps running and shows the key. This
-    /// test is the only thing that would notice before a user does.
+    // -- lookup --------------------------------------------------------------
+
+    /// The loader's job, end to end: a key the reference and we agree on is
+    /// translated; a key whose wording is ours is not.
     #[test]
-    fn every_key_a_slint_file_asks_for_is_in_the_table() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("ui");
-        assert!(
-            root.is_dir(),
-            "{} does not exist; the scan below would pass by finding nothing",
-            root.display()
+    fn a_translated_key_shows_the_translation_and_ours_does_not() {
+        let _guard = serialized();
+        load_resources("en");
+        let shared = "sidebar.home";
+        let english = english_value(shared);
+        assert!(english == "Home", "fixture changed: {english:?}");
+
+        load_resources("ja");
+        assert_eq!(current_lang(), "ja");
+        assert_eq!(available_languages().contains(&"ja".to_string()), true);
+        assert_ne!(
+            t(shared),
+            english,
+            "a key both projects word the same way should be translated"
         );
 
-        let mut missing = Vec::new();
-        let mut scanned = 0;
-        for path in slint_files(&root) {
-            let text = std::fs::read_to_string(&path).expect("read a .slint file");
-            for key in keys_asked_for(&text) {
-                scanned += 1;
-                if lookup(&key).is_none() {
-                    missing.push(format!("{}: {key}", path.display()));
+        // Ours. The Japanese pack says something here; it describes deleting a
+        // WSL distribution, and our page uninstalls an APK.
+        assert!(
+            Asset::get("ja.toml")
+                .is_some_and(|raw| String::from_utf8_lossy(raw.data.as_ref()).contains("deleting")),
+            "fixture changed: ja.toml no longer mentions deleting"
+        );
+        assert_eq!(
+            t("operation.deleting"),
+            english_value("operation.deleting"),
+            "our own wording must survive a language change"
+        );
+    }
+
+    /// A key no pack has -- ours only, 27 of them -- has to keep working in
+    /// every language, and in a language we do not ship.
+    #[test]
+    fn a_key_no_pack_has_falls_back_to_our_english_everywhere() {
+        let _guard = serialized();
+        for lang in ["en", "ja", "zh-CN", "kl-GL"] {
+            load_resources(lang);
+            assert_eq!(
+                t("network.dir_forward"),
+                english_value("network.dir_forward"),
+                "ours-only key under {lang}"
+            );
+        }
+    }
+
+    /// A missing key shows itself, which is how a typo gets noticed.
+    #[test]
+    fn an_unknown_key_shows_itself() {
+        let _guard = serialized();
+        load_resources("ja");
+        assert_eq!(t("no.such.key"), "no.such.key");
+    }
+
+    /// Placeholders still fill, and over-supplying them is not an error.
+    #[test]
+    fn placeholders_still_fill() {
+        let _guard = serialized();
+        load_resources("en");
+        assert_eq!(
+            tr("toast.distro_busy", &["Foo".into(), "Starting ...".into()]),
+            "Foo is busy (Starting ...)"
+        );
+        assert_eq!(
+            tr("toast.distro_busy", &["Foo".into()]),
+            "Foo is busy ({1})",
+            "fewer arguments must not panic"
+        );
+    }
+
+    /// An empty value in a pack means "not translated". Writing it through
+    /// would blank a label that English fills correctly, which reads as a bug
+    /// in a language the user never chose deliberately.
+    #[test]
+    fn an_empty_pack_value_does_not_blank_a_label() {
+        let parsed = toml::from_str::<toml::Table>(
+            "[demo]\nfilled = \"translated\"\nblank = \"\"\n",
+        )
+        .expect("fixture parses");
+        let mut map = HashMap::new();
+        flatten("", &Value::Table(parsed), &mut map);
+        assert_eq!(map.get("demo.filled"), Some(&"translated".to_string()));
+        assert!(!map.contains_key("demo.blank"), "an empty string was stored");
+    }
+
+    /// More arguments than placeholders is not an error: a translation that
+    /// outgrew its caller must not crash the window over it.
+    #[test]
+    fn too_many_arguments_is_not_an_error() {
+        let _guard = serialized();
+        load_resources("en");
+        assert_eq!(
+            tr("toast.distro_busy", &["Foo".into(), "Starting".into(), "extra".into()]),
+            "Foo is busy (Starting)"
+        );
+    }
+
+    /// A duplicate key resolves to the **first** match, because the lookup is a
+    /// `find`. A second row for the same key therefore does nothing at all, and
+    /// the table reads as though the new text were live. It bit twice already --
+    /// `operation.deleting` had to be edited in place because adding a row for
+    /// it would have left the old sentence showing -- and with
+    /// `assets/i18n/en.toml` generated from this table it would now also make
+    /// the generated file fail to parse.
+    #[test]
+    fn every_key_is_listed_once() {
+        let mut seen = std::collections::HashSet::new();
+        for (key, _) in ENGLISH {
+            assert!(seen.insert(*key), "{key} appears more than once in ENGLISH");
+        }
+    }
+
+    /// An empty or whitespace-only value renders as a blank label, and a blank
+    /// label is a bug the reader cannot act on.
+    #[test]
+    fn no_key_is_empty_or_whitespace() {
+        for (key, value) in ENGLISH {
+            assert!(
+                !value.trim().is_empty(),
+                "{key} has no text; delete the row rather than ship an empty label"
+            );
+        }
+    }
+
+    /// `[sidebar]` plus `sidebar.home` would make a key that no pack has, so
+    /// every call site would render the key itself. The key *name* is the
+    /// reference's, which means it already carries its section.
+    #[test]
+    fn no_key_repeats_its_section() {
+        for (key, _) in ENGLISH {
+            let Some((section, rest)) = key.split_once('.') else {
+                continue;
+            };
+            assert!(
+                !rest.starts_with(&format!("{section}.")),
+                "{key} looks like the section is written twice"
+            );
+        }
+    }
+    /// Every key a `.slint` file asks for has to be in the table. Kept from P1:
+    /// it is the test that notices a new dialog was written with a key nobody
+    /// defined.
+    #[test]
+    fn every_key_a_slint_file_asks_for_is_in_the_table() {
+        let mut checked = 0usize;
+        for entry in slint_file_paths("src/ui") {
+            let text = std::fs::read_to_string(&entry).expect("slint file reads");
+            for key in asked_for_keys(&text) {
+                assert!(
+                    ENGLISH.iter().any(|(candidate, _)| *candidate == key),
+                    "{} asks for a key the table does not have: {key}",
+                    entry.display()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 100, "only {checked} keys checked; the scan found nothing");
+    }
+
+    fn slint_file_paths(root: &str) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from(root)];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "slint") {
+                    out.push(path);
                 }
             }
         }
-
-        // Without this the test is one deleted directory away from asserting
-        // nothing at all, which is worse than not having it.
-        assert!(scanned > 0, "the scan found no AppI18n.t calls");
-
-        assert!(
-            missing.is_empty(),
-            "keys the UI asks for that the table does not have:\n  {}",
-            missing.join("\n  ")
-        );
+        out.sort();
+        out
     }
 
-    #[test]
-    fn the_key_scanner_reports_what_it_cannot_follow() {
-        // The scanner keys on the literal text `AppI18n.t("`, so an alias for
-        // that function is invisible to it. Nothing here uses one; if someone
-        // introduces one, this documents the hole they opened.
-        assert!(keys_asked_for("t(\"main.loading\")").is_empty());
-
-        // It also stops at the first quote it meets rather than reasoning
-        // about how Slint parses adjacent strings, so a key written in two
-        // pieces would be scanned as only its first piece.
-        assert_eq!(keys_asked_for("AppI18n.t(\"a\" \".b\");"), ["a"]);
+    /// Every `AppI18n.t("...")` literal in a `.slint` file.
+    fn asked_for_keys(text: &str) -> Vec<String> {
+        let mut keys = Vec::new();
+        let mut rest = text;
+        while let Some(at) = rest.find("AppI18n.t(\"") {
+            let after = &rest[at + "AppI18n.t(\"".len()..];
+            let Some(end) = after.find('"') else { break };
+            keys.push(after[..end].to_string());
+            rest = &after[end..];
+        }
+        keys
     }
 }

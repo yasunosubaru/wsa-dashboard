@@ -1,0 +1,157 @@
+# English strings for WSA Dashboard.
+#
+# Generated from `ENGLISH` in src/i18n/mod.rs by
+# tools/install-language-packs.py -- edit the table, not this file.
+# A test asserts the two agree, so hand-editing this is caught.
+#
+# The wording here is ours wherever WSA has no counterpart to what the
+# reference labels; see docs/MAPPING.md. The other 49 packs in this
+# folder are the reference's own translations.
+
+[add]
+apk_file = "APK file"
+create = "Install APK"
+file_missing = "That file does not exist."
+installed = "Installed"
+installing = "Installing..."
+no_file = "No file selected"
+note = "The package is installed on the connected target, which can take a moment."
+select_file = "Select File"
+
+[common]
+app_name = "WSA Dashboard"
+
+[dialog]
+add = "Add"
+add_network_rule_title = "Add Port Forwarding Rule"
+confirm = "Confirm"
+delete_msg = "Uninstall {0}? Its app data is deleted too, and this cannot be undone."
+delete_title = "Uninstall {0}"
+http_proxy_helper = "HTTP Proxy Usage"
+http_proxy_helper_desc1 = "1. When an app inside Android reaches the internet through a proxy you run."
+http_proxy_helper_desc2 = "2. Android reads it as a system-wide hint: apps that honour the system proxy are affected, apps that do not are not."
+info_title = "{0}"
+package_kind = "Source"
+package_kind_system = "Android system app"
+package_kind_user = "Installed by user"
+package_size = "APK size"
+package_version = "Version"
+save = "Save"
+unknown_version = "not reported"
+version_code = "Version code"
+
+[distro]
+clone = "Clone"
+collapse = "Collapse"
+compress = "Compress"
+configs = "Configs"
+delete = "Delete"
+expand = "Expand"
+explorer = "Explorer"
+export = "Export"
+information = "Information"
+installing = "Unavailable"
+move = "Move"
+restart = "Restart"
+running = "Running"
+settings = "Settings"
+start = "Start"
+stop = "Stop"
+stopped = "Stopped"
+terminal = "Terminal"
+vscode = "VS Code"
+
+[main]
+distro_not_found = "No apps to show. Install an app first."
+guide_link = "View Installation Guide"
+loading = "Loading..."
+no_apps = "No apps to show"
+search_placeholder = "Search apps"
+stale_data = "Data may be out of date"
+start_subsystem = "Start WSA"
+subsystem_booting = "WSA is starting..."
+subsystem_not_installed = "WSA is not installed"
+subsystem_offline = "Connection lost"
+subsystem_stopped = "WSA is not running"
+subsystem_unauthorized = "Waiting for authorization on the device"
+
+[mount_disk]
+mount = "Open Folder"
+mount_btn = "Open Folder"
+no_mounted = "No WSA storage images in:"
+no_mounted_no_dir = "No WSA storage images, and LOCALAPPDATA is not set, so there is no WSA data folder to look in."
+refresh = "Refresh"
+
+[network]
+add_rule_btn = "Add Rule"
+add_rule_enable_fw = "Add Firewall Rule"
+add_rule_listen_ip = "Listen IP"
+add_rule_listen_port = "Listen Port"
+add_rule_port_placeholder = "e.g. 8080"
+add_rule_target_port = "Target Port"
+add_rule_target_port_placeholder = "e.g. 80"
+apply_all_rules_btn = "Apply all rules"
+cancel_all_rules_btn = "Cancel all rules"
+dir_forward = "Host -> WSA"
+dir_reverse = "WSA -> Host"
+initialize_btn = "Auto-Start Forwarding"
+nat_mode_required = "Port forwarding is only available in NAT mode. Your current mode is: {0}"
+no_rules = "No port forwarding rules configured"
+proxy_auth = "Proxy authentication"
+proxy_check_btn = "Check Connection"
+proxy_config = "Proxy configuration"
+proxy_error_invalid = "Invalid proxy config: {0}"
+proxy_error_localhost = "Localhost or 127.0.0.1 is not allowed"
+proxy_error_port = "Port must be a number between 1 and 65535"
+proxy_host = "Host name:"
+proxy_no_proxy = "No proxy"
+proxy_no_proxy_label = "No proxy for:"
+proxy_pass = "Password:"
+proxy_port = "Port number:"
+proxy_save_success = "Proxy saved."
+proxy_test_failed = "Connection failed: {0}"
+proxy_test_success = "Connection successful: HTTP {0}"
+proxy_user = "Login:"
+rule_apply_tooltip = "Apply Rule"
+rule_cancel_tooltip = "Cancel Rule"
+rule_fw_off = "FW: Off"
+rule_fw_on = "FW: On"
+rules_apply_all_failed = "Apply all failed: {0}"
+rules_apply_success = "Port {0} successfully mapped to {1}"
+rules_cancel_all_failed = "Cancel all failed: {0}"
+tab_http_proxy = "HTTP Proxy"
+tab_port_forwarding = "Port Forwarding"
+target_distro = "Target"
+
+[operation]
+deleting = "Uninstalling ..."
+fetching_info = "Fetching information..."
+installing = "Installing ..."
+launching = "Launching ..."
+restarting = "Restarting ..."
+starting = "Starting ..."
+stopping = "Stopping ..."
+
+[sidebar]
+about = "About"
+add = "Install APK"
+donate = "Donate"
+home = "Home"
+mount = "Storage"
+network = "Network"
+scheduler = "Task scheduler"
+settings = "Settings"
+usb = "Devices"
+
+[toast]
+distro_busy = "{0} is busy ({1})"
+
+[usb]
+attach = "Connect"
+detach = "Disconnect"
+detail = "Properties"
+device_info = "Device properties"
+empty = "No adb targets connected"
+loading = "Loading devices..."
+not_found_error = "adb was not found. Install Android SDK platform-tools, then restart."
+subsystem = "Windows Subsystem for Android"

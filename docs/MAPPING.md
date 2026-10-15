@@ -1169,3 +1169,148 @@ P6 里 `go-settings-page` / `go-about-page` 的坐标改了四次，其中三次
   15.9）。`i18n` 的加载、`OURS` 保护、缺键退回英文有 14 条测试；`AppI18n.version` 自增那一段是
   照参照 `settings.rs:52` 抄的三行。
 - 276 passed / 0 failed / 3 ignored；GUI 零 error 零 warning。
+
+## 16. P7：计划任务、托盘、单实例（2026-10-15）
+
+本阶段到 Task 3 为止的记录；Task 4/5（计划任务页视图层与接线）与 Task 6 的验收勾选在本节末尾的
+16.9 里标为未做。
+
+### 16.1 `schtasks` 的输出是本地化的，固定列号在非英文 Windows 上静默出错
+
+参照的计划任务读取用 `schtasks /Query /FO CSV /V`，然后**按列号**取字段（第 2 列是任务名、第 3 列是
+下次运行时间……）。那张表的表头跟着系统界面语言走：
+
+| 界面语言 | 表头 | 列数 |
+|---|---|---|
+| 英文 | `HostName,TaskName,Next Run Time,Status,...` | 29 |
+| 中文（本机实测） | `主机名,任务名,下次运行时间,状态,...` | 33 |
+
+按列号解析**不会报错**，只会静默拿错字段：任务名变成状态字符串、日期变成 `__/__/____`。换到
+`/XML` 之后 `<Task>`、`<StartBoundary>`、`<RunLevel>`、`<Enabled>` 的拼写在所有 Windows 上一致——
+那些是 task schema 的元素名，不是界面标签——日期也是 ISO 8601，不是区域格式。
+
+三个只有跑到真实输出才看得见的问题：
+
+1. **`schtasks /Query /XML` 的输出不是合法的 XML 文档。** 本机 219 个任务：一个 `<Tasks>` 外壳，
+   219 个 `<?xml ?>` 声明，其中 **218 个嵌在外壳里面**。`roxmltree` 整份拒收，直接解析会在任何任务
+   多的机器上返回 0 个。解析前先剥掉内部声明；`<Description>` 里出现 `<?xml` 的文本不碰。
+2. **`<Exec>` 在 `<Actions>` 下，不在 `<Task>` 下。** 夹具写错时 219 个任务全部取不到命令；修完是
+   **102 个 `<Exec>` + 119 个 `<ComHandler>`**。后 119 个是 Windows 自己的维护任务，**本来就没有
+   命令行**。把这个区别做成 `ActionKind`：119 行空命令列是在展示自己的失败，不是在展示系统的样子。
+3. **`*/4` 在星期字段从 0（周日）起步**，落在 0 和 4，加上折叠的 7，得 SUN/THU——不是直觉上的
+   MON/FRI。参照的 cron 校验里 `1,5` 和 `1-5/2` 都被拒，所以"两个指定星期"在这个解析器里**根本
+   无法表达**；这一点页面必须说出来，而不是悄悄建一个在错误两天跑的任务。
+
+另外参照的文件夹过滤是 `starts_with("\WSA-Dashboard")`，而 `\WSA-Dashboard-Other\X` 也以它开头——
+那会把别人的任务列成自己的、还能删掉。改成按文件夹边界比较。
+
+`RawSchtasksRecord`（参照的 CSV 行中间类型）被删掉：它全部字段都是**位置**的，这正是问题本身。
+`TaskXml` 取代它，`models.rs` 记了原因。
+
+### 16.2 Run 键的值名是 `APP_ID`，不是参照的 `WSLDashboard`
+
+参照把开机自启写成 `HKCU\...\Run\WSLDashboard`。`Run` 键是全机共享的命名空间，一个叫
+`WSLDashboard` 的值会指向**这个** exe。后果是双向的：装过参照的人会在任务管理器的启动项里看到一个
+没装的程序；而一个删除 `WSLDashboard` 的卸载器会漏掉我们的自启项。
+
+值名改成 `constants::APP_ID`（`wsadashboard`），并且有一条测试断言它**不等于** `WSLDashboard`。
+Q12 说标识符保留参照的名字；这个不是标识符，是参照的**产品名**，照搬恰好产生上面那个碰撞。
+
+顺带：`delete_autostart` 用 `KEY_WOW64_64KEY` 打开键，参照没带这个标志——64 位构建写 64 位视图
+才是任务管理器启动项里看得到的那个，写 32 位视图会造出一个自己都读不回来的项。
+
+### 16.3 单实例按进程 id 找窗口，不是三个标题
+
+参照用三个窗口**标题**（自己的 caption、一个内部常量、一个短形式）去猜正在跑的那个实例的窗口，
+找不到就是一次没有解释的"双击没反应"。我们按**进程 id** 枚举顶层窗口（`find_main_window`），
+所以那份标题表在我们的文件里不存在——`window_titles_for_lookup()` 返回空，并有一条测试断言它
+保持为空。那条测试是唯一的守卫：谁把标题表加回来，参照那个静默失败就回来了。
+
+`mutex` + 唤醒管道两套机制都保留（参照也是两套）：托盘里的窗口句柄可能已经不在 shell 的活动列表
+里，而管道由进程自己应答。管道名不带版本号（参照的带 `_v0.3`），因为不存在一个更老的**本程序**
+构建会来唤醒我们。
+
+### 16.4 `ver` 的解析取括号里的版本形状 token，不是英文 `"Version "`
+
+参照用字面量 `"Version "` 切分 `wsl --version` 的输出。本机实测 `cmd /c ver` 回：
+
+```
+Microsoft Windows [版本 10.0.26300.9457]
+```
+
+中文 Windows 上那句切分什么都找不到，然后**静默退成 `N/A`**——而 `N/A` 同时也是一个真正答不上来
+的问题的样子，所以没有东西提示这里是坏的。不随语言变的是括号里的数字（Windows 自己格式化的），
+所以改成：取最后一个方括号里的、版本形状的 token。有一条 `#[ignore]` 的实机测试跑真实 `ver` 并断言
+解析结果不是 `N/A`（Q8 把依赖机器的活留在套件外）。
+
+### 16.5 `show_and_center` 不在 `app/window.rs`
+
+参照的 `show_and_center(&AppWindow, silent)` 是一个 120 行的函数：silent 分支把窗口停到 -32000、
+minimized、`is_window_visible = false`；非 silent 分支起一条后台线程，opacity 0 起步、找句柄、
+改扩展样式、按显示器居中、`rename_app_windows`、显示、恢复 opacity、恢复置顶。它做的其实是三件
+从三个不同地方调用的事。
+
+拆成 `park_in_tray`（启动时，`app.run` 之前）、`hide_to_tray`（关窗进托盘）、`show_and_center`
+（从托盘恢复），放在 `ui/handlers/window.rs`，和其余点名 `AppWindow` 的回调在一起。这样
+`app/window.rs` 保持**不含 Slint 类型**，CLI 才能挂载它（见 16.7）。`set_skip_taskbar` 留在
+`app/window.rs`：它只需要句柄。参照那个函数有一个从未使用的 `&AppWindow` 参数，这里没有。
+
+`set_window_opacity*` 与 `rename_app_windows` 仍然不做：它们服务于"从 opacity 0 渐显"的揭示流程，
+我们通过 `activate_window_by_hwnd` 一步揭示，没有东西可渐显、也没有 helper 窗口要改名。
+
+`activate_window_by_hwnd` 里一处改动：参照把停到屏外的窗口居中到 `MONITOR_DEFAULTTOPRIMARY`，
+我们居中到 `MONITOR_DEFAULTTONEAREST`——把读者放在第二块屏上的窗口"恢复"到主屏，是这类程序被
+记成坏掉的方式。
+
+### 16.6 托盘：菜单是数据，图标是内嵌的
+
+菜单项的 id 在参照里写两遍（`MenuItem::with_id("show", ...)` 一遍、`match event.id { "show" => ... }`
+一遍）。改一处就是一条渲染正确、翻译正确、点了什么都不发生的菜单项。这里两处都用 `tray_model`
+的常量，`entries()` 是唯一的来源，并有一个测试断言 id 恰好是那两个、顺序是 show→exit、两个都
+可点。另有一个测试断言 `label_key` 真的在 `ENGLISH` 表里——一个拼错的键是空的菜单标签，
+`tray-icon` 把它渲染成一行空白而不是报错。
+
+图标用 `include_bytes!("assets/logo/mini.png")` 编译进来、运行时解码，而不是参照的
+`Icon::from_resource(1, None)`。参照能那样做是因为它的 `build.rs` 嵌了图标；我们的 `build.rs`
+把图标块留给了 P8（文件里写着），所以资源查找在 P8 之前每台机器都会失败，而失败的结果是托盘里
+什么都没有。P8 落地资源后可以换回参照的顺序，其余不动。
+
+`tray.show_window` / `tray.exit` 的措辞是参照的原句，所以 49 个翻译包带着它们，非英文机器上菜单
+是翻译过的——这也意味着它们**不**在 `OURS` 里（参照的托盘同样显示窗口和退出，没有我们的句子要保护）。
+
+### 16.7 两个测试目标的现实：`window.rs` / `single_instance.rs` 现在真的在跑
+
+这个项目的测试运行只有 `cargo test --bin wsadash`；GUI 二进制的测试目标没人跑。Task 2 之前，
+`single_instance.rs` 的 4 条纯测试（mutex 名、管道名、标题表为空、两名字不同）写在 GUI 二进制里，
+**从来没有执行过**；而且 `cargo test --bin wsadashboard` 根本编译不过（三处路径错，其中两处是
+`super::super::` 用错了层级）。
+
+`app/window.rs` 是这个项目里唯一不含 Slint 的 GUI 文件（从上到下都是 Win32 句柄），所以它和
+`single_instance.rs` 一起挂进 CLI 测试区是可行的。两处结构配合这个挂载：`single_instance` 用
+`super::window::`（GUI 里 `super` = `app`，CLI 里 `super` = crate 根，两处都对），
+`single_instance` 的测试用 `super::super::constants::APP_ID`。两个文件加 `#![allow(dead_code)]`，
+理由和 `scheduler_task/models.rs`、`config/mod.rs` 一样：挂载只让测试可见，句柄那半边在这里
+是"构造上不可达"，不是死代码。现在这 5 条测试在跑，330→336。
+
+### 16.8 未做：计划任务页的语义（Task 5）
+
+参照的计划是"在某个 WSL 发行版里跑一条命令"，对应物是"在 WSA 里跑一条 adb 命令"——我们没有发行版
+维度。参照的 cron 校验、`short_filename`、错误文案全部要重新对齐；`1,5` / `1-5/2` 无法表达（见
+16.1）。`is_helper_installed`（P5b 留下的悬空项，网络页的防火墙勾选框等它）的判据是"系统里有没有
+名为 `wsadashboard-scheduler` 的计划任务"，一次 `/Query` 就知道，且要能区分"任务不存在"和
+"任务存在但失败"。
+
+### 16.9 P7 验证到什么程度
+
+- **Task 1**：`schtasks` 解析器在**本机真实的 219 个任务**上跑通（102 Exec + 119 ComHandler），
+  314 单测 + 1 条实机测试。
+- **Task 2**：336 之前是 330 全绿；本机真实 `ver` 输出解析成 `10.0.26300.9457`；`cargo check
+  --bin wsadashboard` 零 error 零 warning。
+- **Task 3**：336 passed / 0 failed / 5 ignored。托盘的视觉行为（双击隐藏/恢复、关窗进托盘、
+  开机自启真的写进 Run 键）是**桌面检查**，按 §8 的办法手工验证。
+- **沙箱限制**：本轮 `schtasks.exe` 被安全策略拦下（`PROGRAM BLOCKED BY SECURITY POLICY`），
+  所以 Task 1 那条实机测试在这个会话里跑不了——不是代码问题。要跑它得从
+  Security Center → Command Security 里把 `schtasks.exe` 移出程序黑名单。
+- **Task 4/5/6 未做**：计划任务页的视图层（参照约 1260 行：`scheduler_view.slint` 157 +
+  `scheduler_card.slint` 280 + `scheduler_dialog.slint` 322 + `handlers/scheduler.rs` 504）、
+  接线与 `is_helper_installed`、以及本节的验收勾选。

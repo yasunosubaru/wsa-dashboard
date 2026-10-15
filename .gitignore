@@ -15,5 +15,8 @@
 *.log
 /tmp/
 
+# Assistant workspace data (session notes, memory). Local to this machine.
+/.workbuddy-ai/
+
 # NOTE: docs/reference/ is a READ-ONLY vendored baseline (spec Q18).
 # Do NOT add patterns that would exclude it.

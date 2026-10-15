@@ -1,0 +1,308 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Ported from the reference's src/ui/components/scheduler_card.slint
+// (wsl-dashboard 0.12.0, GPL-3.0-only), verbatim apart from this header.
+//
+// What is the reference's and stays: the component name, the four callbacks and
+// their `string` argument, the 48px single-row card, the LTR and RTL pairs
+// written out separately (the action cluster flips to the other end under RTL),
+// the status dot whose colour is `enabled ? (status == "Running" ? accent :
+// green) : grey`, the Consolas cron column, and the busy overlay that both
+// dims the card and blocks the click.
+//
+// **Every icon codepoint below was checked against `assets/font/icons.ttf`'s own
+// `cmap` before this file was written**, the way P6 checked its icons rather
+// than trusting the reference's memory: `\u{E74D}` (delete), `\u{E768}` (run),
+// `\u{E81A}`/`\u{E819}` (disable/enable toggle), `\u{E70F}` (edit),
+// `\u{EA81}` (status dot) and `\u{E895}` (busy spinner) are all in the subset.
+//
+// What changes is only what the card *says*, and it is the scheduler page's one
+// real semantic shift: the reference's task runs a command inside a *WSL
+// distro*, ours runs an `adb shell` command against WSA (MAPPING 16.2). The
+// struct field names are the reference's (`cron_expr`, `command_short`,
+// `display_name`), so the layout is unchanged -- what fills `cron_expr` is a
+// translated schedule summary rather than the reference's own cron dialect.
+//
+// `show_shield: true` on all four actions is the reference's own choice and is
+// why `ActionIcon` grew its Admin Shield Overlay block in this phase: a
+// scheduled task is created elevated, so every action on it may raise the
+// shield.
+
+import { Theme, AppI18n, LayoutConstants, SchedulerTaskUI } from "../theme.slint";
+import { ActionIcon } from "common.slint";
+
+export component SchedulerCard inherits Rectangle {
+    in property <SchedulerTaskUI> task;
+    in property <bool> busy: false;
+    callback edit_clicked(string);
+    callback delete_clicked(string);
+    callback toggle_clicked(string);
+    callback run_clicked(string);
+
+    height: 48px;
+    background: Theme.card_bg;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border_color;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+
+        // --- RTL layout ---
+        if (AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+
+            // Delete
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: "\u{E74D}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "danger";
+                    tooltip: AppI18n.t("scheduler.delete_btn", [AppI18n.version]);
+                    clicked => { root.delete_clicked(task.task_id); }
+                }
+            }
+
+            // Run now
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: "\u{E768}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "success";
+                    opacity: task.enabled ? 1.0 : 0.4;
+                    tooltip: AppI18n.t("scheduler.run_now_btn", [AppI18n.version]);
+                    clicked => { if (task.enabled) { root.run_clicked(task.task_id); } }
+                }
+            }
+
+            // Toggle enable/disable
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: task.enabled ? "\u{E81A}" : "\u{E819}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: task.enabled ? "warning" : "success";
+                    tooltip: task.enabled ? AppI18n.t("scheduler.disable_btn", [AppI18n.version]) : AppI18n.t("scheduler.enable_btn", [AppI18n.version]);
+                    clicked => { root.toggle_clicked(task.task_id); }
+                }
+            }
+
+            // Edit
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: "\u{E70F}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "info";
+                    tooltip: AppI18n.t("scheduler.edit_btn", [AppI18n.version]);
+                    clicked => { root.edit_clicked(task.task_id); }
+                }
+            }
+        }
+
+        // --- LTR content: Status indicator + Info ---
+        if (!AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+
+            // Status indicator
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "\u{EA81}";
+                    font-family: Theme.icon_font;
+                    font-size: 12px * LayoutConstants.font-scale;
+                    color: task.enabled ? (task.status == "Running" ? Theme.accent : #4CAF50) : #9E9E9E;
+                }
+            }
+
+            // Info
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: task.display_name;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: left;
+                    overflow: elide;
+                }
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: start;
+                    height: 16px;
+                    Text {
+                        text: task.cron_expr;
+                        font-family: "Consolas";
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "  ";
+                        font-size: 11px * LayoutConstants.font-scale;
+                    }
+                    Text {
+                        text: task.command_short;
+                        font-family: Theme.default_font;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        // Spacer
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+
+        // --- RTL content: Info + Status indicator ---
+        if (AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: task.display_name;
+                    font-family: Theme.default_font;
+                    font-size: 14px * LayoutConstants.font-scale;
+                    font-weight: 500;
+                    color: Theme.text_primary;
+                    horizontal-alignment: right;
+                    overflow: elide;
+                }
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: end;
+                    height: 16px;
+                    Text {
+                        text: task.command_short;
+                        font-family: Theme.default_font;
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: "  ";
+                        font-size: 11px * LayoutConstants.font-scale;
+                    }
+                    Text {
+                        text: task.cron_expr;
+                        font-family: "Consolas";
+                        font-size: 11px * LayoutConstants.font-scale;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "\u{EA81}";
+                    font-family: Theme.icon_font;
+                    font-size: 12px * LayoutConstants.font-scale;
+                    color: task.enabled ? (task.status == "Running" ? Theme.accent : #4CAF50) : #9E9E9E;
+                }
+            }
+        }
+
+        // --- LTR actions ---
+        if (!AppI18n.is-rtl): HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+
+            // Edit
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: "\u{E70F}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "info";
+                    tooltip: AppI18n.t("scheduler.edit_btn", [AppI18n.version]);
+                    clicked => { root.edit_clicked(task.task_id); }
+                }
+            }
+
+            // Toggle enable/disable
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: task.enabled ? "\u{E81A}" : "\u{E819}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: task.enabled ? "warning" : "success";
+                    tooltip: task.enabled ? AppI18n.t("scheduler.disable_btn", [AppI18n.version]) : AppI18n.t("scheduler.enable_btn", [AppI18n.version]);
+                    clicked => { root.toggle_clicked(task.task_id); }
+                }
+            }
+
+            // Run now
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: "\u{E768}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "success";
+                    opacity: task.enabled ? 1.0 : 0.4;
+                    tooltip: AppI18n.t("scheduler.run_now_btn", [AppI18n.version]);
+                    clicked => { if (task.enabled) { root.run_clicked(task.task_id); } }
+                }
+            }
+
+            // Delete
+            VerticalLayout {
+                alignment: center;
+                ActionIcon {
+                    icon: "\u{E74D}";
+                    is_font_icon: true;
+                    show_shield: true;
+                    icon_type: "danger";
+                    tooltip: AppI18n.t("scheduler.delete_btn", [AppI18n.version]);
+                    clicked => { root.delete_clicked(task.task_id); }
+                }
+            }
+        }
+    }
+
+    // Busy overlay - prevents duplicate clicks with animated spinner
+    if (root.busy): Rectangle {
+        background: Theme.dark_mode ? #00000099 : #FFFFFFCC;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.accent;
+        z: 10;
+        TouchArea { }
+
+        // Spinning icon
+        Text {
+            text: "\u{E895}";
+            font-family: Theme.icon_font;
+            font-size: 20px;
+            color: Theme.accent;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            opacity: 0.5 + 0.5 * abs(sin(360deg * animation-tick() / 1.5s));
+            transform-rotation: 360deg * mod(animation-tick(), 2s) / 2s;
+        }
+    }
+}

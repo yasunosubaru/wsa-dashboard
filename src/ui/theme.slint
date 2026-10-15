@@ -9,15 +9,23 @@ export global AppApi {
     pure callback read-transfer(data-transfer) -> int;
 }
 
-// The reference declared thirteen more structs here (Information,
-// InstallableDistro, RootFSHelpItem, UsbDevice, UsbDeviceDetailInfo,
-// PortProxyRuleUI, MessageData, SchedulerTaskUI, PhysicalDiskInfo,
-// MountedDiskInfo, SettingsStrings, AboutStrings, DonateStrings). Every one of
-// them describes a WSL feature this project does not have -- usbipd devices,
-// sparse VHDs, port-proxy rules, WSL distro installation. Keeping them would
-// mean shipping a type vocabulary that names things that cannot exist here, so
-// they are dropped and the page that needs them adds its own struct when that
-// page lands. Distro is the exception: the home grid uses it directly.
+// The reference declared thirteen more structs here. Nine of them have landed,
+// each renamed or refilled where its WSL meaning does not survive: `Distro`
+// (kept whole -- the home grid uses it), `UsbDevice` -> [`DeviceTarget`],
+// `MountedDiskInfo` -> [`StorageImageUI`], `PortProxyRuleUI`, `Information`,
+// `SettingsStrings`, `AboutStrings`, and now `SchedulerTaskUI` with the
+// scheduled-task page.
+//
+// Four are still absent, and each is absent for a reason rather than by
+// omission: `InstallableDistro` and `RootFSHelpItem` describe installing a WSL
+// distribution (we install APKs; `add_view.slint` has its own state),
+// `UsbDeviceDetailInfo` describes usbipd's share/attach detail, and
+// `PhysicalDiskInfo` describes a disk offered for mounting, which WSA does not
+// do -- `StorageImageUI` is what replaced it. `MessageData` and `DonateStrings`
+// wait on P8's mail and donation pages.
+//
+// `DeviceProp` is ours rather than the reference's: the property table on the
+// device page is `getprop` output, not usbipd hardware detail.
 export struct Distro {
     name: string,
     status: string,
@@ -117,6 +125,40 @@ export struct StorageImageUI {
     role_text: string,
     usage_text: string,
     has_usage: bool,
+}
+
+/// One scheduled task, as the reference names it (`src/ui/theme.slint` line 96).
+///
+/// **Field names are the reference's; two of them cannot be filled and say so.**
+/// The reference's scheduled task runs a command inside a *WSL distro*; ours runs
+/// an `adb shell` command, which is why `command` holds the `adb` argument rather
+/// than a Windows path -- but the field name is kept (Q12) because the card
+/// renders it and a rename would lose the line that ties this struct to the
+/// reference's.
+///
+///   `status`   `"N/A"` on every task. Windows exports task state only through
+///              COM, and the CSV column that carries it is localised like every
+///              other one (MAPPING 16.1). `models::NOT_REPORTED` is what goes in
+///              it, which is a different claim from `"Ready"`.
+///   `last_run` `""` for the same reason -- the XML carries `NextRunTime` but not
+///              a last-run stamp. `next_run` *is* filled: the XML has it in
+///              ISO 8601.
+///   `admin_mode`  whether the task runs elevated. Read from `<RunLevel>`.
+///   `command_short`  a shortened `command` for the card's second line, computed
+///              in Rust: the reference's `short_filename` shape.
+export struct SchedulerTaskUI {
+    task_id: string,
+    display_name: string,
+    command: string,
+    command_short: string,
+    arguments: string,
+    cron_expr: string,
+    enabled: bool,
+    status: string,
+    last_run: string,
+    next_run: string,
+    trigger_summary: string,
+    admin_mode: bool,
 }
 
 /// One port-forwarding rule, as the reference names it

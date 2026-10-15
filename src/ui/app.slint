@@ -28,7 +28,7 @@
 // string still answers a second instance asking who is already open -- which is
 // why `runner` keeps overriding it with the application name.
 
-import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Information, StorageImageUI, PortProxyRuleUI, SettingsStrings, AboutStrings } from "theme.slint";
+import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Information, StorageImageUI, PortProxyRuleUI, SettingsStrings, AboutStrings, SchedulerTaskUI } from "theme.slint";
 // ★ The reference re-exports its globals from the root (reference
 //    `src/ui/app.slint:43`) -- that is what puts `AppI18n` / `AppInfo` in the
 //    generated Rust re-export list, and therefore what makes
@@ -41,6 +41,7 @@ import { DeviceView } from "views/device_view.slint";
 import { DiskView } from "views/disk_view.slint";
 import { NetworkView } from "views/network/mod.slint";
 import { SettingsView } from "views/settings/mod.slint";
+import { SchedulerView } from "views/scheduler_view.slint";
 import { AboutView } from "views/about_view.slint";
 import { TaskStatusToast } from "components/task_status_toast.slint";
 import { ModalManager } from "components/modal_manager.slint";
@@ -276,6 +277,45 @@ export component AppWindow inherits Window {
     in property <image> about_group_pic;
     in property <bool> about_group_pic_ready: false;
     in-out property <bool> show_about_group_popup: false;
+
+    // ---- the scheduler page (P7) -------------------------------------------
+    // Every name, type and default is the reference's (`app.slint`:243-263),
+    // carried across whole. Two of them are worth a line each, because the
+    // reference's sentence for them does not survive the move:
+    //
+    //   `scheduler_error`  the reference fills it when the task query fails, and
+    //                      its view has no place to show it -- the two empty
+    //                      states are "no tasks" and "loading", and a query that
+    //                      *failed* looks like the first of those. The property
+    //                      is kept because the handler fills it and P9 diffs
+    //                      against the reference; whether the view grows a third
+    //                      state to show it is a decision recorded in MAPPING
+    //                      16.8, not taken here.
+    //   `scheduler_busy_task_id`  which card is mid-operation, so only that one
+    //                      shows the busy overlay. Ours is filled for the same
+    //                      four actions the reference fills it for.
+    //
+    // `sidebar_scheduler` defaults to `false` here as it always has; P7's wiring
+    // task is what turns it on from `SidebarConfig`, and `tabs.rs` is what stops
+    // the entry leading nowhere in the meantime.
+    in property <[SchedulerTaskUI]> scheduler_tasks: [];
+    in property <bool> scheduler_loading: false;
+    in property <string> scheduler_error: "";
+    in-out property <bool> show_scheduler_dialog: false;
+    in-out property <bool> scheduler_dialog_is_edit: false;
+    in-out property <string> scheduler_dialog_task_id: "";
+    in-out property <string> scheduler_dialog_task_name: "";
+    in-out property <string> scheduler_dialog_command: "";
+    in-out property <string> scheduler_dialog_arguments: "";
+    in-out property <string> scheduler_dialog_cron_expr: "";
+    in-out property <string> scheduler_dialog_cron_help_url: "";
+    in-out property <string> scheduler_dialog_command_help_url: "";
+    in-out property <string> scheduler_dialog_name_error: "";
+    in-out property <string> scheduler_dialog_command_error: "";
+    in-out property <string> scheduler_dialog_cron_error: "";
+    in-out property <bool> scheduler_dialog_admin_mode: false;
+    in-out property <bool> scheduler_dialog_submitting: false;
+    in-out property <string> scheduler_busy_task_id: "";
     callback group_clicked();
     callback close_group_popup();
     callback check_update_clicked();
@@ -375,6 +415,34 @@ export component AppWindow inherits Window {
     callback save_proxy_settings(bool, string, string, string, bool, string, string);
     callback check_proxy_connection(string);
     callback close_add_rule_dialog();
+
+    // ---- scheduler page callbacks (P7) -------------------------------------
+    // The reference's names (`app.slint`:454-468), all of them, for the same
+    // reason the network page keeps its four unhandled ones: P9 diffs this file
+    // against the reference component for component.
+    //
+    // `refresh_scheduler_tasks` and the four actions (`add`/`edit`/`delete`/
+    // `toggle`/`run`) are handled by `handlers/scheduler.rs` in the wiring task.
+    // The four `*_changed` callbacks are the validation-as-you-type pair the
+    // dialog's error properties come back through, and `open_scheduler_help` is
+    // the shared opener for both `?` buttons -- the reference routes both
+    // through it with the URL as the argument, which is why it takes a `string`
+    // rather than being two callbacks.
+    callback refresh_scheduler_tasks();
+    callback add_scheduler_task();
+    callback edit_scheduler_task(string);
+    callback delete_scheduler_task(string);
+    callback toggle_scheduler_task(string);
+    callback run_scheduler_task(string);
+    callback save_scheduler_task(string, string, string, string);
+    callback close_scheduler_dialog();
+    callback browse_scheduler_command();
+    callback open_scheduler_help(string);
+    callback scheduler_name_changed(string);
+    callback scheduler_command_changed(string);
+    callback scheduler_arguments_changed(string);
+    callback scheduler_cron_changed(string);
+
     callback save_sidebar_state();
     callback window_pin_toggle();
     callback window_minimize();
@@ -660,6 +728,45 @@ export component AppWindow inherits Window {
                                 // request through the proxy and needs an HTTP client
                                 // P8's update check brings; see MAPPING 14.
                             }
+                            // Tab 5 in spec section 3's table (index 4 here):
+                            // the reference's `scheduler_view.slint`, kept under
+                            // its own name because the page is the same page --
+                            // a list of scheduled tasks and a button to add one.
+                            // `z` follows the same rule as the disk page's, tab
+                            // index + 3, and 7 is free: the two P6 pages took 8
+                            // and 9 rather than 10 and 11, so nothing collides.
+                            //
+                            // Instantiated in the same change that wrote it, on
+                            // purpose: Slint only parses files reachable from
+                            // `app.slint`, so a view written and left
+                            // unreferenced would not fail to compile *wrong*, it
+                            // would not fail at all until a later task happened
+                            // to reference it. The data binding and the handlers
+                            // land in the task after this one.
+                            SchedulerView {
+                                visible: true;
+                                z: 7;
+                                opacity: selected_tab == 4 ? 1 : 0;
+                                x: selected_tab == 4 ? 0px : 10000px;
+                                tasks: root.scheduler_tasks;
+                                is_loading: root.scheduler_loading;
+                                busy_task_id: root.scheduler_busy_task_id;
+                                add_task_clicked => {
+                                    root.add_scheduler_task();
+                                }
+                                edit_task(id) => {
+                                    root.edit_scheduler_task(id);
+                                }
+                                delete_task(id) => {
+                                    root.delete_scheduler_task(id);
+                                }
+                                toggle_task(id) => {
+                                    root.toggle_scheduler_task(id);
+                                }
+                                run_task(id) => {
+                                    root.run_scheduler_task(id);
+                                }
+                            }
                             SettingsView {
                                 visible: true;
                                 z: 8;
@@ -797,6 +904,49 @@ export component AppWindow inherits Window {
         }
         close_proxy_help => {
             root.show_network_proxy_help = false;
+        }
+        // The scheduler's add/edit dialog (P7). Every property and callback the
+        // reference binds at `app.slint:1483-1523` is bound here; the only
+        // difference is that they pass through `ModalManager` rather than being
+        // written on `SchedulerDialog` directly, because that is where this
+        // program mounts its dialogs.
+        show_scheduler_dialog <=> root.show_scheduler_dialog;
+        scheduler_dialog_is_edit: root.scheduler_dialog_is_edit;
+        scheduler_dialog_task_id: root.scheduler_dialog_task_id;
+        scheduler_dialog_task_name <=> root.scheduler_dialog_task_name;
+        scheduler_dialog_command <=> root.scheduler_dialog_command;
+        scheduler_dialog_arguments <=> root.scheduler_dialog_arguments;
+        scheduler_dialog_cron_expr <=> root.scheduler_dialog_cron_expr;
+        scheduler_dialog_cron_help_url: root.scheduler_dialog_cron_help_url;
+        scheduler_dialog_command_help_url: root.scheduler_dialog_command_help_url;
+        scheduler_dialog_name_error: root.scheduler_dialog_name_error;
+        scheduler_dialog_command_error: root.scheduler_dialog_command_error;
+        scheduler_dialog_cron_error: root.scheduler_dialog_cron_error;
+        scheduler_dialog_admin_mode <=> root.scheduler_dialog_admin_mode;
+        scheduler_dialog_submitting <=> root.scheduler_dialog_submitting;
+        close_scheduler_dialog => {
+            root.close_scheduler_dialog();
+        }
+        save_scheduler_task(name, cmd, args, cron) => {
+            root.save_scheduler_task(name, cmd, args, cron);
+        }
+        browse_scheduler_command => {
+            root.browse_scheduler_command();
+        }
+        open_scheduler_help(url) => {
+            root.open_scheduler_help(url);
+        }
+        scheduler_name_changed(name) => {
+            root.scheduler_name_changed(name);
+        }
+        scheduler_command_changed(cmd) => {
+            root.scheduler_command_changed(cmd);
+        }
+        scheduler_arguments_changed(args) => {
+            root.scheduler_arguments_changed(args);
+        }
+        scheduler_cron_changed(cron) => {
+            root.scheduler_cron_changed(cron);
         }
     }
 

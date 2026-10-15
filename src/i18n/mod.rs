@@ -336,6 +336,63 @@ pub static ENGLISH: &[(&str, &str)] = &[
     // two things it can say when it comes back.
     ("add.installed", "Installed"),
     ("add.file_missing", "That file does not exist."),
+    // -- scheduler: the task scheduler page (P7) -----------------------------
+    // Key names **and values** are the reference's `[scheduler]` block verbatim
+    // (Q12), which is why none of them is in [`OURS`]: the page is a 1:1 port of
+    // its structure and copy. The reference's `en.toml` carries the block
+    // between `[mail]` and `[mount_disk]`, and it is inserted in that position
+    // here too.
+    //
+    // Three of these are *known* to describe a Windows-shaped task rather than
+    // an `adb shell` one and are left untouched on purpose for now:
+    //   dialog_command       ends with "(Supports select executables)", which is
+    //                        about browsing for a Windows binary. The dialog
+    //                        still offers Browse, so the sentence is not yet a
+    //                        lie about a control that is missing -- it is a lie
+    //                        about what the control picks.
+    //   cron_error_*         the reference's cron dialect. Ours accepts a subset
+    //                        (`schtasks` cannot express `1,5` or `1-5/2`; see
+    //                        MAPPING 16.1), so these sentences will need a
+    //                        companion that names what *is* accepted.
+    //   error_name_invalid   the reference's 60-character Windows task-name
+    //                        rule. Whether we keep that bound is a decision the
+    //                        handler makes, not this table.
+    // Rewording any of them moves it into [`OURS`] and regenerates `en.toml`,
+    // and that is Task 6's work (`错误文案全部要重新对齐`, MAPPING 16.8), done
+    // with the rest of the page's semantics rather than split across commits.
+    ("scheduler.add_btn", "Add Task"),
+    ("scheduler.no_tasks", "No tasks found"),
+    ("scheduler.loading", "Querying scheduled tasks..."),
+    ("scheduler.edit_btn", "Edit"),
+    ("scheduler.delete_btn", "Delete"),
+    ("scheduler.enable_btn", "Enable"),
+    ("scheduler.disable_btn", "Disable"),
+    ("scheduler.run_now_btn", "Run Now"),
+    ("scheduler.dialog_add_title", "Add Task"),
+    ("scheduler.dialog_edit_title", "Edit Task"),
+    ("scheduler.dialog_task_name", "Task Name"),
+    ("scheduler.dialog_command", "Command (Supports select executables)"),
+    ("scheduler.dialog_arguments", "Arguments"),
+    ("scheduler.dialog_browse", "Browse"),
+    ("scheduler.dialog_cron_expr", "Schedule (Cron Expression)"),
+    ("scheduler.dialog_admin_mode", "Run with administrator privileges"),
+    ("scheduler.cron_error_required", "Schedule rule is required"),
+    ("scheduler.cron_error_unsupported", "Unsupported Cron expression"),
+    ("scheduler.cron_error_fields", "Cron expression must have 5 fields (minute hour day month weekday)"),
+    ("scheduler.cron_error_comma", "Comma-separated values are not supported, use single value, *, or */N"),
+    ("scheduler.cron_error_step", "Step must be a positive integer"),
+    ("scheduler.cron_error_range", "Cron field value is out of bounds"),
+    ("scheduler.error_name_required", "Task name is required"),
+    ("scheduler.error_command_required", "Command is required"),
+    ("scheduler.error_name_invalid", "Name must be 60 characters or less and can only contain A-Z, 0-9, -, _, ."),
+    ("scheduler.error_create_failed", "Failed to create task: {0}"),
+    ("scheduler.error_delete_failed", "Failed to delete task: {0}"),
+    ("scheduler.error_query_failed", "Failed to query tasks: {0}"),
+    ("scheduler.task_created", "Task created successfully"),
+    ("scheduler.task_deleted", "Task deleted successfully"),
+    ("scheduler.task_updated", "Task updated successfully"),
+    ("scheduler.task_toggled", "Task status changed"),
+    ("scheduler.task_started", "Task started"),
     // -- mount_disk: the storage page (P5a) ---------------------------------
     // Key names are the reference's `[mount_disk]` block (Q12). Values are ours
     // throughout, because the page means something else: spec section 3 line 241

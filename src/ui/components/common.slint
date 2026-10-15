@@ -328,15 +328,34 @@ export component ActionIcon inherits Rectangle {
         image-fit: contain;
     }
 
-    // The reference's "Admin Shield Overlay" block is not carried over yet, and
-    // the property that drives it is kept so nothing else has to change. It was
-    // recorded in P2 as a P3 concern; measured instead of remembered, it is not:
-    // nothing in the reference sets `show_shield` on a card that P3 or P4 adds.
-    // The forty-two setters live in mount_disk_card, network_rule_card,
-    // scheduler_card, usb_card, port_forwarding and their dialogs -- the pages
-    // that land in P5 through P7 -- plus `mount_disk_view` and
-    // `scheduler_view`. So the block and `assets/feat/microsoft-shield.svg`
-    // come back with the first of those, not before it.
+    // Admin Shield Overlay. The reference draws a small Windows shield badge in
+    // the bottom-right corner of any action that needs elevation, and the
+    // property that drives it (`show_shield`) has been carried since P2 so that
+    // nothing else had to change. Measured instead of remembered, the badge is
+    // owed by exactly the pages that raise the shield: mount_disk_card,
+    // network_rule_card, scheduler_card, usb_card, port_forwarding and their
+    // dialogs, plus `mount_disk_view` and `scheduler_view`. It arrives here with
+    // the first of those, which is `scheduler_card`.
+    //
+    // `x` flips under RTL the way the reference's does: the badge belongs in the
+    // corner the text ends at, so it tracks the same edge as the glyph.
+    if (show_shield): Rectangle {
+        width: 12px;
+        height: 12px;
+        x: AppI18n.is-rtl ? -2px : parent.width - self.width + 2px;
+        y: parent.height - self.height + 2px;
+        z: 10;
+
+        Image {
+            source: @image-url("../../../assets/feat/microsoft-shield.svg");
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 10px;
+            height: 10px;
+            image-fit: contain;
+        }
+    }
+
     touch := TouchArea {
         enabled: root.enabled;
         clicked => {

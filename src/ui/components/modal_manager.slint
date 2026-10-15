@@ -39,8 +39,19 @@
 // that has no page of its own behind it -- it is raised from the settings page
 // and lands back there.
 //
-// docs/MAPPING.md sections 12, 14 and 15 record the subset, so P9's page-by-page
-// comparison is not surprised by a 5-block manager next to a 60-block one.
+// P7 adds the scheduler's add/edit dialog. **The reference does not put this one
+// here**: it instantiates `SchedulerDialog` directly in `app.slint`
+// (`app.slint:1479`) and keeps `modal_manager.slint` for a different, larger set
+// of dialogs. This copy mounts it in the manager anyway, because the manager is
+// where this program has decided a dialog belongs -- one place to look, one `z`
+// to reason about. The binding the reference writes at `app.slint:1483-1523` is
+// therefore split: the properties and callbacks are declared here, and
+// `app.slint` binds them through `ModalManager` exactly as it does the language
+// picker. Nothing about the dialog itself changes.
+//
+// docs/MAPPING.md sections 12, 14, 15 and 16 record the subset, so P9's
+// page-by-page comparison is not surprised by a 6-block manager next to a
+// 60-block one.
 
 import { Theme, AppI18n, LayoutConstants, Information } from "../theme.slint";
 import { ConfirmationDialog } from "dialogs/confirmation_dialog.slint";
@@ -48,6 +59,7 @@ import { InformationDialog } from "dialogs/information_dialog.slint";
 import { NetworkAddRuleDialog } from "dialogs/network_add_rule_dialog.slint";
 import { ProxyHelpDialog } from "dialogs/proxy_help_dialog.slint";
 import { LanguageSelectDialog } from "dialogs/language_select_dialog.slint";
+import { SchedulerDialog } from "dialogs/scheduler_dialog.slint";
 
 export component ModalManager inherits Rectangle {
     // ---- the home page's delete confirmation (reference `show_delete`) ------
@@ -104,6 +116,42 @@ export component ModalManager inherits Rectangle {
     in property <[string]> language_options: [];
     in property <int> language_current_index: 0;
     callback language_selected(string);
+
+    // ---- the scheduler's add/edit dialog (P7) ------------------------------
+    // Reference `app.slint`:243-260 and 1478-1524. Every name, type and default
+    // is the reference's, and the `in-out` / `in` split follows the *dialog's*
+    // own declaration (`scheduler_dialog.slint`:9-21) rather than the
+    // reference's binding site -- the reference binds `task_name` and friends
+    // one-way even though the dialog declares them `in-out`, and a one-way
+    // binding onto a property the dialog itself assigns to would be a binding
+    // the dialog immediately breaks. Two-way here, which is what `in-out`
+    // means.
+    //
+    // The four `*_changed` callbacks exist because the handler validates as the
+    // reader types: each keystroke clears or sets the matching `*_error`, and
+    // the error properties above are how that answer gets back into the dialog.
+    in-out property <bool> show_scheduler_dialog: false;
+    in property <bool> scheduler_dialog_is_edit: false;
+    in property <string> scheduler_dialog_task_id: "";
+    in-out property <string> scheduler_dialog_task_name: "";
+    in-out property <string> scheduler_dialog_command: "";
+    in-out property <string> scheduler_dialog_arguments: "";
+    in-out property <string> scheduler_dialog_cron_expr: "";
+    in property <string> scheduler_dialog_cron_help_url: "";
+    in property <string> scheduler_dialog_command_help_url: "";
+    in property <string> scheduler_dialog_name_error: "";
+    in property <string> scheduler_dialog_command_error: "";
+    in property <string> scheduler_dialog_cron_error: "";
+    in-out property <bool> scheduler_dialog_admin_mode: false;
+    in-out property <bool> scheduler_dialog_submitting: false;
+    callback close_scheduler_dialog();
+    callback save_scheduler_task(string, string, string, string);
+    callback browse_scheduler_command();
+    callback open_scheduler_help(string);
+    callback scheduler_name_changed(string);
+    callback scheduler_command_changed(string);
+    callback scheduler_arguments_changed(string);
+    callback scheduler_cron_changed(string);
 
     // Every dialog is stretched over the whole window; the manager is mounted
     // once, above the pages, so a dialog covers whichever page raised it.
@@ -182,6 +230,60 @@ export component ModalManager inherits Rectangle {
         selected(code) => {
             root.language_selected(code);
             root.show_language_dialog = false;
+        }
+    }
+
+    // The scheduler's add/edit dialog (P7). The reference sets `z: 100` on it at
+    // `app.slint:1480`; here it inherits the manager's `z: 200`, which is above
+    // the toast at `z: 100` -- the same ordering the reference gets from the two
+    // numbers, reached the other way round.
+    //
+    // `is_edit` decides the title and whether the name field is writable; the
+    // `*_error` properties are read-only inputs the handler fills in as it
+    // validates; `admin_mode` and `submitting` are the two the dialog writes
+    // back, which is why they are two-way.
+    if (show_scheduler_dialog): SchedulerDialog {
+        width: 100%;
+        height: 100%;
+        is_edit: root.scheduler_dialog_is_edit;
+        task_id: root.scheduler_dialog_task_id;
+        task_name <=> root.scheduler_dialog_task_name;
+        command <=> root.scheduler_dialog_command;
+        arguments <=> root.scheduler_dialog_arguments;
+        cron_expr <=> root.scheduler_dialog_cron_expr;
+        cron_help_url: root.scheduler_dialog_cron_help_url;
+        command_help_url: root.scheduler_dialog_command_help_url;
+        name_error: root.scheduler_dialog_name_error;
+        command_error: root.scheduler_dialog_command_error;
+        cron_error: root.scheduler_dialog_cron_error;
+        admin_mode <=> root.scheduler_dialog_admin_mode;
+        submitting <=> root.scheduler_dialog_submitting;
+        close_clicked => {
+            root.close_scheduler_dialog();
+        }
+        save_clicked(name, cmd, args, cron) => {
+            root.save_scheduler_task(name, cmd, args, cron);
+        }
+        name_changed(name) => {
+            root.scheduler_name_changed(name);
+        }
+        command_changed(cmd) => {
+            root.scheduler_command_changed(cmd);
+        }
+        arguments_changed(args) => {
+            root.scheduler_arguments_changed(args);
+        }
+        cron_changed(cron) => {
+            root.scheduler_cron_changed(cron);
+        }
+        browse_clicked => {
+            root.browse_scheduler_command();
+        }
+        cron_help_clicked => {
+            root.open_scheduler_help(root.scheduler_dialog_cron_help_url);
+        }
+        command_help_clicked => {
+            root.open_scheduler_help(root.scheduler_dialog_command_help_url);
         }
     }
 }

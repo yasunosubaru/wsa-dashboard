@@ -733,6 +733,63 @@ try {
             # plausible, and a storage capture filed under the wrong page.
             'go-network-page'  { @{ x = 27; y = 234 } }
             'go-storage-page'  { @{ x = 27; y = 274 } }
+            # The settings page (P6). Measured, not derived -- and the
+            # derivation was wrong twice: 540 (rows counted off a picture
+            # taken while `Donate` was still on screen) and then 488 (guessing
+            # the 40 that hiding it would take). The real answer is 566, from
+            # a capture taken after `handlers::settings` started gating each
+            # entry on `tabs::has_a_view` -- which removed donate, about *and*
+            # scheduler, so the bottom group is one row and neither guess had
+            # anything to do with it.
+            #
+            # Measuring is the rule here rather than the exception: this row is
+            # pinned to the bottom by a stretch spacer, so its position depends on
+            # how many rows are above it AND on the window height. Only the
+            # picture knows either. The `tab selected` read-back is what turns a
+            # stale coordinate into a failure instead of a plausible-looking
+            # picture of the wrong page.
+            'go-settings-page' { @{ x = 27; y = 566 } }
+            # The settings page's three tabs. Measured off the P6 capture
+            # (1000x750 at this monitor's 1.25 scale): the tab row's boxes read at
+            # General (275..360, 70..113), Advanced (375..475, 70..113) and
+            # Interface (483..580, 70..113), which is logical (220, 61), (340, 61)
+            # and (424, 61).
+            #
+            # They are three steps rather than one because the point of the three
+            # pictures is that each tab says something different, and a single
+            # capture of whichever tab happened to be showing would not be a
+            # record of any of them.
+            'settings-tab-advanced'  { @{ x = 340; y = 61 } }
+            # The page's Save button. Measured off p6-settings-general.png: it
+            # reads at (874..971, 685..723), which is (699, 74) at 1.25 scale... see
+            # the note below; the numbers are (737, 563) and they come from the same
+            # picture. It is in `$setsState` because pressing it twice is
+            # harmless -- the second write says the same thing the first did.
+            'settings-save'      { @{ x = 737; y = 563 } }
+            # The language picker, and one of its rows. The combo box on the
+            # General tab reads at (275..615, 148..193) -> logical (356, 137).
+            'settings-language'  { @{ x = 356; y = 137 } }
+            # One row of that dialog. `de` rather than a Chinese one because it is
+            # on the first screen of the picker (the list is sorted, so `zh-CN`
+            # needs a scroll) -- the point of the step is that picking a row
+            # re-resolves the whole window, and `de` proves that just as well as
+            # `zh-CN` would. Read off lang-picker.png: `de` reads at
+            # (409..584, 376..430), centre (496, 403), which is (397, 322) at this
+            # monitor's 1.25 scale.
+            'settings-language-de' { @{ x = 397; y = 322 } }
+            # UNVERIFIED. The click before this one is the coordinate the dialog's
+            # `de` cell had when the picker opened over a page at 1000x750, and the
+            # picker's rows move with `Flickable.viewport-y`. On a run where the
+            # monitor's reported scale came back 150% rather than 125% the whole
+            # window is 1.2x the size these numbers assume, the click landed on the
+            # mask, and the dialog closed without selecting anything -- which looks
+            # exactly like a language switch that does nothing.
+            #
+            # It is left in rather than deleted because the row *is* there and the
+            # dialog *does* list all fifty packs with the current one highlighted;
+            # what is unproven is that this coordinate reaches it. Re-measure at
+            # whatever scale a run reports, then delete this paragraph.
+            'settings-tab-interface' { @{ x = 424; y = 61 } }
             # The network page's second tab. Measured off
             # p5b-network-port-forwarding.png (1200x900) rather than derived:
             # the tab bar is inside `NetworkView`'s own 40px row with 8px/4px
@@ -800,7 +857,13 @@ try {
         # because it is the only family whose failure produces a *plausible*
         # wrong picture. A second failure there is raised rather than written to
         # disk as evidence.
-        $setsState = ($step -like 'go-*') -or ($step -eq 'network-proxy-tab') -or ($step -eq 'network-delete-first')
+        $setsState = ($step -like 'go-*') -or ($step -eq 'network-proxy-tab') -or ($step -eq 'network-delete-first') -or ($step -eq 'settings-save')
+            # `settings-language-de` is deliberately NOT in the list. It opens the
+            # picker and then has to click a row inside it, and the coordinate that
+            # depends on the picker having finished scrolling -- which it may not
+            # have. A step that cannot be repeated safely belongs to a human, not
+            # to a run whose whole purpose is being repeatable; see the note on
+            # its own definition below.
         $attempts = if ($setsState) { 3 } else { 1 }
         $applied = $false
         for ($try = 0; $try -lt $attempts -and -not $applied; $try++) {

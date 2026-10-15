@@ -52,7 +52,13 @@ export component LanguageSelectDialog inherits Rectangle {
     in property <int> current_index;
 
     callback close();
-    callback selected(int);
+    // The reference's `selected(int)` -- an index into `languages`. Ours takes the
+    // language code, for the reason written at the call site below. Declared
+    // rather than inferred: Slint would otherwise take the type from whichever
+    // call site it sees first, and the mismatch this change exists to remove
+    // comes back as "Cannot convert string to int" from a file three hundred
+    // lines away from the signature.
+    callback selected(string);
 
     private property <int> columns: 3;
     private property <length> item_height: 36px;
@@ -155,8 +161,25 @@ export component LanguageSelectDialog inherits Rectangle {
                                 text: flat-index < root.languages.length ? root.languages[flat-index] : "";
                                 selected: flat-index == root.current_index;
                                 clicked => {
+                                    // The reference emits `flat-index` and the
+                                    // caller looks the code up in
+                                    // `LanguageData.lang-codes`. Ours emits the
+                                    // code itself, because our list is
+                                    // `i18n::available_languages()` -- the list of
+                                    // files in the binary -- and a second table to
+                                    // keep in step with it is exactly the thing
+                                    // that goes stale the day a pack is added.
+                                    //
+                                    // This is P6's one signature change inside a
+                                    // ported `.slint` file, and it is invisible
+                                    // from the outside: both sides end up with the
+                                    // same language. What it fixes is not
+                                    // theoretical -- Slint coerces the integer to
+                                    // a string, `normalize_language_code("5")`
+                                    // answers `en`, and the click looks like it
+                                    // did nothing. MAPPING 15.
                                     if (flat-index < root.languages.length) {
-                                        root.selected(flat-index);
+                                        root.selected(root.languages[flat-index]);
                                     }
                                 }
                             }

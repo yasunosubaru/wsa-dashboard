@@ -219,13 +219,25 @@ fn apply(app: &AppWindow, config: &Config) {
 
     let sidebar = &config.sidebar;
     app.set_sidebar_toggle(sidebar.toggle);
-    app.set_sidebar_add(sidebar.add);
-    app.set_sidebar_usb(sidebar.usb);
-    app.set_sidebar_network(sidebar.network);
-    app.set_sidebar_scheduler(sidebar.scheduler);
-    app.set_sidebar_mount(sidebar.mount);
-    app.set_sidebar_donate(sidebar.donate);
-    app.set_sidebar_about(sidebar.about);
+    // The eight switches, each one gated on the page existing.
+    //
+    // `SidebarConfig::default()` says all eight are on, because the reference
+    // ships all nine pages. Taking that at face value is how Donate and Task
+    // Scheduler appeared in the side bar during P6 with nothing behind them --
+    // an entry that leads to an empty content area, which is the one outcome
+    // `tabs::has_a_view` exists to prevent.
+    //
+    // So the file says what the reader wants and `has_a_view` says what this
+    // build has, and the entry is shown when both agree. It also means the file
+    // needs no edit when a phase lands: the `true` that was already in it starts
+    // taking effect the moment the page appears.
+    app.set_sidebar_add(offered(sidebar.add, 1));
+    app.set_sidebar_usb(offered(sidebar.usb, 2));
+    app.set_sidebar_network(offered(sidebar.network, 3));
+    app.set_sidebar_scheduler(offered(sidebar.scheduler, 4));
+    app.set_sidebar_mount(offered(sidebar.mount, 5));
+    app.set_sidebar_donate(offered(sidebar.donate, 6));
+    app.set_sidebar_about(offered(sidebar.about, 8));
 
     // The two rows whose directory is a fact rather than a choice. Both come
     // from the same place the storage page reads them from, so the settings page
@@ -283,6 +295,17 @@ fn apply_language(handle: &Weak<AppWindow>, code: &str) {
     let mut config = config::load();
     config.user.ui_language = code.to_string();
     apply(&app, &config);
+}
+
+/// Whether a side-bar entry is offered: the file wants it *and* this build has
+/// the page behind it.
+///
+/// The two questions are separate and both real. `SidebarConfig` records what a
+/// reader asked for, and survives a phase landing; `tabs::has_a_view` records
+/// what exists, and does not. Answering only the first is how P6 briefly showed
+/// a Donate entry with nothing behind it.
+fn offered(wanted: bool, tab: i32) -> bool {
+    wanted && crate::ui::tabs::has_a_view(tab)
 }
 
 /// The twenty-eight strings the page shows.

@@ -615,7 +615,12 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("settings.log_path", "Log path"),
     ("settings.distro_dir", "WSA data folder"),
     ("settings.backup_dir", "App data folder"),
-    ("settings.select_folder", "Select Folder"),
+    // Not "Select Folder". The reference's three pickers chose a directory with
+    // `rfd`; ours have nothing to choose -- the first two rows show where the
+    // subsystem and this program actually keep their data -- so the button opens
+    // the folder it sits next to. A button labelled "Select" that cannot select
+    // is worse than one labelled "Open" that does.
+    ("settings.select_folder", "Open Folder"),
     ("settings.select_log_dir", "Select the folder the logs are written to"),
     ("settings.select_distro_dir", "Open the folder WSA keeps its data in"),
     ("settings.select_backup_dir", "Open the folder this program keeps its data in"),
@@ -628,19 +633,28 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("settings.saved_success", "Settings saved."),
     ("settings.saved_failed", "Could not save the settings: {0}"),
     ("settings.sidebar_features", "Sidebar features"),
-    ("settings.sparse_vhd", "Enable sparse VHD by default"),
-    ("settings.sparse_vhd_desc", "Any newly created VHD will be set to sparse automatically when enabled."),
-    ("settings.mount_auto_probe", "Auto-start WSA to probe storage"),
-    ("settings.mount_auto_probe_desc", "The storage page reads VHD images off disk and needs the subsystem for nothing, so this is off and its button is inert."),
+    ("settings.sparse_vhd", "Report allocated size"),
+    ("settings.sparse_vhd_desc", "On the storage page, show how much of each image is actually allocated rather than the size it claims to be. Both numbers are in the image footer, so this changes which of them you read, not how much disk you get back."),
+    ("settings.mount_auto_probe", "Refresh storage when the window opens"),
+    ("settings.mount_auto_probe_desc", "The storage page reads VHD images off disk, so it works with the subsystem stopped and there is nothing to probe for. This asks for it to re-read on launch instead of on your first visit."),
     ("settings.colorful_icons", "Enable colorful icons mode"),
     ("settings.mail_icon_always", "Always show the messages icon"),
     ("settings.hide_pin_icon", "Hide always-on-top button"),
+    // The reference's instance list has a drag-sort handle. Ours is a fixed list
+    // of nine entries with an order that means something, so there is nothing to
+    // drag and the switch is off by default. Kept because the key is the
+    // reference's and because turning it on should not silently cost a list order.
     ("settings.show_drag_icon", "Show list drag-sort handle"),
-    ("settings.wsl_settings", "WSL Settings (~/.wslconfig)"),
+    // The reference opens `~/.wslconfig` in an editor. There is no such file for
+    // this program and no editor to open it with; ours opens the folder its own
+    // settings live in. Keeping the reference's sentence would name a file that
+    // does not exist on the machine the reader is looking at.
+    ("settings.wsl_settings", "Show settings file"),
     ("settings.wsl2_required", "This feature needs WSL 2.3.0 or newer."),
     ("settings.update_wsl", "Visit the WSL download page."),
-    ("settings.stop_wsl", "Stop WSL"),
-    ("dialog.stop_wsl_success", "All WSL instances have been stopped."),
+    // Ours stops the subsystem. The key is the reference's (Q12).
+    ("settings.stop_wsl", "Stop WSA"),
+    ("dialog.stop_wsl_success", "The subsystem has been stopped."),
     ("settings.log_levels.error", "Error level"),
     ("settings.log_levels.warn", "Warning level"),
     ("settings.log_levels.info", "Information level"),
@@ -696,12 +710,17 @@ pub static OURS: &[&str] = &[
     "settings.saved_success",
     "settings.select_backup_dir",
     "settings.select_distro_dir",
+    "settings.select_folder",
     "settings.select_log_dir",
     "settings.show_drag_icon",
+    "settings.sparse_vhd",
+    "settings.sparse_vhd_desc",
+    "settings.stop_wsl",
     "settings.tray_close_to_tray",
     "settings.tray_start_minimized",
     "settings.update_wsl",
     "settings.wsl2_required",
+    "settings.wsl_settings",
     "sidebar.add",
     "sidebar.mount",
     "sidebar.usb",

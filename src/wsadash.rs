@@ -127,6 +127,14 @@ mod startup_info;
 #[path = "app/autostart.rs"]
 mod autostart;
 
+// The tray's menu, for the same reason: the ids in it are matched by `tray.rs`
+// and its label keys are looked up in the English table, and both are couplings a
+// test can hold. `tray.rs` itself names `AppWindow` and `tray-icon`, so it stays
+// in the GUI binary -- the same split as `disk_model` and `handlers/disk.rs`.
+#[cfg(test)]
+#[path = "app/tray_model.rs"]
+mod tray_model;
+
 // `window` and `single_instance`, mounted together because they have to be: the
 // one function in `single_instance` that is not a name is
 // `try_activate_existing_instance`, and it reaches its window through

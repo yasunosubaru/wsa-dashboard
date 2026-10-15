@@ -187,6 +187,12 @@ export component AppWindow inherits Window {
     in-out property <bool> sidebar_collapsed: false;
     in-out property <bool> is_maximized: false;
     in-out property <bool> is_pinned: false;
+    // Whether the window is on screen. The tray hides the window rather than
+    // closing it (`tray_close_to_tray`), and this is the flag the two halves agree
+    // on: the close handler sets it false, the tray's double-click reads it to
+    // decide which way the toggle goes. The reference has it at the same place
+    // (`app.slint:74`) and with the same default.
+    in-out property <bool> is_window_visible: true;
 
     // Which side-bar entries are offered.
     //
@@ -375,6 +381,12 @@ export component AppWindow inherits Window {
     callback window_maximize();
     callback window_close();
     callback window_drag_delta(float, float);
+    // Rebuild the tray icon. The tray's tooltip and menu carry translated text,
+    // so a language change has to rebuild it -- the reference calls this from its
+    // settings handler (`settings.rs:65`), and the same `AppI18n.version` bump
+    // that re-evaluates the `.slint` strings cannot reach an object that lives on
+    // the Rust side.
+    callback reinit_tray();
     callback toggle_theme();
 
     // The mail icon is suppressed in `TitleBar` (`mail_icon_always: false`):

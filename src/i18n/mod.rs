@@ -715,6 +715,11 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("settings.update_options.biweekly", "Every two weeks"),
     ("settings.update_options.monthly", "Every month"),
     ("dialog.save", "Save"),
+    // The tray menu. Two items, and the wording is the reference's verbatim --
+    // which is why neither is in [`OURS`]: the reference's tray also shows the
+    // window and exits, so there is no sentence of ours for a pack to overwrite.
+    ("tray.show_window", "Show Window"),
+    ("tray.exit", "Exit"),
 ];
 
 /// Keys whose wording is **ours**, so a translation must not overwrite it.

@@ -221,6 +221,10 @@ usb = "Devices"
 [toast]
 distro_busy = "{0} is busy ({1})"
 
+[tray]
+exit = "Exit"
+show_window = "Show Window"
+
 [usb]
 attach = "Connect"
 detach = "Disconnect"

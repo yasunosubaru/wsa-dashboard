@@ -286,6 +286,13 @@ fn apply_language(handle: &Weak<AppWindow>, code: &str) {
         let system_lang = config::load().system.system_language;
         app.global::<Theme>()
             .set_default_font(constants::get_font_for(&loaded, &system_lang).into());
+
+        // The tray's tooltip and menu are built on the Rust side out of translated
+        // strings, so the `version` bump above cannot reach them -- the icon has to
+        // be rebuilt. This is the other half of the same problem the version lever
+        // solves for the `.slint` strings, and the reference does it from the same
+        // place (`settings.rs:61-68`).
+        app.invoke_reinit_tray();
     }
 
     // The `*Strings` structs are resolved on this side of the bridge, so they
@@ -400,6 +407,29 @@ fn save(handle: Weak<AppWindow>, section: Section) {
     match config::save(&config) {
         Ok(()) => {
             info!(?section, "settings saved");
+            // The Run entry is a consequence of the file rather than a second
+            // copy of it, so it is applied from the value that was just written.
+            // Without this the two tray switches on this tab would only take
+            // effect at the next launch, which is the shape of a control that
+            // does nothing: the reader turns "start with Windows" on, sees no
+            // change, and has no way to tell it worked.
+            //
+            // The tray's two other switches need nothing here: `close_to_tray` is
+            // read from the window property at the moment a close is requested,
+            // and `start_minimized` is read from the file at the next launch --
+            // which is the only moment it could mean anything.
+            if matches!(section, Section::General) {
+                match crate::app::autostart::set_dashboard_autostart(
+                    config.tray.autostart,
+                    config.tray.start_minimized,
+                ) {
+                    Ok(changed) => debug!(changed, "Run entry reconciled with the file"),
+                    // `warn` and not a toast: the settings file did save, and the
+                    // reader can set the Run entry by hand. The reference logs here
+                    // too (`settings.rs:27`).
+                    Err(error) => warn!(%error, "the Run entry could not be written"),
+                }
+            }
             toast(&handle, i18n::t("settings.saved_success"));
         }
         Err(error) => {

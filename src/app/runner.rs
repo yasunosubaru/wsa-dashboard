@@ -149,6 +149,36 @@ pub async fn run_app(state: AppState) {
     let _ = crate::app::autostart::apply_tray_autostart(tray.autostart, tray.start_minimized).await;
     let _ = tokio::spawn(crate::app::startup_info::log_startup_system_info());
 
+    // -- the tray, and the window's first appearance (P7) ---------------------
+    // `initially_visible` is the state the window will actually be in, so that a
+    // later rebuild (a language change) cannot make a hidden window visible.
+    if let Err(error) = crate::app::tray::SystemTray::initialize(app.as_weak(), !tray.start_minimized)
+    {
+        // Logged rather than fatal: a machine whose notification area refuses a
+        // new icon is unusual, and the window works without one.
+        error!(%error, "could not create the tray icon");
+    }
+    app.on_reinit_tray({
+        let weak = app.as_weak();
+        move || {
+            let visible = weak
+                .upgrade()
+                .map(|app| app.get_is_window_visible())
+                .unwrap_or(false);
+            if let Err(error) = crate::app::tray::SystemTray::initialize(weak.clone(), visible) {
+                error!(%error, "could not rebuild the tray icon");
+            }
+        }
+    });
+
+    // Start-minimised parks the window before `app.run`, which is what would
+    // otherwise put it on screen. The ordinary path does nothing here and lets
+    // Slint show it, so that a normal launch does not go through the tray's
+    // hide-then-restore round trip and flash on the way up.
+    if tray.start_minimized {
+        ui::handlers::window::park_in_tray(&app);
+    }
+
     app::tasks::spawn_home_monitor(app.as_weak(), state);
 
     if let Err(error) = app.run() {

@@ -26,3 +26,10 @@ pub mod startup_info;
 /// means, and what Windows exports. The commands that create and delete tasks
 /// arrive in P7 Task 2.
 pub mod scheduler_task;
+
+/// The tray (P7): the icon itself, and the menu it shows as data. Split for the
+/// reason `ui/disk_model.rs` is split from `ui/handlers/disk.rs` -- `tray.rs`
+/// names `AppWindow` and only the GUI binary compiles it, while `tray_model.rs`
+/// is a decision a test can reach.
+pub mod tray;
+pub mod tray_model;

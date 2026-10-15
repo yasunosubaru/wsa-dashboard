@@ -18,13 +18,25 @@
 //! window-title candidates, plus this note saying which parts of the original
 //! were left behind and why.
 //!
-//! What is deliberately absent, so that P7 can go and fetch it:
+//! What is deliberately absent, and where it went instead:
 //!
-//!   `set_skip_taskbar`, `hide_window_completely`, `set_window_opacity*`,
-//!   `show_and_center`, `rename_app_windows`. (`activate_window_by_hwnd` was
-//!   listed here through P3-P6; P7's `single_instance` came to fetch it, because
-//!   waking a window that was minimised to the tray is the one thing it cannot do
-//!   without it.)
+//!   `activate_window_by_hwnd` and `set_skip_taskbar` were listed here through
+//!   P6 and P7 came to fetch them -- the first for `single_instance`, the second
+//!   for the tray, which has to be able to take the window off the taskbar and
+//!   put it back.
+//!
+//!   `show_and_center` is **not** here, and that is a deliberate split rather
+//!   than an omission. The reference's version takes `&AppWindow` and drives it
+//!   (`set_minimized`, `set_position`, `show`); ours lives in
+//!   `ui/handlers/window.rs` beside the other callbacks that name the window, so
+//!   that this file stays free of the Slint types and the CLI can mount it. See
+//!   that file for the three functions the one became.
+//!
+//!   `set_window_opacity*` and `rename_app_windows` are still absent. The
+//!   reference's `show_and_center` needs them for a reveal sequence that fades a
+//!   window in from opacity 0; ours reveals in one step through
+//!   [`activate_window_by_hwnd`], so there is nothing to fade and no helper
+//!   window to rename.
 //!
 //! # The title candidates are this project's
 //!
@@ -36,7 +48,7 @@
 //! renderer rather than about us.
 
 #[cfg(target_os = "windows")]
-use tracing::{error, info};
+use tracing::{error, info, warn};
 #[cfg(target_os = "windows")]
 use windows::core::BOOL;
 #[cfg(target_os = "windows")]
@@ -236,6 +248,86 @@ pub fn activate_window_by_hwnd(hwnd: windows::Win32::Foundation::HWND) {
 
 #[cfg(not(target_os = "windows"))]
 pub fn activate_window_by_hwnd(_hwnd: windows::Win32::Foundation::HWND) {}
+
+/// Hide the window so completely that no taskbar button is left behind.
+///
+/// `SW_HIDE` alone is not enough: a window that is merely hidden keeps its
+/// `WS_EX_APPWINDOW` style, and the shell leaves its button in place. The style
+/// has to become `WS_EX_TOOLWINDOW` for the button to go away, and the window has
+/// to be parked off screen so that a later `SW_SHOW` cannot put it back in front
+/// of the reader by accident.
+#[cfg(target_os = "windows")]
+fn hide_window_completely(hwnd: HWND) {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongW, SetLayeredWindowAttributes, SetWindowLongW, SetWindowPos, ShowWindow,
+        GWL_EXSTYLE, HWND_TOP, LWA_ALPHA, SW_HIDE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_APPWINDOW,
+        WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+    };
+    unsafe {
+        // Off the taskbar.
+        let style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        let style = (style & !WS_EX_APPWINDOW.0) | WS_EX_TOOLWINDOW.0;
+        SetWindowLongW(hwnd, GWL_EXSTYLE, style as i32);
+
+        // And transparent, so the frame cannot flash on the way out.
+        let style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 | WS_EX_LAYERED.0;
+        SetWindowLongW(hwnd, GWL_EXSTYLE, style as i32);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+
+        let _ = ShowWindow(hwnd, SW_HIDE);
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOP),
+            -32000,
+            -32000,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER,
+        );
+    }
+}
+
+/// Show or hide the taskbar button, hiding the window itself when `skip`.
+///
+/// Takes no `AppWindow`, unlike the reference's `set_skip_taskbar(&app, skip)`,
+/// and the reason is that the reference's parameter is unused -- its body reaches
+/// the window through `find_main_window` alone. Dropping it is what keeps this
+/// file free of the Slint types, which is what lets the CLI mount it and run the
+/// tests below.
+///
+/// Spawned rather than done inline, the reference's shape: at startup the window
+/// handle does not exist yet, and the caller cannot wait for it -- the tray's
+/// click has to return to the event loop. Twenty tries at 100 ms is the
+/// reference's budget and is roughly how long Slint takes to put the handle up.
+#[cfg(target_os = "windows")]
+pub fn set_skip_taskbar(skip: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+    info!(skip, "set_skip_taskbar");
+    std::thread::spawn(move || {
+        for _ in 0..20 {
+            if let Some(hwnd) = find_main_window() {
+                unsafe {
+                    // Hide first, always: the shell only re-reads a window's
+                    // taskbar style when its visibility changes, so flipping the
+                    // style on a visible window leaves the button where it was.
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                }
+                if skip {
+                    hide_window_completely(hwnd);
+                } else {
+                    activate_window_by_hwnd(hwnd);
+                }
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        warn!("set_skip_taskbar({skip}): no window handle within 2s");
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_skip_taskbar(_skip: bool) {}
 
 /// The one thing about `activate_window_by_hwnd` a test can hold: that the two
 /// `cfg` variants keep the same signature, so the file still compiles on the

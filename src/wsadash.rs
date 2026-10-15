@@ -86,6 +86,21 @@ mod network_model;
 #[path = "config/mod.rs"]
 mod config;
 
+// The scheduled-task layer, for the same reason as the two above and `config`:
+// "does `*/5 * * * *` become a MINUTE task with a 5-minute interval" is a
+// question about arithmetic over five strings, and it has to be answerable by a
+// test rather than by creating a task on the reader's machine and looking at it.
+//
+// Mounted at the top level rather than inside a `mod app { .. }` because
+// `#[path]` inside an inline module resolves against the *inline* module's
+// directory, which does not exist -- so the path came out as
+// `src/app/app/scheduler_task/mod.rs`. The nested `pub mod cron;` declarations
+// inside the mounted file do resolve correctly, because for a `#[path]` module
+// they are relative to the file's own directory.
+#[cfg(test)]
+#[path = "app/scheduler_task/mod.rs"]
+mod scheduler_task;
+
 use adb::path::adb_path;
 use std::io::Write;
 use std::path::Path;

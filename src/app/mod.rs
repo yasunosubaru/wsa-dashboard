@@ -14,3 +14,8 @@ pub mod runner;
 pub mod state;
 pub mod tasks;
 pub mod window;
+
+/// Scheduled tasks (P7). The pure layer only: what a task is, what a cron
+/// means, and what Windows exports. The commands that create and delete tasks
+/// arrive in P7 Task 2.
+pub mod scheduler_task;

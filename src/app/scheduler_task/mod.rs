@@ -20,23 +20,33 @@
 //! | `models.rs` | [`models`] | carried over field for field, minus `RawSchtasksRecord` |
 //! | `schtasks.rs:612-771` (cron) | [`cron`] | carried over verbatim, tests and all |
 //! | `schtasks.rs:29-188` (the CSV query) | [`xml`] | **replaced** -- the CSV header is localised |
-//! | `schtasks.rs:189-611` (create / delete / run / the VBS elevation launcher) | not yet | P7 Task 2; it needs `windows` registry and shell work |
+//! | `schtasks.rs:189-611` (create / delete / run / the VBS launcher) | [`schtasks`] | carried over, minus the CSV fast path |
+//! | `utils/system.rs:61-169` (the UAC pair) | [`elevate`] | the elevation half only |
 //!
 //! [`xml`] says what the replacement is and what it costs. [`models`] says what we
-//! cannot get from Windows at all, which is task state.
+//! cannot get from Windows at all, which is task state. [`schtasks`] says what the
+//! write half had to change and what it deliberately did not.
 //!
-//! Nothing here calls Windows. That is the point of this first task: everything
-//! that can be decided by arithmetic over strings and XML is decided here, where
-//! a test can run it, and what is left for Task 2 is the part that genuinely has
-//! to spawn `schtasks`.
+//! # Where the machine stops and the tests start
+//!
+//! Everything that can be decided by arithmetic over strings and XML is decided
+//! where a test can run it. [`xml`], [`cron`] and the greater part of
+//! [`schtasks`] are pure; [`elevate`] is pure except for the one `ShellExecuteExW`
+//! call it exists to make. What is left touches `schtasks.exe` exactly five times,
+//! one per action, and those five are named in [`schtasks`]'s header.
 
 pub mod cron;
+pub mod elevate;
 pub mod models;
+pub mod schtasks;
 pub mod xml;
 
 pub use cron::{parse_cron, validate_cron};
 pub use models::{
     NOT_REPORTED, CreateTaskParams, CronFields, CronParsed, SchedulerTask, SchtasksParams,
+};
+pub use schtasks::{
+    create_task, delete_task, list_tasks, run_task, toggle_task,
 };
 pub use xml::{TASK_FOLDER, TaskXml, Trigger, TriggerKind, our_tasks, parse_tasks_xml};
 
@@ -53,11 +63,16 @@ mod tests {
     /// is the second time in this project a test has caught itself.
     #[test]
     fn no_source_file_asks_schtasks_for_csv_output() {
-        // `concat!` cannot take the loop variable, so the two files that could
-        // plausibly grow a CSV path are named outright. Adding a fourth module to
-        // this directory means adding a line here, and that is the point: the
-        // list has to be maintained for the test to mean anything.
-        for source in [include_str!("xml.rs"), include_str!("cron.rs")] {
+        // `concat!` cannot take the loop variable, so the files that could
+        // plausibly grow a CSV path are named outright. Adding a module to this
+        // directory means adding a line here, and that is the point: the list has
+        // to be maintained for the test to mean anything.
+        for source in [
+            include_str!("xml.rs"),
+            include_str!("cron.rs"),
+            include_str!("schtasks.rs"),
+            include_str!("elevate.rs"),
+        ] {
             assert!(
                 !source.contains("\"CSV\"") && !source.contains("\"FO CSV\""),
                 "a schtasks invocation asking for CSV has come back; see the header of xml.rs"

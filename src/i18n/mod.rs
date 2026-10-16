@@ -772,13 +772,18 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("about.privacy_policy", "Privacy Policy"),
     ("about.terms_of_service", "Terms of Service"),
     ("about.new_version", "A new version is available: v{0}"),
+    // The two sentences the reference does not have, because its check answered
+    // in a dialog with the release notes rather than in one line. Ours says one
+    // of three things and stops.
+    ("about.up_to_date", "This build is the latest release."),
+    ("about.update_check_failed", "Could not check for updates: {0}"),
     // Ours, and they exist because the rows they answer for have no address in
     // this build. `about.group`, `about.talk`, `about.documents` and
     // `about.announcements` all came from a service spec Q6 forbids, so the
     // click on those rows gets one of these two sentences instead of opening
     // nothing.
     ("about.link_not_configured", "No address is configured for this build."),
-    ("about.update_check_unavailable", "The update check is not available in this build."),
+    ("about.update_check_unavailable", "No project repository is configured for this build."),
     ("settings.log_levels.error", "Error level"),
     ("settings.log_levels.warn", "Warning level"),
     ("settings.log_levels.info", "Information level"),

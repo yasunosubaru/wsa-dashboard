@@ -102,6 +102,14 @@ mod scheduler_model;
 #[path = "config/mod.rs"]
 mod config;
 
+// The update check. Mounted here for its two pure decisions -- reading GitHub's
+// release JSON and comparing two version strings -- both of which can be wrong
+// in a way that is not an error: an empty tag compares as not-newer and the page
+// says "you are up to date", which is exactly what it says when it is right.
+#[cfg(test)]
+#[path = "api/mod.rs"]
+mod api;
+
 // The scheduled-task layer, for the same reason as the two above and `config`:
 // "does `*/5 * * * *` become a MINUTE task with a 5-minute interval" is a
 // question about arithmetic over five strings, and it has to be answerable by a

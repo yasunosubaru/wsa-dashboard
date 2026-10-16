@@ -37,9 +37,19 @@ use std::sync::Arc;
 use slint::Weak;
 use tracing::{debug, info};
 
+use crate::api;
+use crate::app::constants;
 use crate::app::state::AppState;
+use crate::config;
 use crate::i18n;
 use crate::{AboutStrings, AppWindow};
+
+/// What this build calls itself, for the update check's comparison.
+///
+/// The same string `app.rs` puts in the title bar and `startup_info.rs` logs,
+/// read from the one place that cannot disagree with the package: Cargo's own
+/// manifest version. A constant here would be a second copy of it.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn setup(_app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppState>) {
     let _ = app_state;
@@ -157,14 +167,64 @@ pub fn setup_callbacks(app: &AppWindow, app_handle: Weak<AppWindow>) {
         }
     });
 
-    // The update check. P8 brings one that reaches GitHub releases; until then
-    // the page says so rather than opening nothing. A toast, because "no news"
-    // and "we did not look" look identical otherwise.
+    // The update check (P8). A real one now: GitHub's own `releases/latest` for
+    // `PROJECT_REPOSITORY`, on a thread of its own, with the answer delivered to
+    // the event loop.
+    //
+    // **Not a `slint::spawn_local`**, which is what every other handler in this
+    // tree uses: `ureq` is a blocking client and the request is allowed to take
+    // fifteen seconds, so running it on the UI thread's executor would freeze
+    // the window for exactly as long as the network is slow. The shape is
+    // `handlers/scheduler.rs`'s, for the same reason -- `std::thread::spawn` +
+    // `slint::invoke_from_event_loop` -- and the result is a toast either way,
+    // including the failure, because a button that does nothing and a check that
+    // found nothing look identical otherwise.
     app.on_check_update_clicked({
         let handle = app_handle.clone();
         move || {
+            let handle = handle.clone();
             info!("about: update check requested");
-            toast(&handle, i18n::t("about.update_check_unavailable"));
+
+            // Q2: no remote yet, so there is nothing to ask. Said without a
+            // thread and without a socket, and it is a different sentence from
+            // the one a failed request gets -- "this build has no address for
+            // that" and "GitHub did not answer" are not the same problem.
+            if constants::PROJECT_REPOSITORY.trim().is_empty() {
+                toast(&handle, i18n::t("about.update_check_unavailable"));
+                return;
+            }
+
+            // Synchronously, before the thread: the reader pressed a button and
+            // gets an answer to the press immediately.
+            toast(&handle, i18n::t("about.check_update"));
+
+            std::thread::spawn(move || {
+                let result = api::releases::latest_for(constants::PROJECT_REPOSITORY);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(app) = handle.upgrade() else { return };
+                    let message = match result {
+                        Ok(release) => {
+                            // Recorded so the file can say when it last looked,
+                            // which is what `check-time` is for and was, until
+                            // now, a field nothing wrote.
+                            let _ = config::update_user_settings(|user| {
+                                user.check_time = config::stamp_now();
+                            });
+                            if api::releases::version_is_newer(VERSION, &release.tag) {
+                                i18n::tr("about.new_version", &[release.tag.clone()])
+                            } else {
+                                i18n::t("about.up_to_date")
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "the update check failed");
+                            i18n::tr("about.update_check_failed", &[error])
+                        }
+                    };
+                    app.set_task_status_text(message.into());
+                    app.set_task_status_visible(true);
+                });
+            });
         }
     });
 }

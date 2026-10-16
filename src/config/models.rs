@@ -276,9 +276,32 @@ impl Default for SidebarConfig {
     }
 }
 
+/// The `[application]` section, of which this build keeps **one** field.
+///
+/// The reference's section has seven: `name`, `project-repository`,
+/// `project-website`, `app-version`, `setting-version`, `startup-time`,
+/// `device-id`. Six of them describe an *installation* -- two links to show on
+/// the about page, a version string, a per-machine device id, when it was first
+/// started -- and this program keeps that kind of thing in `constants.rs` and in
+/// the log, not in a file a reader can edit. Writing them here would mean two
+/// sources for one fact, and the file's copy would be the stale one.
+///
+/// `setting-version` is the exception, and it is the whole reason the section
+/// exists here: it is the field [`crate::config::migration`] reads to decide
+/// what to bring forward, and it has to be *in the file* for that to work at
+/// all. Its key name, its serde rename and its type are the reference's (Q12).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ApplicationConfig {
+    #[serde(rename = "setting-version", default)]
+    pub setting_version: u8,
+}
+
 /// The whole file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Config {
+    /// One field, the schema version. See [`ApplicationConfig`].
+    #[serde(default)]
+    pub application: ApplicationConfig,
     /// Read once from the OS and written back. See [`SystemConfig`].
     #[serde(default)]
     pub system: SystemConfig,

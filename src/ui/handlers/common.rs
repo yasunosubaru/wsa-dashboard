@@ -96,18 +96,24 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppSta
     // per-tab entries there refreshes the page being switched to (the reference
     // calls `refresh_usb`, `refresh_tasks`, `refresh_mounted_disks` and three
     // fetches from this one handler). Ours now calls three of those four, each
-    // from the block for its own tab above; `ConfigManager` is P8.
+    // from the block for its own tab above.
     //
-    // So the property moves -- `sidebar_collapsed` is `in-out`, and the side bar
-    // binds to it directly -- and the write that would make it survive a restart
-    // arrives with P8's configuration. Declared and connected now so the side
-    // bar's `toggle_collapsed` has somewhere to land, and so nothing has to
-    // change here when it starts doing something.
+    // The write itself is P8's, and it is a read-modify-write on the file rather
+    // than a save of a settings struct this handler holds, for the reason
+    // `settings.rs` gives at length: the window is not the file, and a handler
+    // that saved its own copy of the settings would write back every other
+    // value as it was when the window opened. One field, one write.
     let ah = app_handle.clone();
     app.on_save_sidebar_state(move || {
-        if let Some(app) = ah.upgrade() {
-            let collapsed = app.get_sidebar_collapsed();
-            tracing::debug!(collapsed, "sidebar toggled; persisted in P8");
+        let Some(app) = ah.upgrade() else { return };
+        let collapsed = app.get_sidebar_collapsed();
+        if let Err(error) = crate::config::update_user_settings(|user| {
+            user.sidebar_collapsed = collapsed;
+        }) {
+            // A collapsed side bar that did not survive a restart is not worth
+            // a toast or a failed click. The log is where a reader goes when
+            // they notice, and `settings.rs`'s own failures do the same.
+            tracing::warn!(%error, "could not persist the side bar's collapsed state");
         }
     });
 }

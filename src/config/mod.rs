@@ -39,6 +39,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::{warn, info};
 
+pub mod migration;
 pub mod models;
 
 // Re-exported so a caller says `config::Settings` rather than reaching two
@@ -46,7 +47,9 @@ pub mod models;
 // config` is private and therefore nothing outside it can reach the re-exports
 // -- so the import is unused there by construction, not by accident.
 #[allow(unused_imports)]
-pub use models::{Config, SidebarConfig, TraySettings, UserSettings};
+pub use migration::SETTINGS_VERSION;
+#[allow(unused_imports)]
+pub use models::{ApplicationConfig, Config, SidebarConfig, TraySettings, UserSettings};
 
 /// `~/.wsadashboard` -- the one directory holding the logs and the settings.
 pub fn config_dir() -> PathBuf {
@@ -83,7 +86,21 @@ pub fn load() -> Config {
 /// interesting cases -- a file that does not exist, a file that is not valid
 /// TOML, a file from a newer build -- can be tested without touching the real
 /// one.
+///
+/// Every one of those cases ends the same way: a `Config` with defaults for
+/// whatever was missing, brought forward by [`migration::migrate_config`]. The
+/// migration runs on **every** read, including the ones that read nothing --
+/// which is what makes "the file on disk is a version behind" and "the file on
+/// disk is not there yet" the same amount of work for every caller.
 pub fn load_from(path: &Path) -> Config {
+    let mut config = read_config(path);
+    migration::migrate_config(&mut config);
+    config
+}
+
+/// The read itself, with no migration. Split out so that [`load_from`] has one
+/// exit rather than four.
+fn read_config(path: &Path) -> Config {
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -124,6 +141,28 @@ pub fn save_to(path: &Path, config: &Config) -> Result<(), String> {
         .map_err(|error| format!("could not write {}: {error}", path.display()))?;
     info!(path = %path.display(), "settings written");
     Ok(())
+}
+
+/// Change one field of the settings and write the file back.
+///
+/// The read-modify-write the settings page does inline (`settings.rs:368`) for a
+/// caller that has exactly one thing to say. The reason it reads first is the
+/// reason it is a function here rather than a `config.user.sidebar_collapsed =
+/// x; save(&config)`: the side bar's handler has no `Config` of its own and must
+/// not invent one, or the next Save on the settings page would write back every
+/// other value as it was when *this* handler happened to run.
+///
+/// `modify-time` is stamped for the same reason the page stamps it: a reader who
+/// opens the file should be able to see when it last said something, and a write
+/// that leaves the stamp alone makes the file lie about its own age.
+///
+/// The whole struct is written, including the schema version `load` just
+/// migrated -- which is how a file that was a version behind stops being one.
+pub fn update_user_settings(change: impl FnOnce(&mut UserSettings)) -> Result<(), String> {
+    let mut config = load();
+    change(&mut config.user);
+    config.user.modify_time = stamp_now();
+    save(&config)
 }
 
 /// Days of logs to keep, as the reference's picker offers them, plus anything
@@ -200,11 +239,26 @@ pub fn stamp_now() -> String {
 mod tests {
     use super::*;
 
+    /// What [`load_from`] answers for a file that says nothing: the defaults,
+    /// with the schema stamp the migration puts on top of them.
+    ///
+    /// Spelled as a function rather than as `Config::default()` because the two
+    /// are no longer the same, and the difference is the point: a read brings a
+    /// file -- or the absence of one -- up to this build's schema, and only the
+    /// version field moves. A test that wrote `Config::default()` here would be
+    /// asserting that loading does *not* migrate, which is the opposite of what
+    /// this module now promises.
+    fn migrated_default() -> Config {
+        let mut config = Config::default();
+        crate::config::migration::migrate_config(&mut config);
+        config
+    }
+
     #[test]
     fn a_missing_file_is_the_default_settings() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("nothing.toml");
-        assert_eq!(load_from(&path), Config::default());
+        assert_eq!(load_from(&path), migrated_default());
     }
 
     /// The important one. A settings file that does not parse must not stop the
@@ -215,7 +269,20 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("settings.toml");
         std::fs::write(&path, "this is not = = toml [[[").expect("write");
-        assert_eq!(load_from(&path), Config::default());
+        assert_eq!(load_from(&path), migrated_default());
+    }
+
+    /// And the stamp is the only thing a read adds: a file whose fields are all
+    /// defaults comes back equal to the defaults except for the version.
+    #[test]
+    fn reading_a_file_that_says_nothing_changes_only_the_schema_stamp() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, "[user]\n").expect("write");
+
+        let mut expected = Config::default();
+        expected.application.setting_version = crate::config::SETTINGS_VERSION;
+        assert_eq!(load_from(&path), expected);
     }
 
     /// A file from a newer build, or one a person edited halfway. Everything it
@@ -259,7 +326,59 @@ mod tests {
         config.tray.close_to_tray = false;
 
         save_to(&path, &config).expect("save");
+        // The stamp is the one difference a round trip is allowed to add: a
+        // program that saves what it read writes the migrated version, not the
+        // one it found.
+        config.application.setting_version = crate::config::SETTINGS_VERSION;
         assert_eq!(load_from(&path), config);
+    }
+
+    /// The one live test in this module: **the settings file that is actually on
+    /// this machine**.
+    ///
+    /// Every other test here writes its own file, which is the right way to pin
+    /// a parser and the wrong way to answer "will the file a reader already has
+    /// still load". This one reads the real `~/.wsadashboard/settings.toml`,
+    /// whatever it happens to contain, and asserts the two things the migration
+    /// promises: the read succeeds, and the schema ends up at this build's --
+    /// which for every file that exists today means the chain fired, because
+    /// none of them has a `setting-version` in it.
+    ///
+    /// **Reads only.** A migration that wrote would make this test a test that
+    /// edits the reader's settings, which is not a thing a test may do.
+    ///
+    /// `#[ignore]` because Q8 keeps machine-dependent work out of the suite, and
+    /// because on a machine that has never run this program there is no file
+    /// here to be interesting about.
+    #[test]
+    #[ignore = "reads the real settings.toml; Q8 keeps machine-dependent work out of the suite"]
+    fn the_real_settings_file_loads_and_migrates() {
+        let path = config_path();
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        println!("{} ({} bytes)", path.display(), raw.len());
+        println!("mentions setting-version: {}", raw.contains("setting-version"));
+
+        let config = load_from(&path);
+        println!(
+            "schema v{} -> v{}, sparse-vhd={}, mount-auto-probe={}, ui-language={}",
+            if raw.contains("setting-version") { "?" } else { "0" },
+            config.application.setting_version,
+            config.user.sparse_vhd,
+            config.user.mount_auto_probe,
+            config.user.ui_language,
+        );
+
+        assert_eq!(
+            config.application.setting_version,
+            SETTINGS_VERSION,
+            "the file on this machine did not come forward to this build's schema"
+        );
+        // A file that exists must keep the language it says, whatever the
+        // migration did with the two keys whose meaning changed.
+        assert!(
+            !config.user.ui_language.is_empty(),
+            "the reader's language did not survive the migration"
+        );
     }
 
     /// The directory does not exist on a first run, and refusing to write is

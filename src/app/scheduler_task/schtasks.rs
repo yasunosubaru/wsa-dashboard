@@ -448,20 +448,41 @@ pub fn build_create_args(
 /// string literal are doubled, which is PowerShell's own escape; without it a
 /// display name containing an apostrophe ends the literal and the rest of the
 /// name is executed as PowerShell.
-pub fn build_description_command(task_path: &str, cron_expr: &str) -> String {
+///
+/// **This string contains no `"`, and that is a requirement rather than a
+/// coincidence.** [`build_description_command`] wraps it in one pair of double
+/// quotes for `cmd.exe`, and cmd's parser is what decides whether the `|` in
+/// `$t | Set-ScheduledTask` is a pipe or part of the quoted text. One `"` inside
+/// the script would end that quotation early and hand cmd a pipe. Measured, not
+/// reasoned: the whole shape -- `(schtasks … & powershell -NoProfile -Command
+/// "…") > "log" 2>&1`, on one line -- was run and wrote `cron:0 3 * * *` into a
+/// task's `<Description>`, which then read back out of `/Query /XML`.
+pub fn description_script(task_path: &str, cron_expr: &str) -> String {
     let (folder, name) = match task_path.rfind('\\') {
         Some(pos) => (&task_path[..=pos], &task_path[pos + 1..]),
         None => ("", task_path),
     };
-    let ps = format!(
+    format!(
         "$t = Get-ScheduledTask -TaskPath '{}' -TaskName '{}'; if($t){{ $t.Description = '{}'; $t | Set-ScheduledTask | Out-Null }}",
         folder.replace('\'', "''"),
         name.replace('\'', "''"),
         description_for_cron(cron_expr).replace('\'', "''"),
-    );
+    )
+}
+
+/// [`description_script`] with an interpreter around it, as one `cmd.exe` line.
+///
+/// The line, not a `Command`: the elevated path joins several of these with `&`
+/// into a batch behind one UAC prompt (`elevate::build_elevated_shell`), and
+/// there is no argument vector at that end to put a script into.
+///
+/// No **additional** outer quotes, deliberately. Wrapping the whole thing again
+/// would nest the pair this already has, and the probe above is the standing
+/// evidence that one pair is what cmd needs.
+pub fn build_description_command(task_path: &str, cron_expr: &str) -> String {
     format!(
         "powershell -NoProfile -Command \"{}\"",
-        ps.replace('"', "\\\"")
+        description_script(task_path, cron_expr)
     )
 }
 
@@ -499,11 +520,22 @@ pub fn to_scheduler_task(task: &TaskXml) -> SchedulerTask {
         } else {
             task.arguments.clone()
         },
-        // `false` when `<Enabled>` is absent as well as when it says false.
-        // `TaskXml.enabled` is an `Option` precisely so the difference is
-        // visible here; the card has one switch, so a task that says nothing
-        // renders as a task that is off -- which is also how Windows behaves.
-        enabled: task.enabled.unwrap_or(false),
+        // **Absent means enabled.** Measured, and the measurement is the whole
+        // reason this reads the way it does: `schtasks /Create` writes a task
+        // with no `<Enabled>` element at all and `schtasks /Query /XML` answers
+        // the same for it, while `schtasks /Change /DISABLE` *adds*
+        // `<Enabled>false</Enabled>` and `/ENABLE` takes it away again. Windows's
+        // own default for a task it just created is therefore `true`, and reading
+        // it as `false` -- which this did until a live round trip caught it --
+        // shows every task on the page as switched off and makes the card's
+        // switch dead: it would read `!false`, send `/ENABLE` to a task that is
+        // already enabled, and change nothing.
+        //
+        // `Option` is still the field's type, because `<Enabled>true</Enabled>`
+        // written by the Task Scheduler GUI is a real thing this has to read too.
+        // The three states are: absent (on), explicit true (on), explicit false
+        // (off).
+        enabled: task.enabled.unwrap_or(true),
         status: NOT_REPORTED.to_string(),
         last_run: NOT_REPORTED.to_string(),
         next_run: NOT_REPORTED.to_string(),
@@ -680,11 +712,23 @@ pub fn run_task(task_id: &str, needs_elevation: bool) -> Result<(), String> {
 /// A failure is a `warn` and nothing more: the task has already been created by
 /// the time this runs, so returning an error here would tell the reader their
 /// task was not created when it was. What they lose is the expression in the
-/// edit dialog, and that is what the warning says.
+/// edit dialog, and that is what the warning says. Both streams are logged,
+/// because PowerShell writes its own failures to stdout as often as to stderr.
+///
+/// **No `cmd.exe` in the middle.** It used to be `cmd /c <build_description_-
+/// command(..)>`, and the cron was silently lost on every task this path
+/// created: `Command` quotes its arguments the way `CommandLineToArgvW` expects,
+/// the command line already carried a pair of quotes of its own around the
+/// PowerShell script, and `cmd.exe` -- which does not read `\"` as an escape --
+/// was handed a mangled line. `powershell` never ran, the exit code was reported
+/// as a `warn` in a log nobody reads, and the only symptom was an edit dialog
+/// that opened with an empty schedule. `powershell` takes the script as one
+/// argument instead, which is what an argument vector is for. The live round
+/// trip below is what found it; nothing short of a real `schtasks` could have.
 fn set_task_description(task_name: &str, cron_expr: &str) {
-    let command = build_description_command(task_name, cron_expr);
-    let output = Command::new("cmd.exe")
-        .args(["/c", &command])
+    let script = description_script(task_name, cron_expr);
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-Command", script.as_str()])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
 
@@ -693,7 +737,8 @@ fn set_task_description(task_name: &str, cron_expr: &str) {
             info!("recorded the cron for '{task_name}'");
         }
         Ok(out) => warn!(
-            "could not record the cron for '{task_name}': {}",
+            "could not record the cron for '{task_name}': {} {}",
+            decode_output(&out.stdout).trim(),
             decode_output(&out.stderr).trim()
         ),
         Err(e) => warn!("could not run powershell to record the cron for '{task_name}': {e}"),
@@ -1112,10 +1157,38 @@ mod tests {
         let command = build_description_command(r"\WSA-Dashboard\N", "0 9 * * *");
         assert!(command.starts_with("powershell -NoProfile -Command \""));
         assert!(command.ends_with('"'));
-        // An unescaped inner `"` would end the argument early and the rest of the
-        // script would be read as more arguments to powershell.
+
+        // Exactly one pair of double quotes, and none inside it. This is the
+        // property cmd's parser was measured against: with the script quoted
+        // once, the `|` in `$t | Set-ScheduledTask` is text and the line runs;
+        // with the script quoting itself, the `|` becomes a pipe and the
+        // description is never written. See `description_script`.
+        assert_eq!(command.matches('"').count(), 2, "{command}");
         let inner = &command["powershell -NoProfile -Command \"".len()..command.len() - 1];
         assert!(!inner.contains('"'), "an unescaped quote survived: {inner}");
+        // And the interpreter is not wrapped in a second pair, which is the
+        // nesting `elevate::build_elevated_shell` records the same way.
+        assert!(!command.starts_with('"'), "{command}");
+    }
+
+    #[test]
+    fn the_script_and_the_command_line_say_the_same_thing() {
+        // `set_task_description` runs the script, the elevated batch runs the
+        // command line around it. One PowerShell, two callers, so a test that
+        // the second is the first with an interpreter bolted on.
+        let script = description_script(r"\WSA-Dashboard\N", "0 9 * * *");
+        assert_eq!(
+            build_description_command(r"\WSA-Dashboard\N", "0 9 * * *"),
+            format!("powershell -NoProfile -Command \"{script}\"")
+        );
+        // The caret and the ampersand are cmd's, and cmd is what runs this on
+        // the elevated path: a script containing one would be split in two.
+        for cmd_metacharacter in ['^', '&', '<', '>'] {
+            assert!(
+                !script.contains(cmd_metacharacter),
+                "{cmd_metacharacter} in {script}"
+            );
+        }
     }
 
     // -- TaskXml to the row --------------------------------------------------
@@ -1180,11 +1253,25 @@ mod tests {
         );
     }
 
+    /// The three states of `<Enabled>`, and which way the absent one goes.
+    ///
+    /// This test asserted the opposite until a live round trip against the real
+    /// store went red on it: it read "no element" as "off", and *no element* is
+    /// what `schtasks /Create` writes for a task it has just created and enabled.
+    /// The measurement is in the fixture rather than in a comment, because the
+    /// comment was wrong in exactly the same way.
     #[test]
-    fn a_task_with_no_enabled_element_reads_as_off_and_a_disabled_one_too() {
+    fn a_task_with_no_enabled_element_is_on_and_an_explicit_false_is_off() {
         let mut silent = task_with(r"\WSA-Dashboard\N", "", r"C:\a.exe");
         silent.enabled = None;
-        assert!(!to_scheduler_task(&silent).enabled);
+        assert!(
+            to_scheduler_task(&silent).enabled,
+            "an absent <Enabled> is what schtasks writes for an enabled task"
+        );
+
+        let mut on = task_with(r"\WSA-Dashboard\N", "", r"C:\a.exe");
+        on.enabled = Some(true);
+        assert!(to_scheduler_task(&on).enabled);
 
         let mut off = task_with(r"\WSA-Dashboard\N", "", r"C:\a.exe");
         off.enabled = Some(false);
@@ -1209,6 +1296,106 @@ mod tests {
         assert_eq!(row.command, "");
         assert_eq!(row.arguments, "");
         assert_eq!(row.cron_expr, "");
-        assert!(!row.enabled);
+        // Not a claim about ComHandler tasks: `Default` leaves `enabled` as
+        // `None`, and `None` is on. This one is here so that the four fields'
+        // emptiness is asserted together rather than three of them.
+        assert!(row.enabled);
+    }
+
+    // -- the real task store -------------------------------------------------
+
+    /// One whole round trip against the real `schtasks`: create a task, read it
+    /// back, switch it off and on, run it, delete it, and see it gone.
+    ///
+    /// Every other test in this file stops at the strings this program hands
+    /// `schtasks`, and that is not the same claim. `build_create_args` can
+    /// produce a perfect argument list for a switch Windows spells differently,
+    /// and `cron_from_description` can round-trip a description this program
+    /// wrote and never one `Set-ScheduledTask` accepted. The two claims that need
+    /// a real machine are **the cron in the description** -- this program's own
+    /// design, and the only place the schedule is stored -- and **the read-back
+    /// through `xml.rs`**.
+    ///
+    /// `#[ignore]` because Q8 keeps machine-dependent work out of the suite, and
+    /// because this one *writes*: it creates a task in the real store and takes
+    /// it away again. The id is fixed and deleted before it is used, so a run
+    /// that dies half-way leaves one task that the next run clears rather than a
+    /// folder that grows.
+    ///
+    /// `false` at every `needs_elevation`, and that narrows what this proves.
+    /// The elevated path is one `ShellExecuteExW` away and cannot be exercised
+    /// without a UAC prompt, which no test may ask for -- and the two writes it
+    /// owns cannot be reached without it either, both measured:
+    ///
+    ///   * `schtasks /Create … /RL HIGHEST` answers `ERROR: Access is denied.`
+    ///     unelevated, so a task with the admin box ticked cannot be created from
+    ///     here and this test's `admin_mode` stays `false`. That the *left* side
+    ///     of that works is what `build_create_args`'s own tests pin.
+    ///   * `Set-ScheduledTask` does **not** need elevation, which is why the cron
+    ///     round trip below is real rather than theoretical -- and it is what the
+    ///     description write on the unelevated path is measured against, since
+    ///     the elevated path runs the same PowerShell through `cmd.exe` instead.
+    ///
+    /// What that leaves unproven is the prompt, the `cmd.exe` batch around these
+    /// five calls, and `admin_mode`. What it proves is the other five things: the
+    /// `/Create` argument list, the cron in the description, the read-back through
+    /// `xml.rs`, `/Change /ENABLE|/DISABLE`, `/Run`, `/Delete`, and
+    /// `<Enabled>`'s absent-means-on -- that last one being a bug this test found
+    /// on its first run, when the page would have drawn every enabled task as
+    /// switched off.
+    #[test]
+    #[ignore = "writes to the real task store; Q8 keeps machine-dependent work out of the suite"]
+    fn the_real_task_store_takes_a_task_and_gives_it_back() {
+        const ID: &str = "wsa-dashboard-selftest";
+
+        fn find(id: &str) -> SchedulerTask {
+            list_tasks()
+                .expect("the store reads back")
+                .into_iter()
+                .find(|task| task.task_id == id)
+                .unwrap_or_else(|| panic!("{id} is not in the store"))
+        }
+
+        // Idempotent: whatever an earlier run left behind goes first, and a
+        // leftover is not an error.
+        let _ = delete_task(ID, false);
+
+        let params = CreateTaskParams {
+            display_name: ID.to_string(),
+            command: "cmd.exe".to_string(),
+            // `run_task` below is a real execution, so this one exits at once.
+            arguments: "/c exit 0".to_string(),
+            cron_expr: "0 3 * * *".to_string(),
+            admin_mode: false,
+        };
+
+        create_task(&params, false, None).expect("the store accepted the task");
+
+        let created = find(ID);
+        println!("created: {created:?}");
+        assert_eq!(
+            created.cron_expr, "0 3 * * *",
+            "the cron went into the description and did not come back out"
+        );
+        assert!(created.enabled, "a task Windows just created is enabled");
+        assert_eq!(created.command, "cmd.exe");
+        assert_eq!(created.arguments, "/c exit 0");
+
+        toggle_task(ID, false, false).expect("disable");
+        assert!(!find(ID).enabled, "/Change /DISABLE did not take");
+
+        toggle_task(ID, true, false).expect("enable");
+        assert!(find(ID).enabled, "/Change /ENABLE did not take");
+
+        run_task(ID, false).expect("/Run");
+
+        delete_task(ID, false).expect("/Delete");
+        assert!(
+            !list_tasks()
+                .expect("the store still reads")
+                .iter()
+                .any(|task| task.task_id == ID),
+            "the task survived its own deletion"
+        );
     }
 }

@@ -732,7 +732,21 @@ try {
             # land on network -- a click that succeeded, a picture that looks
             # plausible, and a storage capture filed under the wrong page.
             'go-network-page'  { @{ x = 27; y = 234 } }
-            'go-storage-page'  { @{ x = 27; y = 274 } }
+            # The scheduler page (P7). `sidebar.slint` puts it between network
+            # (line 132) and mount (line 152), and it was switched off until
+            # `tabs.rs` learned a page for index 4 -- so this row did not exist
+            # in any earlier capture and is the first entry here that was never
+            # measured off a picture. It does not need to be: it is the next row
+            # in a 40px list, exactly 234 + 40, and the read-back below is what
+            # turns a wrong guess into a failure rather than into a picture of
+            # the network page filed as the scheduler.
+            'go-scheduler-page' { @{ x = 27; y = 274 } }
+            # Derived, not measured, for the same reason and with the same
+            # read-back: storage is the row *below* the new one and therefore
+            # moves down by exactly the 40px scheduler took. The comment on
+            # `go-install-page` is the record of what happens when an inserted
+            # row's neighbours are not moved with it.
+            'go-storage-page'  { @{ x = 27; y = 314 } }
             # The settings page (P6). Measured, not derived -- and the
             # derivation was wrong twice: 540 (rows counted off a picture
             # taken while `Donate` was still on screen) and then 488 (guessing
@@ -821,6 +835,15 @@ try {
             # The page's primary button. Image 1200x900: 'Add Rule' spans about
             # x 1026..1168, y 828..864, centre (1097, 846) -> logical (731, 564).
             'network-add-rule'      { @{ x = 731; y = 564 } }
+            # The scheduler page's primary button (P7). The same bottom-right
+            # slot `network-add-rule` occupies, because the two pages share the
+            # bottom bar's layout -- but measured off p7-scheduler-tasks.png
+            # rather than assumed from that: 'Add Task' spans about x 853..978,
+            # y 688..728 there, centre (915, 708), which is (732, 566) at this
+            # monitor's 1.25 scale. A pair of pixels right of the network one,
+            # and the two are kept separate on purpose: a shared constant would
+            # be right until one page's bar changed.
+            'scheduler-add-task'    { @{ x = 732; y = 566 } }
             # The home page's first card's chevron. Measured off a 1200x900
             # capture of the `ready` stand-in rather than derived, because the
             # home list sits under a search field whose height is set by the

@@ -381,10 +381,21 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("scheduler.cron_error_fields", "Cron expression must have 5 fields (minute hour day month weekday)"),
     ("scheduler.cron_error_comma", "Comma-separated values are not supported, use single value, *, or */N"),
     ("scheduler.cron_error_step", "Step must be a positive integer"),
-    ("scheduler.cron_error_range", "Cron field value is out of bounds"),
+    // The reference's sentence here is "Cron field value is out of bounds", and
+    // it is used for two different failures: a number outside the field's range
+    // and a field that is not a number at all (`abc`, which `parse_field`
+    // refuses with "Invalid value: 'abc'. Use a single number, *, or */N"). The
+    // mapping is the reference's -- `cron::error_key` has one branch for both --
+    // so the sentence has to say what is true of both.
+    ("scheduler.cron_error_range", "Cron field must be a single number, *, or */N, within that field's range"),
     ("scheduler.error_name_required", "Task name is required"),
     ("scheduler.error_command_required", "Command is required"),
-    ("scheduler.error_name_invalid", "Name must be 60 characters or less and can only contain A-Z, 0-9, -, _, ."),
+    // The reference's is "Name must be 60 characters or less and can only
+    // contain A-Z, 0-9, -, _, .", and the `A-Z` is a trap: this program accepts
+    // lower case too (`is_ascii_alphanumeric`, which is the reference's check as
+    // well). A reader who believes the sentence deletes a working name or
+    // capitalises for nothing.
+    ("scheduler.error_name_invalid", "Name must be 60 characters or less and can only contain A-Z, a-z, 0-9, -, _, ."),
     ("scheduler.error_create_failed", "Failed to create task: {0}"),
     ("scheduler.error_delete_failed", "Failed to delete task: {0}"),
     ("scheduler.error_query_failed", "Failed to query tasks: {0}"),
@@ -820,6 +831,8 @@ pub static OURS: &[&str] = &[
     "network.proxy_save_success",
     "network.target_distro",
     "operation.deleting",
+    "scheduler.cron_error_range",
+    "scheduler.error_name_invalid",
     "settings.auto_shutdown_msg",
     "settings.backup_dir",
     "settings.distro_dir",

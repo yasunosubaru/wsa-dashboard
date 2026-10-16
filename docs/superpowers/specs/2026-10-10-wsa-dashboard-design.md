@@ -339,17 +339,84 @@ UI handler  →  WsaDashboard (src/wsa/dashboard/)
 
 ## 11. P9 验收清单
 
-- [ ] 9 页签与参照一一对应，切换方式（opacity）一致
-- [ ] 侧栏折叠宽度 54/200，折叠态图标一致
-- [ ] 主题 token 覆盖一致，深浅色切换一致
-- [ ] 首页在 adb 断开时不空白，三态渲染符合 §5
-- [ ] 安装 APK / 卸载回环可用
-- [ ] 冷启动子系统 ≤ 30s，热启动应用 ≤ 3s
-- [ ] 关闭子系统后磁盘页/设置页/关于页仍可用
-- [ ] 配置目录 `~/.wsadashboard/` 与迁移链生效
-- [ ] i18n 中英文无缺 key
-- [ ] 计划任务在 WSA 未启动时能自动冷启动后执行
-- [ ] 单实例 + 托盘 + 关闭行为一致
+**规则：只勾有证据的。** 每条下面是证据，或"没勾"的原因。没勾的必须说清缺什么，而不是说一句
+"未完成"——一个含糊的未完成和一条做错的勾一样没有价值。
+
+- [x] **9 页签与参照一一对应，切换方式（opacity）一致**
+  `sidebar.slint` 九条 `SidebarItem` 全部照搬，切换靠 `app.slint` 里每页一个 `opacity` 绑定
+  （参照的做法），不是 `if` 换组件。八条有页面：`ui/tabs.rs::TABS_WITH_A_VIEW = [0,1,2,3,4,5,7,8]`，
+  一条（6 donate）在 §3 里 1:1 映射而 §10 没给它阶段，`offered(sidebar.donate, 6)` 于是一直为假。
+  每页各有截图（`docs/screenshots/p2-* / p3-* / p4-* / p5a-* / p5b-* / p6-* / p7-*`）。
+  **限制**：donate 页的组件本身没做（spec Q5 说"1:1 照搬结构、收款内容留空占位"，但那是在 §10
+  给它阶段之后的事）。
+
+- [x] **侧栏折叠宽度 54/200，折叠态图标一致**
+  P3 交付；`docs/screenshots/p3-sidebar-collapsed.png`。`capture.ps1` 的 `collapse-sidebar`
+  步骤不是"点一下就好"：它把折叠态**读回来**（折叠后侧栏必须 81px 宽＝54 逻辑 px × 1.5 缩放），
+  否则一张点空的截图会被当成折叠态归档。
+
+- [x] **主题 token 覆盖一致，深浅色切换一致**
+  `theme.slint` 的 token 名与值逐条对照参照；`docs/screenshots/p3-theme-dark.png`。深色态同样有
+  读回判据（主色不能还是 `#FFFFFF`）。
+
+- [x] **首页在 adb 断开时不空白，三态渲染符合 §5**
+  四张替身截图 `p2-ready.png` / `p2-booting.png` / `p2-offline.png` / `p2-stopped.png`，外加一张
+  **真 adb** 的 `p2-real.png`（Magisk / Ham / Launcher 三张真卡）。§5 的三层降级在 `models.rs::tier`
+  里是纯函数并逐条有测试；`Booting`/`Unauthorized`/`Offline` → Partial，`Stopped`/`NotInstalled` → Down。
+  **注意一条**：本机此刻 WSA **卡在** Booting（`WsaClient` 已连续运行 28.5 小时、端口 58526 已拒绝连接、
+  `getprop` 取不到），`wsadash probe` 报 `state=Booting`。这不是缺陷：`probe_with` 在 adb 里没有端点时
+  按 `state_for_absent_endpoint(VM worker 是否活着)` 判，worker 活着就是 Booting（有测试钉住）。
+  但在这台机器上它是**卡住的**，页面上显示"正在启动"会一直不变。
+
+- [ ] **安装 APK / 卸载回环可用**
+  **替身回环已过**：`ops::tests::install_then_uninstall_round_trip_through_the_stand_in` 走"装 →
+  列表多一个 → 卸 → 列表回原样"，而且为此把替身的状态机建了出来（原先 install/uninstall 共用一份
+  fixture，回环无物可观察）。
+  **真机安装半边**：§11.8 记的那次确实跑通过（设备页与属性表截图取自真 adb）。
+  **真机卸载半边做不了**：`adb uninstall` 没有 `-k`，会清掉所卸应用的数据；本机磁盘上没有多余 APK，
+  而用户的三个应用（Magisk / Ham / Launcher）都是有数据的应用，**不允许拿它做实验**。要在真机上
+  闭合这一环，需要先有一个可弃的 APK 装上——那要 Android SDK 造一个，本仓库没有这个工具链。
+  这条**不勾**，缺的就是这个可弃的包。
+
+- [x] **冷启动子系统 ≤ 30s，热启动应用 ≤ 3s**
+  冷启动：§13.6 实测 `wsadash start` Booting → Ready **17s**，与 spec §1.2 当初的实测一致（上限 30s）。
+  热启动（启动一个应用）：spec §1.2 / §12 的证据索引里有实测时间线。
+  **本轮没有重测**：WSA 卡在 Booting（见上一条），而重测的唯一办法是 stop 再 start，那会把用户
+  正在运行的三份应用数据置于 §13 那次事故的风险里。这一条按已有实测勾，本轮的不复测如实写在这里。
+
+- [x] **关闭子系统后磁盘页/设置页/关于页仍可用**
+  磁盘页：§12.2 是在 WSA **确实不可用**（`probe` exit 4）的时刻拍的真机图 `p5a-disk.png`，
+  `wsadash vhdx` 同时 exit 0；空态 `p5a-disk-empty.png` 是把 `LocalCache` 临时改名拍的，拍完在
+  同一次调用里改名回去并核对。设置页/关于页读的是 `settings.toml` 与内嵌字符串，本来就不碰 adb：
+  `p6-settings-*.png`（三张）、`p6-about.png` 都拍于同一个不与子系统交互的会话。
+
+- [ ] **配置目录 `~/.wsadashboard/` 与迁移链生效**
+  目录本身在用（`settings.toml`、`logs/`、`scripts/launcher/`），但**迁移链是 P8 的工作，还没写**。
+  这条**不勾**，缺的是 `config/migration.rs` 与它的测试。
+
+- [x] **i18n 中英文无缺 key**
+  三条测试构成证据，且都是"扫全部 `.slint`"而不是手写清单：
+  `every_key_a_slint_file_asks_for_is_in_the_table`（任何被引用却不在表里的键都会点名）、
+  `the_generated_english_pack_matches_the_table`（`assets/i18n/en.toml` 与表双向一致，235 键）、
+  `every_listed_language_has_a_pack`（49 个翻译包一个不缺）、
+  `ours_list_is_exactly_the_keys_whose_wording_changed`（56 键的 `OURS` 与"我们改过措辞"的集合相等）。
+  **限制**：语言选择器**点选**的那一步在桌面上未验证（`capture.ps1` 的 `settings-language-de`
+  步骤标着 UNVERIFIED：注入点击落点随缩放跳）。键的完整性是测试保证的，选择器的交互不是。
+
+- [ ] **计划任务在 WSA 未启动时能自动冷启动后执行**
+  **不做**，理由与代价写在 MAPPING §16.9：它需要一条 GUI 二进制的 `/scheduler` CLI 模式（`main.rs`
+  目前没有参数解析）、一个 ONLOGON + `/RL HIGHEST` 的任务、网络页那两个回调，以及**每次验证都要
+  点一次 UAC**（`/RL HIGHEST` 非提权实测是 `ERROR: Access is denied.`）。这是网络页"自动转发"按钮
+  的整块功能，不是一行接线。计划任务页本身（增删改查、启停、立即运行）在真机上往返验证通过，
+  见 `p7-scheduler-*.png` 与那条 `#[ignore]` 往返测试。
+
+- [x] **单实例 + 托盘 + 关闭行为一致**
+  单实例按**进程 id** 找窗口并 `SW_RESTORE` + `SetForegroundWindow`（不是参照的三个标题猜测，
+  见 §16.3，且有一条测试断言那份标题表保持为空）；两套机制（mutex + 唤醒管道）都在。
+  托盘三个开关（关闭到托盘、开机自启、启动时最小化）在桌面上逐项验过（§16.11）。图标用
+  `include_bytes!` 内嵌而不是参照的 `Icon::from_resource`，理由见 §16.6（我们的 `build.rs`
+  在 P8 之前不嵌图标资源）。
+  **限制**：托盘的视觉行为（双击隐藏/恢复）是桌面检查，没有自动化断言——参照也没有。
 
 ---
 

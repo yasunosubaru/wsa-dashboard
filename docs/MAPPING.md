@@ -1292,25 +1292,135 @@ minimized、`is_window_visible = false`；非 silent 分支起一条后台线程
 理由和 `scheduler_task/models.rs`、`config/mod.rs` 一样：挂载只让测试可见，句柄那半边在这里
 是"构造上不可达"，不是死代码。现在这 5 条测试在跑，330→336。
 
-### 16.8 未做：计划任务页的语义（Task 5）
+### 16.8 计划任务页的语义：没有发行版，所以"命令"是 adb 命令
 
 参照的计划是"在某个 WSL 发行版里跑一条命令"，对应物是"在 WSA 里跑一条 adb 命令"——我们没有发行版
-维度。参照的 cron 校验、`short_filename`、错误文案全部要重新对齐；`1,5` / `1-5/2` 无法表达（见
-16.1）。`is_helper_installed`（P5b 留下的悬空项，网络页的防火墙勾选框等它）的判据是"系统里有没有
-名为 `wsadashboard-scheduler` 的计划任务"，一次 `/Query` 就知道，且要能区分"任务不存在"和
-"任务存在但失败"。
+维度。参照的 cron 校验、`short_filename`、错误文案在 Task 4/5/6 里逐条对齐，结论是**它们基本原样成立**，
+因为两边约束的是同一件事（Windows 的计划任务），而不是各自的产品：
 
-### 16.9 P7 验证到什么程度
+- `short_filename`（末段路径、超 32 字符截到 29 加 `...`）原样搬，只把**字节切片改成按字符**：参照的
+  `&name[..29]` 在非 ASCII 名字上 panic，而本程序带五十种语言。ASCII 名字上两者完全相同。
+- 名称规则（≤60 字符、`A-Za-z0-9-_.`）原样搬。这不是风格规则：名字进 `schtasks /TN`，一个反斜杠
+  就是一层文件夹、一个冒号就是驱动器。
+- cron 方言的那五条错误句子原样搬，并且新增一条 `the_prefixes_still_match_what_the_parser_says`：
+  它把 `parse_cron` **真实产出**的消息喂给 `cron::error_key`，所以改文案会先在测试里失败，而不是先
+  变成德语窗口里的一句英文。
+- `scheduler.error_create_failed` 等的 `{0}` 占位符是**用**的（`i18n::tr`），不是参照那样
+  `format!("{}: {}", t(key), e)` 拼在占位符后面——那会读出 "Failed to create task: {0}: 原因"。
+- 参照硬编码成英文的两句 `Toggle failed:` / `Run failed:` 在这里是键（`error_toggle_failed` /
+  `error_run_failed`），文件选择器的标题也是（`dialog_select_command`，与参照同字面值）。
+- `cron_error_range` 被参照同时用于"越界"和"根本不是数字"两种失败，而句子写的是前者。我们保留同样的
+  映射（`error_key` 的第五条分支），把句子改成两种都成立的说法，这条因此进了 `OURS`。
 
-- **Task 1**：`schtasks` 解析器在**本机真实的 219 个任务**上跑通（102 Exec + 119 ComHandler），
-  314 单测 + 1 条实机测试。
-- **Task 2**：336 之前是 330 全绿；本机真实 `ver` 输出解析成 `10.0.26300.9457`；`cargo check
-  --bin wsadashboard` 零 error 零 warning。
-- **Task 3**：336 passed / 0 failed / 5 ignored。托盘的视觉行为（双击隐藏/恢复、关窗进托盘、
-  开机自启真的写进 Run 键）是**桌面检查**，按 §8 的办法手工验证。
-- **沙箱限制**：本轮 `schtasks.exe` 被安全策略拦下（`PROGRAM BLOCKED BY SECURITY POLICY`），
-  所以 Task 1 那条实机测试在这个会话里跑不了——不是代码问题。要跑它得从
-  Security Center → Command Security 里把 `schtasks.exe` 移出程序黑名单。
-- **Task 4/5/6 未做**：计划任务页的视图层（参照约 1260 行：`scheduler_view.slint` 157 +
-  `scheduler_card.slint` 280 + `scheduler_dialog.slint` 322 + `handlers/scheduler.rs` 504）、
-  接线与 `is_helper_installed`、以及本节的验收勾选。
+**`scheduler_error` 的第三个空态：不加。** 参照填了它、视图从不渲染它，于是"查询失败"和"没有任务"
+在屏幕上是同一个画面（`app.slint` 那条属性的注释也这么记）。视图只有两个空态，加第三个就是**新增
+参照没有的组件**，P9 明令不许。所以这里用现成的窗口级气泡：失败时同时填 `scheduler_error`（保持与
+参照逐字段可对照）并弹一条带原因的提示，成功时把它清空。屏幕上于是分得清，而视图层一行没动。
+
+**没照搬的死字段**：`trigger_summary` 参照声明了却从没填过，卡片也不渲染；`status`/`last_run`/
+`next_run` 是 `N/A`，因为 XML 里根本没有任务状态（`<StartBoundary>` 是配置值，不是下次触发时刻）。
+
+### 16.9 悬空项：网络页的"自动转发"辅助任务（P5b 留下的那个）
+
+`network_is_helper_installed` 在 P5b 里被硬编码成 `true`，用来**隐藏**参照那个"Auto-Start
+Forwarding"按钮，因为 `adb forward` 不需要参照那个提权 helper，于是没有东西可装。P5b 的注释说
+"P7 的计划任务会给这个按钮一份真活：重启后重新加映射"。
+
+**这一项没有实现，这是决定而不是遗漏。** 它需要的东西和计划任务页不共用一条代码路径：
+
+1. GUI 二进制的一条 CLI 模式（Q25 的 `/scheduler`），它得先读网络规则、必要时**冷启动 WSA**、
+   再逐条 `adb forward`/`reverse`。`main.rs` 目前完全没有参数解析，这半条也要一起写。
+2. 一个 `\WSA-Dashboard\` 下固定名字的 ONLOGON + `/RL HIGHEST` 任务去跑它，以及
+   `check_task_exists`。`/RL HIGHEST` 非提权时是 `ERROR: Access is denied.`（本轮实测），所以注册
+   必须走提权批次，也就意味着**每次验证都要点一次 UAC**。
+3. 网络页那两个回调（`check_network_task_status` / `initialize_task_clicked`）与把
+   `network_is_helper_installed` 的默认值改回 `false`。
+
+它自己的设计、测试和实机验证（登入触发器 + WSA 关机状态）是一整块工作，不是一行接线。**写一半比
+记下来更糟**：一个注册了却不会冷启动的任务，会在每次登入时静默失败。所以它留在 §11 的第 10 条
+上不勾，等下一轮。
+
+### 16.10 实机往返抓到的两个缺陷（只有真机能看到）
+
+`#[ignore]` 的 `the_real_task_store_takes_a_task_and_gives_it_back`（建→读→停→启→跑→删）第一次
+跑就红了两处。两处都在**读写真实任务库**的路径上，任何单测都碰不到——单测读的是我们自己造的结构体。
+
+**启用态读反了。** `schtasks /Query /XML` 对**启用**的任务根本不写 `<Enabled>`：`cmd /c` 原始字节
+取过，`schtasks /Create` 造出来就是空 `<Settings>`，`Get-ScheduledTask` 说
+`settings.Enabled=True, state=Ready`；`/Change /DISABLE` 才**加上** `<Enabled>false</Enabled>`，
+`/ENABLE` 又去掉。而 `to_scheduler_task` 原先写 `unwrap_or(false)`，注释还说"什么都没写就等于关着，
+Windows 也是这样"。**Windows 不是这样。** 后果：页面上每个启用任务画成关闭，卡片那个开关变成死键
+（读到 false → 发 `!false=true` 的 `/ENABLE` → 本来就启用 → 什么都不变 → 永远显示关闭）。改成
+`unwrap_or(true)`，三种状态各一条断言；原来那条把 bug 当规格的测试换掉了。
+
+**cron 写不进任务描述（非提权路径）。** 描述由 `powershell -NoProfile -Command "<脚本>"` 写，而当时
+外面套了一层 `Command::new("cmd.exe").args(["/c", 整条命令行])`：`Command` 按 `CommandLineToArgvW`
+的规则给整条命令行加引号、把内部 `"` 转义成 `\"`，而 **cmd 不把 `\"` 当转义**——cmd 收到撕碎的命令行，
+`powershell` 根本没跑，非零退出码被记成一条 `warn`。症状只是编辑对话框里日程是空的。现在
+`powershell` 直接以参数向量收脚本。
+
+**提权那条是好的，而且是量过的**：把 `build_elevated_shell` 的形状（单行、
+`(A & powershell -NoProfile -Command "…") > "log" 2>&1`）原样写进 `.cmd` 跑了一遍，
+`<Description>cron:0 3 * * *</Description>` 确实进了任务并能从 `/Query /XML` 读回来。也就是说 cmd 把
+双引号里的 `|` 当文本——而 `description_script` **不含任何 `"`** 正是它的前提，所以这件事现在是测试
+断言（`matches('"').count() == 2`、不含 `^&<>`），不是巧合：多一个引号，`$t | Set-ScheduledTask`
+里的 `|` 就变成管道。
+
+顺带量到的两条：`/Create … /RL HIGHEST` 非提权 = `ERROR: Access is denied.`（所以"以管理员身份运行"
+只能由提权批次兑现，实机测试里 `admin_mode` 保持 false）；`Set-ScheduledTask` **不需要提权**（所以
+描述往返是真量的）。
+
+还有一条**不是缺陷但值得记**：`schtasks /Create /TR "C:\Program Files\WSA\adb.exe"` 不加内层引号时，
+Windows 把命令存成 `C:\Program`、参数存成 `Files\WSA\adb.exe`——第一张截图里那张卡片因此显示
+"Program"。页面如实呈现了任务库里的东西；这正是 `escape_tr_args` 存在的理由（它只在值含空格或引号时
+才加引号——给不含空格的 `notepad.exe` 加引号会把引号写进命令里，实测确认）。
+
+### 16.11 P7 验证到什么程度
+
+- **Task 1**：`schtasks` 解析器在**本机真实的 219 个任务**上跑通（102 Exec + 119 ComHandler）。
+- **Task 2**：本机真实 `ver` 输出解析成 `10.0.26300.9711`；单实例按进程 id 找窗口。
+- **Task 3**：托盘三个开关生效（桌面检查，按 §8 的办法）。
+- **Task 4**：视图层三个 slint 文件照搬，卡片只读六个字段；空态文案按 WSA 语义改写，命令占位符从
+  参照的 `D:\linux\scripts\example.bat` 换成 `am start -n com.android.settings/.Settings`。
+- **Task 5**：接线十个回调。图片三张：`docs/screenshots/p7-scheduler-list.png`（空态）、
+  `p7-scheduler-tasks.png`（两条真实任务：一条启用=绿点、一条禁用=灰点+淡出）、
+  `p7-scheduler-dialog.png`（对话框）。侧栏"Task scheduler"条目亮起、默认顺序在 Network 与 Storage
+  之间——`tabs.rs` 加 4 之后 `settings.rs:237` 早就接好的 `offered(sidebar.scheduler, 4)` 才放行。
+- **`is_helper_installed` 未做**：见 16.9。
+- **沙箱限制**：本会话早前 `schtasks.exe` 被 `PROGRAM BLOCKED BY SECURITY POLICY` 拦过；现在不再受限，
+  7 条实机测试全部跑过。
+- **测试基线**：388 passed / 0 failed / 7 ignored，`-- --ignored` 7 passed / 0 failed；
+  `cargo build --release --bin wsadashboard` 零 error 零 warning。
+
+---
+
+## 17. P9 验收状态（2026-10-17）
+
+spec §11 的 11 条逐条回写在那份文件里（每条带证据或未勾原因），这里是汇总与**剩下的三个缺口**。
+
+**已勾 8 条**：9 页签与 opacity 切换、侧栏 54/200、主题 token、首页三态、冷/热启动计时、关闭子系统后
+磁盘/设置/关于页可用、i18n 无缺键、单实例 + 托盘 + 关闭行为。每条的证据链在那份文件里，不重复。
+
+**未勾 3 条，以及各自缺什么：**
+
+| 条目 | 缺的东西 | 为什么现在不做 |
+|---|---|---|
+| 安装 APK / 卸载回环 | 一个**可弃的 APK** | 替身回环已过；真机安装半边早前跑通过；真机卸载半边会清用户应用数据（`adb uninstall` 没有 `-k`），而本机磁盘上没有多余 APK。要闭合需要一个 Android SDK 造出来的包，本仓库没有这条工具链 |
+| 配置目录与迁移链 | `config/migration.rs` 与测试 | **P8 的工作**，还没写。目录本身（`settings.toml` / `logs/` / `scripts/launcher/`）在用 |
+| 计划任务冷启动 | `/scheduler` CLI 模式 + ONLOGON 任务 + 网络页两个回调 | 见 §16.9：整块功能，且每次实机验证要点一次 UAC |
+
+**一条环境事实，会影响上述任何"真机通过"的读法**：写这份汇总时本机 WSA **卡在 Booting**——
+`WsaClient` 连续运行 28.5 小时、端口 58526 已拒绝连接、`getprop` 取不到值。`wsadash probe` 报
+`Booting` 是**设计如此**（`probe_with` 在 adb 没有端点时按 VM worker 是否活着判，有测试），
+但在这台机器上它不会自己好。后果：
+
+- `running_apps_sees_a_real_running_app` 这条实机测试会打 `skipping: WSA is Booting` 后**通过**——
+  跳过和通过长得一样（§11.8 记过同一件事）。看到 7 passed 时要知道其中这一条是跳过的。
+- 热启动应用的计时**本轮没有重测**；重测要 stop 再 start，而那会把用户三份应用数据放进 §13 那次
+  事故的风险里，为一条计时数字不值得。
+
+**测试基线（本轮结束）**：`cargo test --release --bin wsadash` → 388 passed / 0 failed / 7 ignored；
+`-- --ignored` → 7 passed / 0 failed（其中 1 条是上面那个跳过）；`cargo build --release --bin
+wsadashboard` 9m35s，零 error 零 warning。
+
+

@@ -15,6 +15,12 @@
 *.log
 /tmp/
 
+# Build outputs of `build.rs`'s icon block (P8): derived from assets/logo/logo.png
+# on every build, and a diff of a generated 132 KB ICO is not a review of
+# anything. `logo.png` itself IS tracked -- it is the source.
+/assets/logo/logo.ico
+/assets/logo/icon.rc
+
 # Assistant workspace data (session notes, memory). Local to this machine.
 /.workbuddy-ai/
 

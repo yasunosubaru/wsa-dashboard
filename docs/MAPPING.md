@@ -1398,15 +1398,15 @@ Windows 把命令存成 `C:\Program`、参数存成 `Files\WSA\adb.exe`——第
 
 spec §11 的 11 条逐条回写在那份文件里（每条带证据或未勾原因），这里是汇总与**剩下的三个缺口**。
 
-**已勾 8 条**：9 页签与 opacity 切换、侧栏 54/200、主题 token、首页三态、冷/热启动计时、关闭子系统后
-磁盘/设置/关于页可用、i18n 无缺键、单实例 + 托盘 + 关闭行为。每条的证据链在那份文件里，不重复。
+**已勾 9 条**：9 页签与 opacity 切换、侧栏 54/200、主题 token、首页三态、冷/热启动计时、关闭子系统后
+磁盘/设置/关于页可用、**配置目录与迁移链（P8，§18.1–18.2）**、i18n 无缺键、单实例 + 托盘 + 关闭行为。
+每条的证据链在那份文件里，不重复。
 
-**未勾 3 条，以及各自缺什么：**
+**未勾 2 条，以及各自缺什么：**
 
 | 条目 | 缺的东西 | 为什么现在不做 |
 |---|---|---|
 | 安装 APK / 卸载回环 | 一个**可弃的 APK** | 替身回环已过；真机安装半边早前跑通过；真机卸载半边会清用户应用数据（`adb uninstall` 没有 `-k`），而本机磁盘上没有多余 APK。要闭合需要一个 Android SDK 造出来的包，本仓库没有这条工具链 |
-| 配置目录与迁移链 | `config/migration.rs` 与测试 | **P8 的工作**，还没写。目录本身（`settings.toml` / `logs/` / `scripts/launcher/`）在用 |
 | 计划任务冷启动 | `/scheduler` CLI 模式 + ONLOGON 任务 + 网络页两个回调 | 见 §16.9：整块功能，且每次实机验证要点一次 UAC |
 
 **一条环境事实，会影响上述任何"真机通过"的读法**：写这份汇总时本机 WSA **卡在 Booting**——
@@ -1419,9 +1419,13 @@ spec §11 的 11 条逐条回写在那份文件里（每条带证据或未勾原
 - 热启动应用的计时**本轮没有重测**；重测要 stop 再 start，而那会把用户三份应用数据放进 §13 那次
   事故的风险里，为一条计时数字不值得。
 
-**测试基线（本轮结束）**：`cargo test --release --bin wsadash` → 388 passed / 0 failed / 7 ignored；
-`-- --ignored` → 7 passed / 0 failed（其中 1 条是上面那个跳过）；`cargo build --release --bin
-wsadashboard` 9m35s，零 error 零 warning。
+**测试基线（P8 结束）**：`cargo test --release --bin wsadash` → **408 passed / 0 failed / 9 ignored**；
+`-- --ignored` → **9 passed / 0 failed**，其中：
+`running_apps_sees_a_real_running_app` 仍然**跳过**（上面那条环境事实；它在 `--nocapture` 里打出
+`skipping: WSA is Booting` 然后报 ok——§11.8 记过跳过和通过长得一样，所以这里点名）；其余 8 条是真
+通过，包括 P8 新增的三条：本机真实 `settings.toml` 的迁移（§18.2）、真的 `api.github.com` 回答了
+`rust-lang/rust` 的 `tag="1.99.1"`（§18.3）、以及 P7 那条真实任务库往返。
+`cargo build --release --bin wsadashboard` 14m29s，零 error 零 warning，exe 带图标与版本资源（§18.5）。
 
 ---
 
@@ -1516,6 +1520,28 @@ releases 的更新检查。
 不是一个 handler 自己攒一份 `Config`——后者会在设置页下一次保存时，把其它每个值写回成"这个 handler
 跑的时候"的样子。`modify-time` 一并盖上，理由和设置页盖它的理由一样：一个不动时间戳的写入会让文件
 对自己的年龄撒谎。
+
+### 18.5 打包：图标与版本资源进 exe，而**图标还是参照的**
+
+参照 `build.rs:45-139` 的图标块照搬进来（六个尺寸 16/32/48/64/128/256 + `Lanczos3`——Windows 按 DPI
+挑条目，只有 256 没有 16 的 exe 在任务栏是糊的、在 Alt-Tab 里是尖的），写出 `assets/logo/logo.ico`
+和 `assets/logo/icon.rc`，再用 `embed-resource` 编进 exe。同时补上参照第 4 行
+`#[path = "src/app/constants.rs"] mod constants;`——那块要读 `APP_NAME` / `APP_ID` /
+`COMPANY_NAME` / `LEGAL_COPYRIGHT` / `PROJECT_REPOSITORY`，这正是那份文件从 P0 就在的原因。
+
+`FileDescription` 从参照的 `"{} - Management Tool for WSL"` 改成
+`"{} - Management Tool for Windows Subsystem for Android"`。
+
+**两处如实记下的账：**
+
+1. **图标是参照的 artwork，不是新画的。** spec Q6 说开发期复用参照 ico、P8 打包前换新；**没有新图标
+   可换**，所以 `assets/logo/logo.png` 是参照那张 256×256 的副本。许可上干净（上游 GPL-3.0，这里
+   GPL-3.0），而且一旦有东西可换，改的就是这一个文件。在换掉之前，这个 exe 在任务栏里和参照长得一样。
+2. `assets/logo/logo.ico` 与 `icon.rc` 是**构建产物**（每次 build 从 png 重新生成），已进 `.gitignore`；
+   `logo.png` 本身**入库**，它是源。
+
+托盘图标不共用这张：`mini.png`（64×64）是 `include_bytes!` 进 `tray-icon` 的那张，见 §16.6。
+
 
 
 

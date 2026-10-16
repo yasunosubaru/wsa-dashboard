@@ -390,9 +390,19 @@ UI handler  →  WsaDashboard (src/wsa/dashboard/)
   同一次调用里改名回去并核对。设置页/关于页读的是 `settings.toml` 与内嵌字符串，本来就不碰 adb：
   `p6-settings-*.png`（三张）、`p6-about.png` 都拍于同一个不与子系统交互的会话。
 
-- [ ] **配置目录 `~/.wsadashboard/` 与迁移链生效**
-  目录本身在用（`settings.toml`、`logs/`、`scripts/launcher/`），但**迁移链是 P8 的工作，还没写**。
-  这条**不勾**，缺的是 `config/migration.rs` 与它的测试。
+- [x] **配置目录 `~/.wsadashboard/` 与迁移链生效**
+  目录在用（`settings.toml`、`logs/`、`scripts/launcher/`）。迁移链是 P8 的交付：
+  `[application] setting-version` + `SETTINGS_VERSION = 1` + `config/migration.rs` 的 v0→v1 步
+  （重置两个意思变过的键：`sparse-vhd` / `mount-auto-probe`，见 MAPPING 15.4），读的时候带前、写的时候
+  盖戳，**读永不写盘**。证据分两层：
+  - 8 条单测：无版本＝0 并被盖戳、两个键被重置而不是相信、同版本原样不动、**更高版本原样不重写**、
+    越过某步就不跑那步、链尾一定盖戳。
+  - 1 条 `#[ignore]` 实机测试读**本机真实的** `settings.toml`（只读）：
+    `615 bytes / mentions setting-version: false / schema v0 -> v1, sparse-vhd=false,
+    mount-auto-probe=false, ui-language=en` —— 这份文件确实是预 P8 的，链在它上面真的跑了，读者的
+    语言没有丢。这比"自己写一个 v0 文件再读它"强的地方在于：后者只证明我写的那个文件。
+  **限制**：只有一条步，因为只有一次"意思变过"的历史（P6 那次）。链的机制（守卫、盖戳、拒降级）
+  是齐的，下一条步有地方可挂。
 
 - [x] **i18n 中英文无缺 key**
   三条测试构成证据，且都是"扫全部 `.slint`"而不是手写清单：

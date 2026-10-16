@@ -67,6 +67,14 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppSta
         if tab == 3 {
             crate::ui::handlers::network::refresh(ah.clone(), app_state.clone());
         }
+        // Tab 4 is the scheduler page, and what it shows is the task store.
+        // `schtasks` is the only reader of it, so this is where the list is
+        // asked for: the page is P7's and the answer changes without this
+        // program's involvement (the Task Scheduler, a logon trigger, another
+        // user), so a list read once at startup would be a page that lies.
+        if tab == 4 {
+            crate::ui::handlers::scheduler::refresh(ah.clone(), app_state.clone());
+        }
         // Tab 7 is the settings page, and what it shows is the settings file.
         // There is nothing to fetch from a subsystem -- but a file the reader
         // edited by hand between two visits should be what they see when they
@@ -87,8 +95,8 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<AppSta
     // The reference persists this through `ConfigManager`, and each of its
     // per-tab entries there refreshes the page being switched to (the reference
     // calls `refresh_usb`, `refresh_tasks`, `refresh_mounted_disks` and three
-    // fetches from this one handler). Ours has neither yet: `ConfigManager` is
-    // P6 and every one of those pages is P4 or later.
+    // fetches from this one handler). Ours now calls three of those four, each
+    // from the block for its own tab above; `ConfigManager` is P8.
     //
     // So the property moves -- `sidebar_collapsed` is `in-out`, and the side bar
     // binds to it directly -- and the write that would make it survive a restart

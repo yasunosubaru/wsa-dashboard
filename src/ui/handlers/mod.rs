@@ -16,6 +16,7 @@
 //!   `settings` the settings page, its language picker and `settings.toml` (P6)
 //!   `about`    the about page -- the reference's is mostly a fetch this build
 //!              does not make (spec Q6), and what is left is here (P6)
+//!   `scheduler` the scheduled-task page (P7)
 //!
 //! The rest arrive with the pages that own them. The reference's `setup`
 //! signature is kept so that adding one is one line rather than a rethink.
@@ -45,6 +46,7 @@ pub mod device;
 pub mod disk;
 pub mod home;
 pub mod network;
+pub mod scheduler;
 pub mod settings;
 pub mod window;
 
@@ -59,6 +61,7 @@ pub async fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, app_state: Arc<
     settings::setup(app, app_handle.clone(), app_state.clone());
     about::setup(app, app_handle.clone(), app_state.clone());
     about::setup_callbacks(app, app_handle.clone());
+    scheduler::setup(app, app_handle.clone(), app_state.clone());
     common::setup(app, app_handle.clone(), app_state.clone());
     window::setup(app, app_handle.clone());
 }

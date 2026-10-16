@@ -36,7 +36,7 @@
 //! | P7 | 4 | task scheduler |
 //! | — | 6 | donate: spec section 3 maps it 1:1, but section 10 assigns it to no
 //! phase, so it stays out until something does |
-pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2, 3, 5, 7, 8];
+pub const TABS_WITH_A_VIEW: &[i32] = &[0, 1, 2, 3, 4, 5, 7, 8];
 
 /// The nine entries a `SidebarItem` can select, whatever has a page.
 ///
@@ -66,22 +66,22 @@ pub fn has_a_view(tab: i32) -> bool {
 mod tests {
     use super::{TABS_WITH_A_VIEW, has_a_view, is_sidebar_entry};
 
-    /// Six pages behind nine entries, and exactly which six.
+    /// Seven pages behind nine entries, and exactly which seven.
     ///
     /// The list is asserted rather than inferred, and the loop over all nine is
     /// what ties it to `is_sidebar_entry` -- a value that reached `has_a_view`
     /// for an index no sidebar item can select would pass an `assert_eq` on the
-    /// list and still be wrong. Three of the nine still open onto nothing, which
-    /// is the planned state of P6's Task 5 and P7; see the table on
-    /// `TABS_WITH_A_VIEW`.
+    /// list and still be wrong. Two of the nine still open onto nothing: donate,
+    /// which spec section 10 assigns to no phase at all, and the one entry the
+    /// side bar offers that no phase has claimed.
     ///
     /// Renamed each time an index is added, because the old name *is* the
     /// assertion: a test called `..._and_storage_...` that also has a page for
     /// settings is a test whose name is now a partial statement, and a partial
     /// statement in a test name is read as the whole truth.
     #[test]
-    fn every_built_page_has_one_and_the_two_unbuilt_ones_do_not() {
-        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2, 3, 5, 7, 8]);
+    fn every_built_page_has_one_and_the_unbuilt_one_does_not() {
+        assert_eq!(TABS_WITH_A_VIEW, &[0, 1, 2, 3, 4, 5, 7, 8]);
         for tab in 0..=8 {
             assert_eq!(
                 has_a_view(tab),
@@ -118,17 +118,19 @@ mod tests {
         assert!(has_a_view(7));
     }
 
-    /// The three entries that still lead nowhere, named. A test that asserts a
+    /// The one entry that still leads nowhere, named. A test that asserts a
     /// negative is easy to leave behind when the thing it names arrives, so it
     /// is written as the positive statement about the ones that *do* have pages
-    /// plus this enumeration, and P7 will have to delete the scheduler half.
+    /// plus this enumeration. P7 deleted the scheduler half of it; donate is
+    /// left because spec section 3 maps it 1:1 and section 10 gives it no phase
+    /// to arrive in, which is a spec question rather than a missing page.
     #[test]
-    fn only_the_scheduler_and_donate_entries_still_lead_nowhere() {
+    fn only_the_donate_entry_still_leads_nowhere() {
         let without_a_page: Vec<i32> = (0..=8).filter(|tab| !has_a_view(*tab)).collect();
         assert_eq!(
             without_a_page,
-            vec![4, 6],
-            "scheduler is P7; donate has no phase in spec section 10 at all"
+            vec![6],
+            "donate has no phase in spec section 10 at all"
         );
     }
 

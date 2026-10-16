@@ -265,6 +265,36 @@ pub fn validate_cron(expr: &str) -> Result<(), String> {
     parse_cron(expr).map(|_| ())
 }
 
+/// The i18n key for a [`parse_cron`] failure, or `None` when the parser's own
+/// sentence is what should be shown.
+///
+/// Moved here from the scheduler page's view model, which could not have it: the
+/// two binaries mount that file at different depths and this one is reachable
+/// from both.
+///
+/// The prefixes below are two files' contract and nothing checks it at compile
+/// time; `the_prefixes_still_match_what_the_parser_says` is what checks it.
+///
+/// [`parse_cron`]: crate::app::scheduler_task::parse_cron
+pub fn error_key(message: &str) -> Option<&'static str> {
+    // Ordered as the reference orders them (`handlers/scheduler.rs:381-393`).
+    // `Unsupported` cannot be confused with the others: it is the only message
+    // `parse_cron` itself produces, the rest come from `parse_field`.
+    if message.starts_with("Unsupported") {
+        Some("scheduler.cron_error_unsupported")
+    } else if message.starts_with("Cron expression must have") {
+        Some("scheduler.cron_error_fields")
+    } else if message.starts_with("Comma-separated") {
+        Some("scheduler.cron_error_comma")
+    } else if message.starts_with("Step must be") || message.starts_with("Invalid step") {
+        Some("scheduler.cron_error_step")
+    } else if message.starts_with("Value") || message.starts_with("Invalid value") {
+        Some("scheduler.cron_error_range")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,5 +494,41 @@ mod tests {
             assert!(parse_cron(expr).is_err(), "{expr}");
             assert!(validate_cron(expr).is_err(), "{expr}");
         }
+    }
+
+    /// The one test that keeps two files agreeing. Every message below is
+    /// *produced* by this parser rather than copied out of it, so rewording a
+    /// message fails here instead of shipping a dialog that shows an English
+    /// sentence inside a German window.
+    #[test]
+    fn the_prefixes_still_match_what_the_parser_says() {
+        let cases: &[(&str, Option<&str>)] = &[
+            ("1,5 * * * *", Some("scheduler.cron_error_comma")),
+            ("*/0 * * * *", Some("scheduler.cron_error_step")),
+            ("*/x * * * *", Some("scheduler.cron_error_step")),
+            ("abc * * * *", Some("scheduler.cron_error_range")),
+            ("99 * * * *", Some("scheduler.cron_error_range")),
+            ("5 12 *", Some("scheduler.cron_error_fields")),
+            ("5 12 * *", Some("scheduler.cron_error_fields")),
+            // One more comma list, in a field where two values are perfectly
+            // legal cron: the refusal is about what `schtasks` can hold, not
+            // about what the reader meant.
+            ("0,3 * * * *", Some("scheduler.cron_error_comma")),
+        ];
+        for (expr, expected) in cases {
+            let error = parse_cron(expr)
+                .expect_err("this is a case the parser is supposed to refuse");
+            assert_eq!(
+                error_key(&error),
+                *expected,
+                "{expr:?} produced {error:?}"
+            );
+        }
+
+        // And the messages the mapping is *not* for: this parser produces none
+        // of them, so a new one in the handler shows itself rather than being
+        // swallowed by a fallback key.
+        assert_eq!(error_key("something new"), None);
+        assert_eq!(error_key(""), None);
     }
 }

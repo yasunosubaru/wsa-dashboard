@@ -74,6 +74,22 @@ mod disk_model;
 #[path = "ui/network_model.rs"]
 mod network_model;
 
+// The scheduler page's view model, for the fourth time the same reason. Two
+// functions: the card's shortened command, and the dialog's name/command/
+// schedule checks as one function that answers *which* field is wrong rather
+// than setting one of three error properties. Both live in the reference's
+// `ui/handlers/scheduler.rs`, which is GUI-only.
+//
+// This file is the one `_model` with no `use crate::...` line at all, and that
+// is forced rather than tidy: the CLI mounts it at the crate root and
+// `ui/mod.rs` mounts it one level down, so a path is off by a level in one of
+// them, and `scheduler_task` -- which the cron half of the validation needed --
+// is `crate::scheduler_task` here and `crate::app::scheduler_task` in the GUI.
+// The cron half therefore lives in `cron.rs`, where both binaries reach it.
+#[cfg(test)]
+#[path = "ui/scheduler_model.rs"]
+mod scheduler_model;
+
 // The settings store, for the same reason as the two above: the decisions worth
 // testing here are "a file that does not parse falls back to defaults" and "a
 // retention count is clamped rather than refused", and neither can be reached

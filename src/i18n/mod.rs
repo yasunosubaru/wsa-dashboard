@@ -393,6 +393,15 @@ pub static ENGLISH: &[(&str, &str)] = &[
     ("scheduler.task_updated", "Task updated successfully"),
     ("scheduler.task_toggled", "Task status changed"),
     ("scheduler.task_started", "Task started"),
+    // The two failures the reference hardcodes in English (`handlers/
+    // scheduler.rs`:278, :319, `format!("Toggle failed: {}", e)`). Ours are keys
+    // for the reason the rest of this table exists: a sentence about a failed
+    // action is not more English than a sentence about a successful one.
+    ("scheduler.error_toggle_failed", "Failed to change the task: {0}"),
+    ("scheduler.error_run_failed", "Failed to run the task: {0}"),
+    // The file picker's own window title, which the reference hardcodes in
+    // English next to its filter (`handlers/scheduler.rs`:475).
+    ("scheduler.dialog_select_command", "Select Command"),
     // -- mount_disk: the storage page (P5a) ---------------------------------
     // Key names are the reference's `[mount_disk]` block (Q12). Values are ours
     // throughout, because the page means something else: spec section 3 line 241

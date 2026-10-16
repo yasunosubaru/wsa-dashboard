@@ -17,4 +17,5 @@ pub mod handlers;
 pub mod home_model;
 pub mod network_model;
 pub mod refresh;
+pub mod scheduler_model;
 pub mod tabs;

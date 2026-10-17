@@ -2,160 +2,155 @@
 # SPDX-License-Identifier: GPL-3.0-only
 <#
 .SYNOPSIS
-    Fail the build if the window burns CPU or opens console windows.
+    Fail the build if the window burns CPU, opens console windows, or stops answering.
 
 .DESCRIPTION
-    Exists because the screenshot harness could not see either problem. It
-    launches the window hidden and photographs one settled frame, so a program
-    that spawns a visible console per `adb` call, or that spins a core at 87%,
-    produces a perfect picture of a broken application. Both defects shipped in
-    v0.1.0.
+    Exists because the screenshot harness could not see any of those. It launches
+    the window hidden and photographs one settled frame, so a program that spawns
+    a visible console per `adb` call, or that spins a core at 80%, produces a
+    perfect picture of a broken application. Both defects shipped in v0.1.0.
 
-    So this measures what a picture cannot: how much CPU a *single thread* of the
-    running process consumes over a wall-clock window, and whether any new console
-    host appeared while it ran.
+    **Repeats, not one sample.** Measured on this machine: the same binary, same
+    session, one minute apart, gave 79.3% and 69.6% -- about ten points of drift.
+    A gate built on a single window would therefore flap, and a bisection built on
+    single windows reports noise as cause (which is exactly what happened while
+    chasing the v0.1.0 defect). So each condition runs `-Repeats` times and the
+    verdict is on the **median**, with the spread printed next to it: a difference
+    smaller than the spread is not a difference.
 
     Three assertions, each a real defect this project has had:
 
-      * **CPU per thread.** A GUI program with no work to do is a few percent of
-        one core. A thread that holds ~90% for thirty seconds is a spin, and the
-        measurement is per *thread* on purpose: the process total hides which one,
-        and a repaint storm and a busy loop then look the same.
-      * **No new `conhost.exe`.** Every console allocated for a child process
-        brings one. This is how the missing `CREATE_NO_WINDOW` was found: the
-        home page spawns three or four `adb` per five-second tick, and every one
-        of them took the foreground.
-      * **The window answers.** `Responding` is a coarse test, but a window that
-        cannot answer a message within five seconds is frozen whatever the CPU
-        says.
+      * **CPU on one thread.** A GUI program with nothing to do is a few percent of
+        one core. Measured per *thread*, because the process total hides which one,
+        and a repaint storm and a busy loop then look identical.
+      * **No new `conhost.exe`.** Every console allocated for a child brings one.
+      * **The window answers.** `Responding` is coarse, but a window that cannot
+        answer a message is frozen whatever the CPU says.
 
 .EXAMPLE
     powershell -NoProfile -File tools\cpu-budget.ps1
-    powershell -NoProfile -File tools\cpu-budget.ps1 -Seconds 60 -MaxPercentOfOneCore 10
+    powershell -NoProfile -File tools\cpu-budget.ps1 -Repeats 5 -Seconds 15 -MaxPercentOfOneCore 10
 #>
 [CmdletBinding()]
 param(
     [string] $Exe = 'target\release\wsadashboard.exe',
-    [int] $Seconds = 30,
+    [int] $Seconds = 12,
+    [int] $WarmupSeconds = 20,
+    [int] $Repeats = 3,
     [double] $MaxPercentOfOneCore = 20,
     [int] $MaxNewConsoles = 0,
-    [int] $SampleEverySeconds = 5,
-    # A window that hides to the tray keeps running; the poll and the timer are
-    # still live, which is the state a reader leaves it in and the one this gate
-    # should also cover.
+    [string] $Adb = '',
     [switch] $SkipClose
 )
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSScriptRoot
-Set-Location $root
+Set-Location (Split-Path -Parent $PSScriptRoot)
 
 if (-not (Test-Path $Exe)) { throw "missing $Exe; run build.ps1 first" }
 $exePath = (Resolve-Path $Exe).Path
-$failures = @()
+if ($Adb) { $adbPath = (Resolve-Path $Adb).Path } else { $adbPath = '' }
 
-function Sample {
-    param($Proc)
-    $Proc.Refresh()
-    $total = $Proc.TotalProcessorTime.TotalMilliseconds
-    $threads = @{}
-    foreach ($t in $Proc.Threads) { $threads[$t.Id] = $t.TotalProcessorTime.TotalMilliseconds }
-    [pscustomobject]@{ Total = $total; Threads = $threads }
-}
+function Measure-Once {
+    param([string] $Label)
 
-Write-Verbose "closing any instance left from a previous run"
-Get-Process wsadashboard -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 400
+    Get-Process wsadashboard -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
 
-$conhostBefore = @(Get-Process conhost -ErrorAction SilentlyContinue).Count
-$proc = Start-Process -FilePath $exePath -PassThru
-$started = Get-Date
+    $conhostBefore = @(Get-Process conhost -ErrorAction SilentlyContinue).Count
+    Remove-Item env:WSADASH_ADB -ErrorAction SilentlyContinue
+    if ($adbPath) { $env:WSADASH_ADB = $adbPath }
+    $proc = Start-Process -FilePath $exePath -PassThru
+    Remove-Item env:WSADASH_ADB -ErrorAction SilentlyContinue
 
-# Let the first paint and the first poll land before the baseline, so the check
-# measures the steady state rather than startup.
-Start-Sleep -Seconds ([Math]::Min(3, $Seconds))
-$first = Sample $proc
-$firstAt = Get-Date
-
-$rows = @()
-$peakThread = 0.0
-$peakThreadId = 0
-$peakTotal = 0.0
-$maxConsoles = 0
-
-while (((Get-Date) - $firstAt).TotalSeconds -lt $Seconds) {
-    Start-Sleep -Seconds $SampleEverySeconds
-    if ($proc.HasExited) { break }
-
-    $now = Sample $proc
-    $elapsed = ((Get-Date) - $firstAt).TotalMilliseconds
-    $totalPct = 100.0 * ($now.Total - $first.Total) / $elapsed
-
-    $hotId = 0; $hotMs = 0
-    foreach ($id in $now.Threads.Keys) {
-        $before = if ($first.Threads.ContainsKey($id)) { $first.Threads[$id] } else { 0 }
-        $delta = $now.Threads[$id] - $before
-        if ($delta -gt $hotMs) { $hotMs = $delta; $hotId = $id }
+    # Past the ramp. The burn does not start until the first poll lands and then
+    # climbs for a while, so a window that begins too early measures the climb.
+    Start-Sleep -Seconds $WarmupSeconds
+    $proc.Refresh()
+    if ($proc.HasExited) {
+        return [pscustomobject]@{ Label = $Label; Cpu = -1; Consoles = 0; Responding = $false; SelfExited = $true }
     }
-    $hotPct = 100.0 * $hotMs / $elapsed
+
+    $t0 = @{}
+    foreach ($t in $proc.Threads) { $t0[$t.Id] = $t.TotalProcessorTime.TotalMilliseconds }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    Start-Sleep -Seconds $Seconds
+    $proc.Refresh()
+    $sw.Stop()
+
+    $hot = 0
+    foreach ($t in $proc.Threads) {
+        $before = if ($t0.ContainsKey($t.Id)) { $t0[$t.Id] } else { 0 }
+        $delta = $t.TotalProcessorTime.TotalMilliseconds - $before
+        if ($delta -gt $hot) { $hot = $delta }
+    }
 
     $consoles = @(Get-Process conhost -ErrorAction SilentlyContinue).Count - $conhostBefore
-    if ($consoles -gt $maxConsoles) { $maxConsoles = $consoles }
-    if ($hotPct -gt $peakThread) { $peakThread = $hotPct; $peakThreadId = $hotId }
-    if ($totalPct -gt $peakTotal) { $peakTotal = $totalPct }
+    $responding = $proc.Responding
+    $selfExited = $false
+    if (-not $SkipClose) {
+        try { $null = $proc.CloseMainWindow() } catch { }
+        Start-Sleep -Milliseconds 400
+        $proc.Refresh()
+        if (-not $proc.HasExited) { $responding = $proc.Responding }
+    }
+    if (-not $proc.HasExited) { $proc | Stop-Process -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 400
 
-    $rows += [pscustomobject]@{
-        Seconds    = [int]((Get-Date) - $firstAt).TotalSeconds
-        ThreadPct  = [Math]::Round($hotPct, 1)
-        HottestId  = $hotId
-        ProcessPct = [Math]::Round($totalPct, 1)
-        Conhost    = $consoles
+    [pscustomobject]@{
+        Label      = $Label
+        Cpu        = [Math]::Round(100.0 * $hot / $sw.Elapsed.TotalMilliseconds, 1)
+        Consoles   = $consoles
+        Responding = $responding
+        SelfExited = $selfExited
     }
 }
 
-if (-not $SkipClose -and -not $proc.HasExited) {
-    # Hiding to the tray is what the close button does; the poll keeps running
-    # there, so the CPU budget applies there too.
-    $proc.Refresh()
-    try { $null = $proc.CloseMainWindow() } catch { }
-    Start-Sleep -Seconds 2
+$runs = @()
+for ($i = 1; $i -le $Repeats; $i++) {
+    $runs += Measure-Once -Label "run $i"
+    Write-Verbose "run $i done"
 }
 
-$proc.Refresh()
-$responding = if ($proc.HasExited) { 'exited' } else { $proc.Responding }
-$exitCode = if ($proc.HasExited) { $proc.ExitCode } else { $null }
-if (-not $proc.HasExited) { $proc | Stop-Process -Force -ErrorAction SilentlyContinue }
-
-Write-Output ''
-Write-Output ('  {0,7}  {1,9}  {2,10}  {3,10}  {4,7}' -f 't(s)', 'thread %', 'thread id', 'process %', 'conhost')
-foreach ($r in $rows) {
-    Write-Output ('  {0,7}  {1,9}  {2,10}  {3,10}  {4,7}' -f $r.Seconds, $r.ThreadPct, $r.HottestId, $r.ProcessPct, $r.Conhost)
-}
-Write-Output ''
-
-Write-Output ("peak single-thread CPU : {0:N1}% of one core (thread {1}; budget {2}%)" -f $peakThread, $peakThreadId, $MaxPercentOfOneCore)
-Write-Output ("peak process CPU       : {0:N1}% of one core" -f $peakTotal)
-Write-Output ("new console hosts      : {0} (budget {1})" -f $maxConsoles, $MaxNewConsoles)
-Write-Output ("window responding      : {0}" -f $responding)
-
-if ($peakThread -gt $MaxPercentOfOneCore) {
-    $failures += ("a single thread held {0:N1}% of one core for {1}s; budget is {2}%" -f $peakThread, $Seconds, $MaxPercentOfOneCore)
-}
-if ($maxConsoles -gt $MaxNewConsoles) {
-    $failures += ("{0} console host(s) appeared while the window ran; budget is {1}" -f $maxConsoles, $MaxNewConsoles)
-}
-if ($responding -eq $false) {
-    $failures += 'the window stopped answering messages'
-}
-if ($responding -eq 'exited' -and $exitCode) {
-    $failures += ("the window exited by itself with code {0}" -f $exitCode)
-}
+$cpus = @($runs | Where-Object { $_.Cpu -ge 0 } | ForEach-Object { $_.Cpu })
+$sorted = @($cpus | Sort-Object)
+$n = $sorted.Count
+if ($n -eq 0) { $median = -1 }
+elseif ($n % 2 -eq 1) { $median = $sorted[($n - 1) / 2] }
+else { $median = [Math]::Round(($sorted[$n / 2 - 1] + $sorted[$n / 2]) / 2, 1) }
+$min = if ($sorted.Count) { $sorted[0] } else { -1 }
+$max = if ($sorted.Count) { $sorted[-1] } else { -1 }
+$spread = if ($sorted.Count) { [Math]::Round($max - $min, 1) } else { 0 }
+$consoleTotal = ($runs | Measure-Object -Property Consoles -Maximum).Maximum
+$exited = @($runs | Where-Object { $_.SelfExited }).Count
+$frozen = @($runs | Where-Object { -not $_.SelfExited -and $_.Responding -eq $false }).Count
 
 Write-Output ''
-if ($failures.Count -eq 0) {
-    Write-Output 'PASS'
-    exit 0
+Write-Output ('  {0,-8} {1,10}  {2,9}  {3}' -f 'run', 'cpu %', 'conhost', 'responding')
+foreach ($r in $runs) {
+    Write-Output ('  {0,-8} {1,10}  {2,9}  {3}' -f $r.Label, $r.Cpu, $r.Consoles, $r.Responding)
 }
+Write-Output ''
+Write-Output ("median {0:N1}%   min {1:N1}%   max {2:N1}%   spread {3:N1} points   (budget {4:N0}%)" -f $median, $min, $max, $spread, $MaxPercentOfOneCore)
+Write-Output ("new console hosts, worst run: {0} (budget {1})" -f $consoleTotal, $MaxNewConsoles)
+Write-Output ("frozen windows: {0}   runs that exited by themselves: {1}" -f $frozen, $exited)
+Write-Output ''
+Write-Output "note: a difference smaller than the spread ($spread points) is not a difference; re-run before believing one."
+
+$failures = @()
+if ($median -gt $MaxPercentOfOneCore) {
+    $failures += ("median single-thread CPU {0:N1}% exceeds the {1:N0}% budget" -f $median, $MaxPercentOfOneCore)
+}
+if ($cpus.Count -lt $Repeats) {
+    $failures += ("only {0} of {1} runs produced a measurement" -f $cpus.Count, $Repeats)
+}
+if ($consoleTotal -gt $MaxNewConsoles) {
+    $failures += ("{0} console host(s) appeared; budget is {1}" -f $consoleTotal, $MaxNewConsoles)
+}
+if ($frozen -gt 0) { $failures += 'a window stopped answering messages' }
+if ($exited -gt 0) { $failures += 'a run exited by itself' }
+
+Write-Output ''
+if ($failures.Count -eq 0) { Write-Output 'PASS'; exit 0 }
 Write-Output 'FAIL'
 $failures | ForEach-Object { Write-Output "  - $_" }
 exit 1

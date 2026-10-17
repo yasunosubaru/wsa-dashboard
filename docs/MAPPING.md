@@ -1691,3 +1691,42 @@ v0.1.0 发布后实测：窗口一出现，单个线程就吃掉 80–90% 的单
    唯一会自我引用的地方。
 
 没有新包。门禁仍是红的。
+### 20.2 "隐藏后仍在烧"是我的误读；滚动条也已排除
+
+**把隐藏这一步坐实了**（`IsWindowVisible` / `IsWindowRect` / `IsIconic`，一次实测三段）：
+
+```
+window handle: 792624
+  before      : visible=True  iconic=False  rect=(177,177)-(977,777)
+  while shown : hottest thread 91.1%
+  after close : visible=True  iconic=False  rect=(177,177)-(977,777)   (CloseMainWindow returned True)
+  while closed: hottest thread 88.3%   responding=True
+```
+
+两个结论：
+
+1. **`WM_CLOSE` 不会把窗口收进托盘。** `CloseMainWindow()` 发的是 `WM_CLOSE`——Alt+F4 与任务栏"关闭"
+   走的就是它——窗口原地不动。程序自己的标题栏 X 是能收的（日志里 `close requested; hiding to the
+   tray` 出现过），所以这是**第二条独立缺陷**：标准关闭路径没接上。待修。
+2. **所以 §20 里"隐藏到托盘仍 89%"那行是错的**：那次窗口其实还可见（`visible=True`），88% 与可见时的
+   91% 是同一件事。这样一来"烧的不是绘制"这个分支不存在，只剩一个条件要解释：**可见窗口 + 有卡片 =
+   每帧重做布局/重绘**。
+
+**滚动条也排除了。** 把首页 `CustomScrollbar` 的 `visible` 固定为 `false`（布局不变、只是不画），
+重新构建后：真 adb 3 卡 **85.6%**、0 卡 **29.4%**、替身 4 卡 **84.3%**，与关掉前（88.6/31.4/83.7）在
+噪声内。改动已撤回，`main_view.slint` 与 HEAD 一致。
+
+**至此排除的清单**：渲染器（software 88%/femtovg 49%）、托盘 100ms 定时器、`refresh.rs` 的 1ms（测试
+夹具）、卡片的 `animate height`、首页滚动条、字体族解析（两个字体都装着）、`AppI18n.t` 非 pure、
+adb spawn 风暴（15 秒 1 个进程）、"隐藏后仍在烧"（误读）。
+
+**仍成立的**：UI 线程每帧重做布局；成本随卡片数线性增长（0 卡 ≈ 30%，4 卡 ≈ 85%）；与渲染器基本无关。
+
+**下一步（都还没做）**：
+1. 卡片本身二分：`distro_card.slint:109` 的 `height: tt_text.height + 6px`（子元素高度取决于一段可能
+   自动换行的文本，而文本宽度又取决于布局）——这是唯一还没排掉的"自我引用"形状。
+2. 若卡片不是，量一次 `SLINT_DEBUG_PERFORMANCE=refresh_full_speed`：若强制全速刷新后数字不变，说明
+   它本来就在全速，问题在"谁让它一直脏"。
+3. 这两个都要一次构建（约 11 分钟）+ 一次门禁，按 §20 的口径记录。
+
+门禁仍红，无新包。

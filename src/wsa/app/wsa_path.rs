@@ -13,7 +13,16 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use crate::adb::port::{parse_local_port, FALLBACK_PORT};
+
+/// `CREATE_NO_WINDOW`: this runs once per launch from a GUI-subsystem process, so
+/// without it PowerShell opens a console window on top of the reader's desktop
+/// for a lookup they did not ask to watch.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Publisher hash appended to the identity to form a package family name.
 ///
@@ -163,6 +172,7 @@ $root = (Get-ChildItem $k -ErrorAction SilentlyContinue |
          Where-Object { $_ } | Select-Object -First 1)
 if ($p) { "$($p.InstallLocation)`n$root" } else { "`n$root" }"#,
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|_| WsaPathError::NotInstalled)?;
 

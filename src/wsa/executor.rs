@@ -24,6 +24,14 @@ use tokio::time::timeout;
 
 use super::command::WsaCommand;
 
+/// `CREATE_NO_WINDOW`, Win32's documented `CreateProcess` flag.
+///
+/// Declared here rather than imported from the scheduler module because this is
+/// the domain layer and that one is the GUI's -- and because the value is an
+/// operating-system constant, not a decision this program is making.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Timeout tiers, spec 2.2. `install`/`uninstall` wait on the package
 /// manager rather than on adb, so they get their own tier.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
@@ -212,6 +220,17 @@ fn timeout_for(cmd: &WsaCommand) -> Duration {
 /// never be tested. Those helpers go through `run`'s sibling, not through
 /// `run` itself: they are not adb commands and must not take a semaphore slot
 /// reserved for adb traffic.
+///
+/// # `CREATE_NO_WINDOW` is not an optimisation
+///
+/// `adb` is a console program and this is a GUI-subsystem process, which has no
+/// console to lend it. Without this flag **Windows allocates a fresh, visible
+/// console window for every single spawn** -- and the home page spawns three or
+/// four per five-second tick. The result is not a flicker: each new console takes
+/// the foreground, so the desktop is taken away from the reader several times a
+/// minute, clicks land in a console instead of the window, and the machine feels
+/// wedged. This flag was missing until v0.1.1; the screenshot harness launches
+/// the window hidden, so the consoles were never in a picture.
 pub(crate) async fn run_program(
     program: &Path,
     argv: &[String],
@@ -229,6 +248,14 @@ pub(crate) async fn run_program(
         // future -- which a timeout does -- kills the child instead of
         // leaking an orphaned install holding the package manager.
         .kill_on_drop(true);
+
+    // `as_std_mut` because `creation_flags` is `std::process::Command`'s Windows
+    // extension trait, and tokio's wrapper does not re-export it.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
 
     let child = command.spawn().map_err(map_spawn_error)?;
 

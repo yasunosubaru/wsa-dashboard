@@ -25,15 +25,38 @@ use crate::app::runner::AppWindow;
 /// Drive [`crate::ui::data::refresh_home`] on a fixed tick until the process
 /// ends.
 ///
-/// On the Slint event loop rather than on tokio: the first poll must happen
-/// *now*. A window that takes five seconds to say anything looks broken, and
-/// `should_refresh` is what stops that immediate poll from turning into one
-/// per tick when the previous one has not settled.
+/// **A `slint::Timer`, not `tokio::time::sleep`.** The first version of this
+/// function was a `spawn_local` loop that awaited `tokio::time::sleep(5s)`, and it
+/// never slept: this future runs on Slint's *local* executor, where a tokio timer
+/// has no driver to fire it, so the sleep returned at once and the loop became a
+/// spin. Measured on the released build: **8.7 seconds of CPU in 10**, one thread
+/// `Running`, and a window that answered — a page that is technically alive and
+/// unusable in practice. `should_refresh` swallowed the work, so nothing in the
+/// log said so.
+///
+/// The timer belongs to the executor that runs this code, which is the whole
+/// reason it is the right primitive here. `forget` rather than a local: a
+/// `slint::Timer` stops when it is dropped, and this one is meant to live as long
+/// as the process. One timer, once.
 pub fn spawn_home_monitor(weak: Weak<AppWindow>, state: Arc<AppState>) {
-    let _ = slint::spawn_local(async move {
-        loop {
-            crate::ui::data::refresh_home(weak.clone(), state.clone()).await;
-            tokio::time::sleep(crate::ui::data::poll_interval()).await;
-        }
+    // The first poll happens *now*: a window that takes five seconds to say
+    // anything looks broken.
+    let _ = slint::spawn_local({
+        let weak = weak.clone();
+        let state = state.clone();
+        async move { crate::ui::data::refresh_home(weak, state).await }
     });
+
+    let timer = slint::Timer::default();
+    timer.start(
+        slint::TimerMode::Repeated,
+        crate::ui::data::poll_interval(),
+        move || {
+            let _ = slint::spawn_local(crate::ui::data::refresh_home(
+                weak.clone(),
+                state.clone(),
+            ));
+        },
+    );
+    std::mem::forget(timer);
 }

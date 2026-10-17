@@ -1,0 +1,16 @@
+# Normalise text to LF in the repository, whatever the checkout's setting.
+* text=auto eol=lf
+
+# Things that are not text: without this, a diff of a PNG reads as garbage and
+# a checkout on Windows would try to rewrite line endings inside a font.
+*.png  binary
+*.ico  binary
+*.ttf  binary
+*.exe  binary
+*.vhd  binary
+*.vhdx binary
+
+# The reference baseline is a verbatim copy of another project (PROVENANCE.md
+# section 3). It is not ours to normalise: leaving it byte-identical is the
+# only thing that makes "diff against upstream" mean anything.
+docs/reference/** -text

@@ -657,6 +657,29 @@ function LogGained([string]$dir, [long]$since, [string]$pattern) {
     return ($tail -match $pattern)
 }
 
+# The language the app currently believes it is in, from its own settings file.
+#
+# THE READ-BACK FOR THE LANGUAGE PICKER, and it is the feature rather than a
+# proxy for it: choosing a row calls `save`, so the file changing *is* the click
+# having worked. Nothing else in this script can tell -- the picker's row is a
+# Slint control in a modal dialog, the app logs nothing when a dialog opens, and
+# the picture is not readable by a script.
+#
+# `$LogDir` is `~/.wsadashboard/logs` by default, so the settings file is its
+# sibling. A file that is not there, or a line that does not match, answers `''`
+# -- which is a language no row can equal, so the step reports a miss rather than
+# a stale success.
+function UiLanguage {
+    param([string] $LogDir)
+
+    $path = Join-Path (Split-Path -Parent $LogDir) 'settings.toml'
+    if (-not (Test-Path $path)) { return '' }
+    $line = Select-String -Path $path -Pattern '^\s*ui-language\s*=\s*"([^"]*)"' |
+        Select-Object -First 1
+    if ($line) { return $line.Matches[0].Groups[1].Value }
+    return ''
+}
+
 # A single instance of the app would take a second launch as "focus the one
 # that is already there" (P7 wires that deliberately), so no launch can be
 # left running from a previous run.
@@ -804,6 +827,12 @@ try {
             # (409..584, 376..430), centre (496, 403), which is (397, 322) at this
             # monitor's 1.25 scale.
             'settings-language-de' { @{ x = 397; y = 322 } }
+            # The verified pair: the combo box, then the `de` row. The row's
+            # coordinate is the same one `settings-language-de` uses -- measured
+            # off lang-picker.png and confirmed by a run whose read-back landed
+            # (`ui-language = "de"` in the app's own settings file). What was
+            # missing was never the number.
+            'settings-language-pick-de' { @{ x = 397; y = 322; open = @{ x = 356; y = 137 } } }
             # UNVERIFIED. The click before this one is the coordinate the dialog's
             # `de` cell had when the picker opened over a page at 1000x750, and the
             # picker's rows move with `Flickable.viewport-y`. On a run where the
@@ -893,15 +922,31 @@ try {
         # because it is the only family whose failure produces a *plausible*
         # wrong picture. A second failure there is raised rather than written to
         # disk as evidence.
-        $setsState = ($step -like 'go-*') -or ($step -eq 'network-proxy-tab') -or ($step -eq 'network-delete-first') -or ($step -eq 'settings-save')
-            # `settings-language-de` is deliberately NOT in the list. It opens the
-            # picker and then has to click a row inside it, and the coordinate that
-            # depends on the picker having finished scrolling -- which it may not
-            # have. A step that cannot be repeated safely belongs to a human, not
-            # to a run whose whole purpose is being repeatable; see the note on
-            # its own definition below.
+        $setsState = ($step -like 'go-*') -or ($step -eq 'network-proxy-tab') -or ($step -eq 'network-delete-first') -or ($step -eq 'settings-save') -or ($step -eq 'settings-language-pick-de')
+            # `settings-language-pick-de` is a **pair** of clicks with a read-back,
+            # and it is in the list because the pair ends where it started: open
+            # the picker, click the row, and the app writes the language into
+            # `settings.toml` -- which is the read-back. A repeater without one
+            # would be the thing this file's comments warn about: the first click
+            # opens the picker, the second closes it by landing on the mask, and a
+            # third opens it again, so an odd number of attempts would end in the
+            # right state for the wrong reason.
+            #
+            # The two single-click steps below (`settings-language` and
+            # `settings-language-de`) stay, because they are what a *person*
+            # reaching this state does and because the pair hides which half was
+            # the problem. They remain unverified single shots; this is the one
+            # that reports.
+            #
+            # The note that used to stand here said `settings-language-de` could
+            # not be repeated safely and therefore "belongs to a human". That was
+            # the wrong conclusion from the right observation: what it lacks is a
+            # read-back, not the right to be repeated.
         $attempts = if ($setsState) { 3 } else { 1 }
         $applied = $false
+        # Read once, before the first attempt: the app's own record of the
+        # language, which the row click is supposed to change.
+        $languageBefore = UiLanguage $LogDir
         for ($try = 0; $try -lt $attempts -and -not $applied; $try++) {
             [Wsa]::Raise($hWnd)
             # 600ms, up from 250ms, because 250ms was demonstrably not enough:
@@ -931,6 +976,27 @@ try {
                                $before.Left, $before.Top, $now.Left, $now.Top)
             }
             $before = $now
+
+            # The pair's first click: the combo box that opens the picker. Done
+            # here rather than as its own `-Act` step because the two halves are
+            # one action -- a picker that opened and a row that was not clicked is
+            # the same picture as neither happening.
+            if ($actWhere.open) {
+                [Wsa]::Raise($hWnd)
+                Start-Sleep -Milliseconds 300
+                $openX = [int]($before.Left + ($actWhere.open.x * $scale))
+                $openY = [int]($before.Top + ($actWhere.open.y * $scale))
+                if ([Wsa]::PointIsOn($hWnd, $openX, $openY)) {
+                    [Wsa]::ClickAt($openX, $openY)
+                } else {
+                    [Wsa]::ClickClient($hWnd, [int]($actWhere.open.x * $scale), [int]($actWhere.open.y * $scale))
+                }
+                # The picker animates in and its list settles its scroll before
+                # the row under the cursor is the row that was measured.
+                Start-Sleep -Milliseconds 900
+                $before = [Wsa]::Frame($hWnd)
+            }
+
             $px = [int]($before.Left + ($actWhere.x * $scale))
             $py = [int]($before.Top + ($actWhere.y * $scale))
             # Printed after the re-read, so the number in the log is the one the
@@ -963,6 +1029,14 @@ try {
             Start-Sleep -Milliseconds 500
             if ($step -like 'go-*') {
                 $applied = LogGained $LogDir $logSince 'tab selected'
+            } elseif ($step -eq 'settings-language-pick-de') {
+                # The app's own record of the click, not a proxy for it: choosing
+                # a row saves the language, and that save is what makes the choice
+                # survive a restart -- which is the feature.
+                $applied = (UiLanguage $LogDir) -ne $languageBefore
+                if ($applied) {
+                    Write-Verbose ("  the picker took: {0} -> {1}" -f $languageBefore, (UiLanguage $LogDir))
+                }
             } else {
                 # No detector for an in-page tab switch -- the app does not log
                 # it -- so it takes the repeats it is entitled to rather than

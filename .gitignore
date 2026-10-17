@@ -26,3 +26,7 @@
 
 # NOTE: docs/reference/ is a READ-ONLY vendored baseline (spec Q18).
 # Do NOT add patterns that would exclude it.
+
+# Python bytecode from the tools/ scripts
+__pycache__/
+*.pyc

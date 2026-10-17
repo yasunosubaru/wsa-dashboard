@@ -1668,3 +1668,26 @@ v0.1.0 发布后实测：窗口一出现，单个线程就吃掉 80–90% 的单
 规避（例如把图标字形改用可解析的族，或预先测量一次）。
 
 **当前状态**：门禁红（单线程 80.3%，新增控制台 0）。Release v0.1.0 保持 pre-release + "不要使用"。
+### 20.1 又否掉两条，并修正一个前提
+
+- **字体族解析不到 —— 不成立。** 这台机器**两个字体都装着**：注册表里 `Segoe Fluent Icons` 与
+  `Segoe MDL2 Assets` 都在，`SegoeIcons.ttf` 与 `segmdl2.ttf` 也都在 `C:\Windows\Fonts`。也就是说
+  `Theme.icon_font` 在这里是**能解析**的，§9 里"没装该字体、图标是豆腐块"那条记录对这台机器已经
+  过期。相应地"改 `Theme.icon_font` 为 `Segoe MDL2 Assets`"这个实验没有做——它验证的前提不存在。
+  改动已撤回（`theme.slint` 与 HEAD 一致）。
+- **`AppI18n.t` 不是 `pure` —— 不成立。** `theme.slint:368` 就是
+  `pure callback t(string, [string]) -> string;`。若它不是 pure，每个带文本的 `Text` 会每帧重算
+  `t()`，那会完美解释"成本 ∝ 文本数"——但它是 pure。
+
+**还剩两件事要分开，才谈得上修：**
+
+1. **"隐藏到托盘仍然烧 89%"那次，可能根本没隐藏。** 窗口是自绘标题栏，`CloseMainWindow()` 发的是
+   `WM_CLOSE`，而隐藏走的是 Slint 的 `close-requested` 回调链。若那次窗口其实仍可见，89% 与可见时的
+   84% 就是同一件事，结论不变；若它真隐藏了还在烧，就说明烧的不是绘制。**验证**：隐藏前后各读一次
+   `IsWindowVisible`，或用托盘双击（走应用自己的路径）来隐藏。
+2. **每帧一次的重绘从哪来。** 先做 `SLINT_DEBUG_PERFORMANCE=refresh_full_speed` 对照（强制全速刷新
+   后数字不变 ⇒ 它本来就在全速）；再按 `.slint` 二分——把首页的 `Flickable` + `CustomScrollbar` 换成
+   普通 `VerticalLayout`，一次构建。滚动条的高度依赖 `parent.height`、`y` 依赖 `travel-dist`，是这一层
+   唯一会自我引用的地方。
+
+没有新包。门禁仍是红的。

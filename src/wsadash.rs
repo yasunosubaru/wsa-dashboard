@@ -147,6 +147,14 @@ mod constants;
 #[path = "app/startup_info.rs"]
 mod startup_info;
 
+// `/scheduler`, this binary's own cold-start switch (P8). Mounted for one
+// function: `requested`, which decides whether a run draws a window at all. A
+// false positive there is an app that appears to do nothing, so it is the last
+// decision in this program that should be untested.
+#[cfg(test)]
+#[path = "app/immediate.rs"]
+mod immediate;
+
 #[cfg(test)]
 #[path = "app/autostart.rs"]
 mod autostart;

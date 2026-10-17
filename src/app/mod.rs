@@ -9,6 +9,7 @@
 // See docs/MAPPING.md section 2.1 for the identifier substitutions.
 
 pub mod constants;
+pub mod immediate;
 pub mod launcher;
 pub mod runner;
 pub mod state;

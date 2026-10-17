@@ -1400,36 +1400,120 @@ spec §11 的 11 条逐条回写在那份文件里，**每条带一个三分类�
 
 | 状态 | 含义 | 条数 | 条目 |
 |---|---|---|---|
-| **通过** | 条目要求的行为有可复现证据 | **9** | 1, 2, 3, 4, 6, 7, 8, 9, 11 |
+| **通过** | 条目要求的行为有可复现证据 | **10** | 1, 2, 3, 4, 6, 7, 8, 9, 10, 11 |
 | **部分通过** | 一部分有证据，另一部分被跳过 | **1** | 5（替身通过；真机卸载跳过） |
-| **未通过** | 条目要求的行为不存在（"没做"，不是"没测"） | **1** | 10（功能未实现） |
+| **未通过** | 条目要求的行为不存在（"没做"，不是"没测"） | **0** | — |
 
 **跳过清单**（"能做但没做/没重做"，各自带原因，与上面的"未通过"不是一回事）：
 
 | 跳过的东西 | 为什么 |
 |---|---|
 | 真机卸载回环（第 5 条后半） | `adb uninstall` 没有 `-k`，会清所卸应用的数据；本机磁盘上没有多余 APK，用户的三个应用都是有数据的，不允许拿它做实验。要闭合需要 Android SDK 造一个可弃的包，本仓库没有这条工具链 |
-| 热启动应用的计时重测（第 6 条后半） | 重测要 stop/start WSA，代价是 §13 那次事故的风险；冷启动那一半有实测（17s） |
 | 语言选择器的点选交互（与第 9 条相关但不同） | `capture.ps1` 的 `settings-language-de` 标着 `UNVERIFIED`：注入点击的落点随显示器缩放跳（125%/150%）。第 9 条问的是**键**，键的完整性由测试保证 |
-| 实机测试 `running_apps_sees_a_real_running_app` | 打 `skipping: WSA is Booting` 后报 **ok**——跳过和通过长得一样（§11.8 记过同一件事）。看到 "9 passed" 时要知道其中这一条**没有**验证任何东西 |
 
-**第 10 条缺什么**（唯一一条"未通过"，代价清单在 §16.9）：一条 GUI 二进制的 `/scheduler` CLI 模式
-（`main.rs` 目前没有参数解析）、**一份转发规则的持久化**（规则现在只活在 adb 的活动表里，重启后为空，
-"重启后重新加映射"没有东西可读——这是这一项最大的那块，不是接线）、一个 ONLOGON + `/RL HIGHEST` 的
-任务、网络页那两个回调，以及**每次验证都要点一次 UAC**（`/RL HIGHEST` 非提权实测
-`ERROR: Access is denied.`）。反面证据是好的那半：计划任务页本身（增删改查、启停、立即运行）在真机上
-往返验证通过。
+第 10 条在 §19 里兑现（不建持久化，改成"任务自己把子系统叫起来"），并且**这一兑现顺带把两个跳过项
+消掉了**：`/scheduler` 把子系统叫起来之后，热启动计时可以实测了，那条会 `skipping` 的实机测试也不再
+跳过。原因是机器的状态变了——不是又等了几天。
 
-**一条环境事实，会影响上述任何"真机通过"的读法**：写这份汇总时本机 WSA **卡在 Booting**——
-`WsaClient` 连续运行 28.5 小时、端口 58526 已拒绝连接、`getprop` 取不到值。`wsadash probe` 报
-`Booting` 是**设计如此**（`probe_with` 在 adb 没有端点时按 VM worker 是否活着判，有测试），
-但在这台机器上它不会自己好，页面上"正在启动"会一直不变。
+**环境事实（已被上面那件事改掉）**：写上一版汇总时本机 WSA 卡在 Booting（`WsaClient` 连续运行 28.5
+小时、端口 58526 拒绝连接）。**现在不是了**：`wsadash probe` 是 `state=Ready / boot_completed=true`，
+三个应用都在，`running_apps_sees_a_real_running_app` 不再打印 `skipping`。把它修好的就是 §19 那个
+开关——20 秒、退出码 0、全程没有窗口。
 
-**测试基线（P8 结束）**：`cargo test --release --bin wsadash` → **408 passed / 0 failed / 9 ignored**；
-`-- --ignored` → **9 passed / 0 failed**，其中 `running_apps_sees_a_real_running_app` 是**跳过**
-（见上表）；其余 8 条是真通过，包括 P8 新增的三条：本机真实 `settings.toml` 的迁移（§18.2）、真的
-`api.github.com` 回答了 `rust-lang/rust` 的 `tag="1.99.1"`（§18.3）、以及 P7 那条真实任务库往返。
-`cargo build --release --bin wsadashboard` 14m29s，零 error 零 warning，exe 带图标与版本资源（§18.5）。
+**测试基线（P8 + §19）**：`cargo test --release --bin wsadash` → **417 passed / 0 failed / 10 ignored**；
+`-- --ignored` → **10 passed / 0 failed**，**没有任何 `skipping`**（`running_apps_sees_a_real_running_app`
+现在真的在验东西）。其中做实事的几条：本机真实 `settings.toml` 的迁移（§18.2）、真的 `api.github.com`
+回答 `rust-lang/rust` 的 `tag="1.99.1"`（§18.3）、真实任务库的建→读→停→启→跑→删往返、以及
+`pressing_run_now_makes_the_command_run` 那条端到端（§19.4）。
+`cargo build --release --bin wsadashboard` 零 error 零 warning，exe 带图标与版本资源（§18.5）。
+
+---
+
+## 19. 计划任务的自动化：不建持久化，让任务自己把子系统叫起来（2026-10-17）
+
+用户裁定：**不追求规则持久化**，要的是"点一下就自动执行"。所以不做网络页那份规则存储，改做一件更小
+也更直接的事：**每个任务的启动器先让子系统起来，再跑命令**。
+
+### 19.1 每个 `/TR` 都是一条启动器
+
+`tr_value` 以前只包脚本类型（为了不闪控制台），直接程序原样进 `/TR`。现在一律包，
+因为**冷启动住在启动器里**，而一条 `adb` 命令需不需要它，与它是不是脚本无关。
+
+启动器（`vbs_launcher_body`）现在有三块，每块都是承重的：
+
+```
+' wsadashboard:cmd=<读者写的命令>
+' wsadashboard:args=<读者写的参数>
+' Written by WSA Dashboard. ...
+Set shell = CreateObject("WScript.Shell")
+shell.Run """<本程序 exe>"" /scheduler", 0, True     ← 冷启动
+shell.Run "<命令行>", 0, True                          ← 读者的命令
+```
+
+1. **两条标记**（VBS 注释）——`/TR` 存的是 `wscript.exe "<启动器>"`，读者写的东西在那里根本看不见，
+   而解释器形态（`powershell.exe -File "..."`）也不是他写的。启动器就是任务对自己的记录，和
+   `<Description>` 记日程是同一个道理：Windows 的任务库里没有别的地方放。**参数只活在这里**
+   （连参照都没做到）。
+2. **冷启动**——第一行跑本程序自己的 `/scheduler`（Q25 的开关，参照的辅助任务也是跑
+   `wsldashboard.exe /scheduler`）：先探测，已经起来就立刻返回，否则启动并**等到就绪**（本机实测
+   17s，spec §13.6）。**它的退出码被故意忽略**：不需要子系统的任务（备份脚本之类）在子系统起不来时
+   也必须跑。
+3. **隐藏并等待**——`wscript.exe` 是 GUI 子系统进程、`Run(..., 0, True)` 隐藏且等退出码。
+
+**为什么不用 `wsadash start`**：那要求 `wsadash.exe` 装在 `wsadashboard.exe` 旁边，而 Q3 的交付是
+**一个 exe**；靠第二个文件存在的启动器，会在有人只拷一个文件的那天悄悄不再启动子系统。所以
+`src/app/immediate.rs` 实现了 `/scheduler`（在 `bootstrap` 之前、在窗口/托盘/日志/单实例握手之前——
+那些是读者的事，而一个开窗口的任务看起来就是卡住了）。
+
+### 19.2 实机往返抓到的第二个缺陷（P7 就带进来的）
+
+**`schtasks` 会把 `/TR` 拆成 `<Command>` 和 `<Arguments>`**（在第一个空格处，除非程序被引号包住）。
+所以 `wscript.exe "…launcher.vbs"` 存进去是：
+
+```xml
+<Command>wscript.exe</Command>
+<Arguments>"C:\Users\reader\.wsadashboard\scripts\launcher\launcher-7a05….vbs"</Arguments>
+```
+
+而 `to_scheduler_task` 只看 `<Command>`——后果是**任何脚本类任务读回来都成了命令 `wscript.exe`**：
+卡片第二行显示 `wscript.exe`，编辑对话框预填 `wscript.exe`。P7 之所以没发现，是因为真机上只建过
+**直接程序**（`cmd.exe`），那种 `/TR` 恰好是 `cmd.exe /c …`，拆开之后两个字段恰好就是读者写的两半。
+单测也看不见：它自己拼了未拆分的 `wscript.exe "<path>"` 整行。
+
+修法：读回前把两半拼回去（`command_line(&task.command, &task.arguments)`）再判断/读启动器；并且补一条
+**按 Windows 实际存储形状**构造的测试（两个字段 + 一个真实启动器文件），它才是能看见这件事的测试。
+
+### 19.3 提权：只有任务自己需要时才要
+
+以前每个动作都走提权批次（UAC 弹窗），因为参照那么写。实测（§16.10）`/RL HIGHEST` 非提权是
+`ERROR: Access is denied.`，而**其余四个动作（/Create 不带 /RL、/Delete、/Change、/Run）非提权都能
+跑**。所以创建/删除/启停/立即运行的提权判据改成"这个任务自己是不是以管理员运行"
+（`params.admin_mode` / 任务读回来的 `admin_mode`）。**普通任务现在一次 UAC 都不弹**——这也是整条链
+能被自动化验证的前提。
+
+### 19.4 验证
+
+- **单测 417 通过 / 0 失败 / 10 ignored**（+4：标记往返、换行不能结束标记、无标记的旧启动器、只认
+  那一个开关字面量、按拆分形状读回）。
+- **实机（端到端）**：`pressing_run_now_makes_the_command_run`——建任务 → `run_task` → 轮询直到命令
+  **真的产生了可见结果**（`cmd.exe /c md "<dir>"` 建出一个目录），4.6s 内出现，然后清理。它同时断言
+  `/TR` 里存的是启动器而不是裸命令（防止有人"顺手"把它改回去、连带把冷启动丢掉）。
+- **实机（开关本身）**：`wsadashboard.exe /scheduler` 手工跑（本轮新 exe）——**全程没有窗口**
+  （每 500ms 查一次 `MainWindowHandle`，10 秒内始终为 0），20 秒后**退出码 0**，随后
+  `wsadash probe` 是 `state=Ready / boot_completed=true`。**它是在这台机器卡住的状态上做成这件事的**：
+  跑之前是 `state=Booting`（`WsaClient` 连续运行 28.5 小时、端口 58526 拒绝连接、`getprop` 取不到），
+  跑之后 Ready，三个应用都在。也就是说"计划任务把子系统冷启动起来"这件事不需要模拟就能证明——这台
+  机器当时正好就是那个场景。
+- **顺带被这次状态改变消掉的两个跳过项**：`wsadash launch com.microsoft.launcher` 实测 **2.31s**、
+  再跑一次 **2.03s**（spec §11 第 6 条的热启动半边，上限 3s）；实机套件现在 **10 passed / 0 failed
+  且没有任何 `skipping`**（`running_apps_sees_a_real_running_app` 真的在验东西了）。
+- **一处如实记下的短板**：`/scheduler` 在 `bootstrap` 之前返回，所以它**不写日志**——一个任务的
+  冷启动失败时，日志里没有任何痕迹，只能从子系统状态看出来。要补的话是在那条分支里先起一个最小
+  的 logger，而不是把它挪到 `bootstrap` 之后（那会把窗口和托盘也带进来）。
+
+**这一条改动让 spec §11 第 10 条成立**，并且是**上面那台机器恢复的直接原因**：不是"实现了一个功能"，
+而是"这个功能的第一次真实使用就修好了它"。
+
 
 ---
 

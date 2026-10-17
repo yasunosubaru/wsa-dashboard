@@ -179,6 +179,20 @@ pub fn description_for_cron(cron_expr: &str) -> String {
 
 // -- the command line, and the launcher that hides its window -------------------
 
+/// This program's own executable, for the launcher's cold-start line.
+///
+/// `current_exe` rather than a constant: the launcher has to run *this* build,
+/// and a path assembled from `APP_ID` would be a guess about where the reader
+/// put it. The one failure mode it has -- a path that moved after the task was
+/// created -- is a task that starts the subsystem it cannot find; the command
+/// still runs, which is the same best-effort rule the launcher applies
+/// everywhere else.
+pub fn our_exe_path() -> Result<String, String> {
+    std::env::current_exe()
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|e| format!("could not locate this program's own exe: {e}"))
+}
+
 /// The launcher directory, for the scripts that have no console of their own.
 ///
 /// The reference's is `%USERPROFILE%\.wsldashboard\scripts\launcher`. Ours is
@@ -200,26 +214,119 @@ pub fn vbs_launcher_file_name(task_id: &str) -> String {
     format!("launcher-{}.vbs", md5_hex(task_id.as_bytes()))
 }
 
-/// The body of a launcher that runs `command_line` with no window at all.
+/// The prefix our own comment lines in a launcher carry.
+const LAUNCHER_MARK: &str = "' wsadashboard:";
+
+/// The body of a launcher that brings the subsystem up and then runs
+/// `command_line` with no window at all.
 ///
-/// `wscript.exe` is a GUI-subsystem process, so it never allocates a console,
-/// and `WScript.Shell.Run` with window style `0` runs the command hidden and
-/// waits for it (`True`). All three parts matter: without the third the launcher
-/// exits immediately and the task's "last result" is the launcher's, not the
-/// command's.
-pub fn vbs_launcher_body(command_line: &str) -> String {
+/// **Three things in one file, and every one of them is load-bearing.**
+///
+/// 1. **The markers.** The first two lines are VBS comments carrying the command
+///    and the arguments *as the reader typed them*. They are here because `/TR`
+///    holds a `wscript.exe "<launcher>"` line that does not show either, and
+///    because the interpreter form below (`powershell.exe -File "..."`) is not
+///    what the reader wrote. This file is the task's own record of its command,
+///    the same way `<Description>` is its record of the schedule -- and for the
+///    same reason: Windows' task store has nowhere else to put it. A reader who
+///    opens the file sees their own command line, and this is the only place the
+///    arguments survive at all.
+///
+/// 2. **The cold start.** The first run is this program in its `start` mode,
+///    which is already the cold start every other page uses: it probes, returns
+///    at once when the subsystem is up, and otherwise starts it and waits
+///    (measured at 17s on this machine, spec §13.6). Without it, a task that
+///    runs an `adb` command is a *silent* failure on a machine that has just
+///    booted: the subsystem is not up, `adb` says so on a stderr nobody reads,
+///    and Task Scheduler reports the task as having run. That is spec §11's
+///    tenth acceptance item.
+///
+///    Its exit code is deliberately ignored. A task whose command does not need
+///    the subsystem -- a backup script, anything else a reader wants on a
+///    schedule -- must still run when the subsystem cannot be started, and a
+///    launcher that stopped there would turn a working task into a missing one.
+///
+/// 3. **The command, hidden and waited for.** `wscript.exe` is a GUI-subsystem
+///    process, so it never allocates a console, and `WScript.Shell.Run` with
+///    window style `0` runs the command with no window and waits for it
+///    (`True`). All three parts matter: without the third the launcher exits
+///    immediately and the task's "last result" is the launcher's, not the
+///    command's.
+///
+/// **The last `shell.Run` is the task's own command; the first is ours.** That
+/// is the contract [`extract_script_path_from_vbs`] relies on for a launcher
+/// written before the markers existed, and any further run added here must go
+/// *before* the command's.
+pub fn vbs_launcher_body(
+    our_exe: &str,
+    command: &str,
+    arguments: &str,
+    command_line: &str,
+) -> String {
     format!(
-        "Set shell = CreateObject(\"WScript.Shell\")\nshell.Run \"{}\", 0, True\n",
+        "{LAUNCHER_MARK}cmd={}\n\
+         {LAUNCHER_MARK}args={}\n\
+              ' Written by WSA Dashboard. The command above is the one the reader\n\
+         ' typed; the shell.Run below it brings the subsystem up first (a no-op\n\
+         ' when it is already running).\n\
+         Set shell = CreateObject(\"WScript.Shell\")\n\
+         shell.Run \"\"\"{}\"\" /scheduler\", 0, True\n\
+         shell.Run \"{}\", 0, True\n",
+        command.replace('\r', "").replace('\n', " "),
+        arguments.replace('\r', "").replace('\n', " "),
+        our_exe.replace('"', "\"\""),
         command_line.replace('"', "\"\"")
     )
 }
 
+/// One marked value out of a launcher body, or `None` when it is not there.
+///
+/// Pure, so that the shape a launcher is written in and the shape it is read
+/// back in are held together by a test rather than by an afternoon.
+///
+/// A newline in the value is impossible: [`vbs_launcher_body`] replaces any with
+/// a space, because a marker is one line and a command line a reader pasted out
+/// of somewhere could otherwise end it early and turn the rest of itself into
+/// what looks like another marker.
+pub fn launcher_marker(body: &str, key: &str) -> Option<String> {
+    let prefix = format!("{LAUNCHER_MARK}{key}=");
+    body.lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .map(|value| value.to_string())
+}
+
+/// The command and arguments out of a launcher body, when it carries both.
+///
+/// `None` for a launcher written before the markers existed -- the reference's,
+/// or one an older build of this program wrote -- which is the answer that sends
+/// the caller to [`extract_script_path_from_vbs`] and [`unwrap_command`].
+pub fn launcher_command_from_body(body: &str) -> Option<(String, String)> {
+    let command = launcher_marker(body, "cmd")?;
+    let arguments = launcher_marker(body, "args")?;
+    Some((command, arguments))
+}
+
+/// The command and arguments recorded in the launcher a `/TR` value points at.
+pub fn launcher_command(tr: &str) -> Option<(String, String)> {
+    let body = std::fs::read_to_string(launcher_path_in(tr)?).ok()?;
+    launcher_command_from_body(&body)
+}
+
 /// Write the launcher for `task_id`, and answer with its path.
-pub fn ensure_vbs_launcher(task_id: &str, command_line: &str) -> Result<String, String> {
+pub fn ensure_vbs_launcher(
+    task_id: &str,
+    our_exe: &str,
+    command: &str,
+    arguments: &str,
+    command_line: &str,
+) -> Result<String, String> {
     let dir = vbs_launcher_dir()?;
     let path = dir.join(vbs_launcher_file_name(task_id));
-    std::fs::write(&path, vbs_launcher_body(command_line))
-        .map_err(|e| format!("Failed to write VBS launcher: {e}"))?;
+    std::fs::write(
+        &path,
+        vbs_launcher_body(our_exe, command, arguments, command_line),
+    )
+    .map_err(|e| format!("Failed to write VBS launcher: {e}"))?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -234,15 +341,61 @@ pub fn cleanup_vbs_launcher(task_id: &str) {
     }
 }
 
+/// The launcher path inside a `/TR` value, when it is one of ours.
+///
+/// Shared by [`launcher_command`] and [`unwrap_command`] so that "is this a
+/// wrapped command, and where is its file" is answered once.
+///
+/// Two spellings (`wscript.exe` and `wscript`) and any case: Windows accepts all
+/// four, and which one a task store entry carries is the writer's business.
+/// `unwrap_command` had to retry with both sides lowered before this existed,
+/// which is exactly the kind of duplication this function removes.
+pub fn launcher_path_in(tr: &str) -> Option<String> {
+    /// The program name and then whitespace, or it is not a wrapped command:
+    /// `wscript.exeX` is some other file.
+    fn strip_program<'a>(trimmed: &'a str, program: &str) -> Option<&'a str> {
+        let head = trimmed.get(..program.len())?;
+        if !head.eq_ignore_ascii_case(program) {
+            return None;
+        }
+        let rest = &trimmed[program.len()..];
+        rest.starts_with(char::is_whitespace).then(|| rest.trim_start())
+    }
+
+    let trimmed = tr.trim();
+    let rest = ["wscript.exe", "wscript"]
+        .iter()
+        .find_map(|program| strip_program(trimmed, program))?;
+
+    Some(match rest.strip_prefix('"') {
+        Some(quoted) => match quoted.find('"') {
+            Some(end) => quoted[..end].to_string(),
+            None => quoted.to_string(),
+        },
+        None => rest.split_whitespace().next().unwrap_or(rest).to_string(),
+    })
+}
+
 /// The script path inside a launcher written by [`vbs_launcher_body`].
 ///
-/// It looks for the `""`-quoted run that the escaping produces, so it works for
-/// any script type. `None` for a file this program did not write, which is the
-/// answer that keeps a hand-written `.vbs` in that directory from being read as
-/// one of ours.
+/// The **legacy** path: a launcher that carries no markers, which means one the
+/// reference wrote or one this program wrote before the cold start arrived. It
+/// reads the last `shell.Run` and then the `""`-quoted run that the escaping
+/// produces, so it works for any script type. `None` for a file this program did
+/// not write, which is the answer that keeps a hand-written `.vbs` in that
+/// directory from being read as one of ours.
+///
+/// `rfind` rather than `find` because of the cold-start line: the first run in a
+/// two-run launcher is this program starting the subsystem, and reading it would
+/// hand the caller the path of our own exe. A launcher with a single run answers
+/// the same under both.
+///
+/// `None` is also the answer for a *direct program*, whose command line carries
+/// no `""` pair for this to find -- which is exactly the case the markers above
+/// exist to cover.
 pub fn extract_script_path_from_vbs(vbs_path: &str) -> Option<String> {
     let content = std::fs::read_to_string(vbs_path).ok()?;
-    let after_prefix = &content[content.find("shell.Run \"")? + "shell.Run \"".len()..];
+    let after_prefix = &content[content.rfind("shell.Run \"")? + "shell.Run \"".len()..];
     let after_first = &after_prefix[after_prefix.find("\"\"")? + 2..];
     let end = after_first.find("\"\"")?;
     Some(after_first[..end].to_string())
@@ -282,17 +435,29 @@ pub fn wrapper_command_line(command: &str, arguments: &str) -> Option<String> {
 
 /// What `schtasks /TR` has to say for this command.
 ///
-/// A direct program is passed through. A script becomes `wscript.exe "<launcher>"`,
-/// which is what stops the console window from flashing every time the task
-/// fires -- the reference's whole reason for having a launcher at all.
-pub fn tr_value(command: &str, arguments: &str, task_id: &str) -> Result<String, String> {
-    match wrapper_command_line(command, arguments) {
-        None => Ok(command_line(command, arguments)),
-        Some(inner) => {
-            let launcher = ensure_vbs_launcher(task_id, &inner)?;
-            Ok(format!("wscript.exe \"{launcher}\""))
-        }
-    }
+/// **Every task is wrapped**, not only the script types. The launcher is where
+/// the cold start lives ([`vbs_launcher_body`]), so a task that runs an `adb`
+/// command needs it whether the command is a script or a program.
+///
+/// The cost is that `/TR` no longer *shows* what the task runs, and that the
+/// task's own command cannot be read back out of it for a direct program (there
+/// is no quoted path for [`extract_script_path_from_vbs`] to find). Both are
+/// paid for in `<Description>`, which carries `cmd:` and `args:` lines -- the
+/// same place the cron already lives, and for the same reason: Windows'
+/// task store cannot hold what we need to remember, so the task remembers it for
+/// itself.
+pub fn tr_value(
+    command: &str,
+    arguments: &str,
+    task_id: &str,
+    our_exe: &str,
+) -> Result<String, String> {
+    let inner = match wrapper_command_line(command, arguments) {
+        None => command_line(command, arguments),
+        Some(inner) => inner,
+    };
+    let launcher = ensure_vbs_launcher(task_id, our_exe, command, arguments, &inner)?;
+    Ok(format!("wscript.exe \"{launcher}\""))
 }
 
 /// A command and its arguments as one line, with no wrapper.
@@ -316,13 +481,18 @@ fn is_wrapped_command(tr: &str) -> bool {
 /// prefix; a direct program is returned as itself. The reference's function,
 /// carried over, with the quotes-and-tokens rules it had.
 ///
-/// What is **not** recovered is the arguments of a wrapped command: they were
-/// baked into the launcher as `interpreter "script" args`, and pulling them back
-/// out would mean parsing a line this program wrote rather than a line Windows
-/// wrote. The dialog therefore reopens a script task with its arguments empty.
-/// That is a wart the reference has too, and MAPPING 16.7 records it.
+/// What is **not** recovered is the arguments of a *legacy* wrapped command:
+/// they were baked into the launcher as `interpreter "script" args`, and pulling
+/// them back out would mean parsing a line this program wrote rather than a line
+/// Windows wrote. That is the wart the reference has, and MAPPING 16.7 records
+/// it. Launchers written since the cold start arrived carry markers instead and
+/// are read exactly -- command *and* arguments -- by [`launcher_command`].
 pub fn unwrap_command(cmd: &str) -> String {
     let trimmed = cmd.trim();
+
+    if let Some((command, _)) = launcher_command(trimmed) {
+        return command;
+    }
 
     let prefixes = [
         "wscript.exe ",
@@ -346,14 +516,11 @@ pub fn unwrap_command(cmd: &str) -> String {
         let rest = rest.trim();
 
         if prefix == "wscript.exe " {
-            let launcher = if let Some(quoted) = rest.strip_prefix('"') {
-                match quoted.find('"') {
-                    Some(end) => quoted[..end].to_string(),
-                    None => quoted.to_string(),
-                }
-            } else {
-                rest.split_whitespace().next().unwrap_or(rest).to_string()
-            };
+            // No markers, so this is a launcher written before they existed: the
+            // reference's, or an older build's. `launcher_path_in` rather than
+            // the inline pair below, so that "which file does this /TR point at"
+            // is answered in one place.
+            let launcher = launcher_path_in(trimmed).unwrap_or_else(|| rest.to_string());
             return extract_script_path_from_vbs(&launcher).unwrap_or(launcher);
         }
 
@@ -507,19 +674,37 @@ pub fn build_description_command(task_path: &str, cron_expr: &str) -> String {
 /// adding a feature the reference does not have.
 pub fn to_scheduler_task(task: &TaskXml) -> SchedulerTask {
     let task_id = task_id_from_path(&task.path);
-    let wrapped = is_wrapped_command(&task.command);
+    // **Windows splits `/TR` into a program and its arguments**, at the first
+    // space unless the program is quoted -- so `wscript.exe "<launcher>"` is
+    // stored as `<Command>wscript.exe</Command>` with the launcher path in
+    // `<Arguments>`. The line this program wrote therefore has to be put back
+    // together before it can be read, and reading only `<Command>` was a defect
+    // P7 shipped: every script task came back as the command `wscript.exe`.
+    // The live round trip found it the moment every task started being wrapped;
+    // the unit test could not, because it built the unsplit line by hand.
+    let tr = command_line(&task.command, &task.arguments);
+    let wrapped = is_wrapped_command(&tr);
+    // The task's own record of what it runs, when it has one. A launcher written
+    // since the cold start arrived carries the reader's command *and* arguments
+    // as marker lines, and this is what reads them.
+    let recorded = launcher_command(&tr);
+    let (command, arguments) = match recorded {
+        Some((command, arguments)) => (command, arguments),
+        // A legacy launcher -- no markers -- keeps the reference's wart: the
+        // command is recoverable and the arguments are not; see `unwrap_command`.
+        None if wrapped => (unwrap_command(&tr), String::new()),
+        // Not wrapped at all, so `<Command>` and `<Arguments>` are already the
+        // reader's two fields. `unwrap_command` still runs, because a *command*
+        // can carry its own interpreter prefix (`python.exe "..."`) from the
+        // reference's era.
+        None => (unwrap_command(&task.command), task.arguments.clone()),
+    };
     SchedulerTask {
         display_name: task_id.clone(),
         task_id,
         cron_expr: cron_from_description(&task.description),
-        command: unwrap_command(&task.command),
-        // The arguments of a wrapped command are inside the launcher; see
-        // `unwrap_command`.
-        arguments: if wrapped {
-            String::new()
-        } else {
-            task.arguments.clone()
-        },
+        command,
+        arguments,
         // **Absent means enabled.** Measured, and the measurement is the whole
         // reason this reads the way it does: `schtasks /Create` writes a task
         // with no `<Enabled>` element at all and `schtasks /Query /XML` answers
@@ -595,6 +780,11 @@ pub fn list_tasks() -> Result<Vec<SchedulerTask>, String> {
 /// `requires_elevation` and `old_task_id` are the handler layer's answers, as in
 /// the reference: whether the task store needs an administrator is a machine
 /// question, and an edit is a delete and a create behind one prompt.
+///
+/// **The launcher is written before `schtasks` runs**, because `/TR` has to name
+/// it: a task that fails to be created leaves one orphan file in the launcher
+/// directory, which is the smaller of the two problems and is what
+/// `cleanup_vbs_launcher` is for.
 pub fn create_task(
     params: &CreateTaskParams,
     requires_elevation: bool,
@@ -602,7 +792,13 @@ pub fn create_task(
 ) -> Result<(), String> {
     let parsed = parse_cron(&params.cron_expr)?;
     let task_name = task_path_for_id(&params.display_name);
-    let tr = tr_value(&params.command, &params.arguments, &params.display_name)?;
+    let our_exe = our_exe_path()?;
+    let tr = tr_value(
+        &params.command,
+        &params.arguments,
+        &params.display_name,
+        &our_exe,
+    )?;
     let args = build_create_args(&task_name, &tr, &parsed.schtasks, params.admin_mode);
 
     if requires_elevation {
@@ -848,13 +1044,138 @@ mod tests {
 
     #[test]
     fn the_launcher_runs_hidden_and_waits() {
-        let body = vbs_launcher_body(r#"cmd.exe /c "C:\a b\task.bat""#);
+        let body = vbs_launcher_body(
+            r"C:\Program Files\WSA Dashboard\wsadashboard.exe",
+            r#"C:\a b\task.bat"#,
+            "--go",
+            r#"cmd.exe /c "C:\a b\task.bat" --go"#,
+        );
         // Window style 0 and the third argument `True`: without the second the
         // task's result is the launcher's exit code, not the command's.
         assert!(body.ends_with(", 0, True\n"), "got {body:?}");
         assert!(body.contains("CreateObject(\"WScript.Shell\")"));
         // Every `"` in the command is doubled, which is VBS's own escape.
-        assert!(body.contains(r#""cmd.exe /c ""C:\a b\task.bat""""#), "got {body:?}");
+        assert!(
+            body.contains(r#""cmd.exe /c ""C:\a b\task.bat"" --go""#),
+            "got {body:?}"
+        );
+    }
+
+    /// The cold start, and its order: this program first, the reader's command
+    /// second. Asserted on the *sequence* rather than on two `contains` checks,
+    /// because two runs in the wrong order is a launcher that runs `adb` against
+    /// a subsystem it has not started yet -- which is the failure this whole
+    /// mechanism exists to prevent, and one that reads as working.
+    #[test]
+    fn the_launcher_starts_the_subsystem_before_it_runs_the_command() {
+        let our_exe = r"C:\Program Files\WSA Dashboard\wsadashboard.exe";
+        let body = vbs_launcher_body(our_exe, "adb.exe", "shell ls", "adb.exe shell ls");
+
+        let cold_start = body
+            .find(r#"shell.Run """#)
+            .expect("the cold start line is missing");
+        let command = body
+            .rfind("shell.Run \"")
+            .expect("the command line is missing");
+        assert!(
+            cold_start < command,
+            "the command runs before the subsystem is started:\n{body}"
+        );
+        // The exe's own quotes doubled, and `/scheduler` after them: this is
+        // this program's own cold start (`app::immediate`), which is spec Q25's
+        // switch and the same thing the home page's Launch button gets from the
+        // domain layer. Not the CLI's `wsadash start`: that would make every
+        // task depend on a second exe being installed beside this one.
+        assert!(
+            body[cold_start..].starts_with(&format!(
+                "shell.Run \"\"\"{}\"\" /scheduler\", 0, True\n",
+                our_exe
+            )),
+            "the cold start line is not this program's `/scheduler`:\n{body}"
+        );
+        // The literal, asserted here as well as in `app::immediate` where it is
+        // accepted: two files own the two halves of one string, and this is the
+        // half that writes it.
+        const SWITCH: &str = "/scheduler";
+        assert!(
+            body.contains(&format!("\" {SWITCH}\"")),
+            "the launcher no longer calls {SWITCH}:\n{body}"
+        );
+    }
+
+    /// The reader's own words survive, exactly, even though `/TR` cannot show
+    /// them and the interpreter form below is not what they typed.
+    #[test]
+    fn the_launcher_records_the_command_and_the_arguments_as_they_were_typed() {
+        for (command, arguments) in [
+            ("C:\\a.exe", "/x"),
+            ("C:\\Program Files\\WSA\\adb.exe", "shell am start -n com.x/.Y"),
+            ("C:\\s.ps1", "--flag \"quoted value\""),
+            ("C:\\a.exe", ""),
+        ] {
+            let inner = wrapper_command_line(command, arguments)
+                .unwrap_or_else(|| format!("{command} {arguments}").trim().to_string());
+            let body = vbs_launcher_body("C:\\w.exe", command, arguments, &inner);
+            assert_eq!(
+                launcher_command_from_body(&body),
+                Some((command.to_string(), arguments.to_string())),
+                "{body}"
+            );
+        }
+    }
+
+    /// A command line a reader pasted out of somewhere can contain a newline, and
+    /// a marker is one line. Left alone, the tail of such a command would read as
+    /// a marker of its own and the dialog would pre-fill something that is not
+    /// what runs.
+    #[test]
+    fn a_newline_in_a_command_cannot_end_its_marker_line() {
+        let body = vbs_launcher_body("C:\\w.exe", "C:\\a.exe", "/x\ncmd=evil", "C:\\a.exe /x");
+        assert_eq!(
+            launcher_command_from_body(&body),
+            Some(("C:\\a.exe".to_string(), "/x cmd=evil".to_string())),
+            "{body}"
+        );
+    }
+
+    /// A launcher that carries no markers -- the reference's, or one an older
+    /// build of this program wrote -- is `None`, which is what sends the caller
+    /// to `extract_script_path_from_vbs`.
+    #[test]
+    fn a_launcher_without_markers_has_no_recorded_command() {
+        let legacy = format!(
+            "Set shell = CreateObject(\"WScript.Shell\")\nshell.Run \"{}\", 0, True\n",
+            r#"cmd.exe /c "C:\a b\task.bat""#.replace('"', "\"\"")
+        );
+        assert_eq!(launcher_command_from_body(&legacy), None);
+        // And the legacy reader still answers for it.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("legacy.vbs");
+        std::fs::write(&path, &legacy).expect("write");
+        assert_eq!(
+            extract_script_path_from_vbs(&path.to_string_lossy()),
+            Some(r"C:\a b\task.bat".to_string())
+        );
+    }
+
+    /// `launcher_path_in` is what both readers use to find the file, so the
+    /// three shapes a `/TR` value comes in all have to resolve.
+    #[test]
+    fn a_wrapped_tr_resolves_to_its_launcher_whatever_the_quoting() {
+        for tr in [
+            r#"wscript.exe "C:\l\launcher-a.vbs""#,
+            r#"WScript.exe "C:\l\launcher-a.vbs""#,
+            r#"wscript.exe C:\l\launcher-a.vbs"#,
+        ] {
+            assert_eq!(
+                launcher_path_in(tr),
+                Some(r"C:\l\launcher-a.vbs".to_string()),
+                "{tr}"
+            );
+        }
+        for not_ours in [r"C:\a.exe", "", "powershell.exe -File C:\\a.ps1"] {
+            assert_eq!(launcher_path_in(not_ours), None, "{not_ours}");
+        }
     }
 
     // -- the cron in the description -----------------------------------------
@@ -975,6 +1296,11 @@ mod tests {
     /// The case the whole VBS launcher exists for, and the one that cannot be
     /// tested without a file: a `/TR` of `wscript.exe "<path>"` unwraps to the
     /// script the launcher runs, not to the launcher.
+    ///
+    /// This is a **legacy** launcher -- no markers -- which is what the reference
+    /// writes and what this program wrote before the cold start arrived. The
+    /// marked shape is covered by
+    /// `the_launcher_records_the_command_and_the_arguments_as_they_were_typed`.
     #[test]
     fn a_launcher_unwraps_to_the_script_it_runs() {
         let dir = std::env::temp_dir().join(format!("wsa-launcher-test-{}", std::process::id()));
@@ -982,7 +1308,11 @@ mod tests {
         let launcher = dir.join("launcher-abc.vbs");
 
         let inner = wrapper_command_line(r"C:\a\s.ps1", "--go").expect("a ps1 is wrapped");
-        std::fs::write(&launcher, vbs_launcher_body(&inner)).expect("write launcher");
+        let legacy = format!(
+            "Set shell = CreateObject(\"WScript.Shell\")\nshell.Run \"{}\", 0, True\n",
+            inner.replace('"', "\"\"")
+        );
+        std::fs::write(&launcher, &legacy).expect("write launcher");
 
         let tr = format!(r#"wscript.exe "{}""#, launcher.to_string_lossy());
         assert!(is_wrapped_command(&tr));
@@ -1234,6 +1564,48 @@ mod tests {
         assert_eq!(row.trigger_summary, "");
     }
 
+    /// The shape Windows actually stores, and the shape the first version of this
+    /// read got wrong: `/TR` is split at the first space, so a wrapped task
+    /// arrives as `<Command>wscript.exe</Command>` with the launcher path in
+    /// `<Arguments>`. A test that builds `wscript.exe "<path>"` as one string
+    /// cannot see that -- and one did not, which is how a script task came back
+    /// as the command `wscript.exe` for as long as only direct programs had ever
+    /// been created on a real machine.
+    #[test]
+    fn a_wrapped_task_is_read_from_the_two_halves_windows_stores_it_in() {
+        let dir = std::env::temp_dir().join(format!("wsa-split-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let launcher = dir.join("launcher-split.vbs");
+
+        let inner = wrapper_command_line(r"C:\a\s.ps1", "--go").expect("a ps1 is wrapped");
+        std::fs::write(
+            &launcher,
+            vbs_launcher_body("C:\\w.exe", r"C:\a\s.ps1", "--go", &inner),
+        )
+        .expect("write launcher");
+
+        let mut task = task_with(r"\WSA-Dashboard\Split", "cron:0 9 * * *", "wscript.exe");
+        task.arguments = format!("\"{}\"", launcher.to_string_lossy());
+
+        let row = to_scheduler_task(&task);
+        assert_eq!(row.command, r"C:\a\s.ps1");
+        assert_eq!(
+            row.arguments, "--go",
+            "the launcher's markers are the only place these survive"
+        );
+        assert_eq!(row.cron_expr, "0 9 * * *");
+
+        // And the same row without the launcher on disk. The file *is* the
+        // record, so there is nothing left to read: the row falls back to
+        // `unwrap_command`'s documented answer, which is the launcher's own path
+        // -- a true statement about what Windows will try to run, and visibly
+        // not the reader's command.
+        let _ = std::fs::remove_file(&launcher);
+        let gone = to_scheduler_task(&task);
+        assert_eq!(gone.command, launcher.to_string_lossy());
+        assert_eq!(gone.arguments, "");
+    }
+
     #[test]
     fn a_wrapped_command_keeps_its_script_and_drops_its_wrapper_arguments() {
         let mut task = task_with(
@@ -1343,6 +1715,102 @@ mod tests {
     /// `<Enabled>`'s absent-means-on -- that last one being a bug this test found
     /// on its first run, when the page would have drawn every enabled task as
     /// switched off.
+    /// The whole point of the page, end to end, and the only test that proves
+    /// the chain rather than its pieces: **create a task, press Run Now, and
+    /// watch the command do something.**
+    ///
+    /// What it exercises, in order: the `/Create` argument list, the VBS launcher
+    /// this program writes (including the cold-start line, which really runs --
+    /// `wsadash start` on a machine where the subsystem is wedged costs the
+    /// launcher its timeout and then the command runs anyway, which is the
+    /// best-effort rule under test), `schtasks /Run`, and the command itself.
+    ///
+    /// The command is `cmd.exe /c md "<dir>"` because it needs no redirection
+    /// (`WScript.Shell.Run` does not go through a shell, so a `>` in the command
+    /// line would be an argument rather than a redirect) and because a directory
+    /// appearing is not something a wrong exit code can fake.
+    ///
+    /// `#[ignore]` because Q8 keeps machine-dependent work out of the suite, and
+    /// because this one creates a real task and a real directory -- both removed
+    /// at the end, and both removed at the start as well, so a run that dies
+    /// half-way leaves one task and one directory that the next run clears.
+    #[test]
+    #[ignore = "writes to the real task store; Q8 keeps machine-dependent work out of the suite"]
+    fn pressing_run_now_makes_the_command_run() {
+        const ID: &str = "wsa-dashboard-runproof";
+        let proof = std::env::temp_dir().join(format!("wsa-task-proof-{}", std::process::id()));
+
+        let _ = delete_task(ID, false);
+        let _ = std::fs::remove_dir_all(&proof);
+
+        let params = CreateTaskParams {
+            display_name: ID.to_string(),
+            command: "cmd.exe".to_string(),
+            arguments: format!(r#"/c md "{}""#, proof.display()),
+            cron_expr: "0 3 * * *".to_string(),
+            admin_mode: false,
+        };
+        create_task(&params, false, None).expect("the store accepted the task");
+
+        // What the store holds: a launcher, not the reader's command. That is
+        // the wrap, and asserting it here is what keeps someone from "fixing"
+        // `/TR` back to the bare command line and quietly dropping the cold
+        // start with it.
+        let raw = std::process::Command::new("schtasks")
+            .args([
+                "/Query",
+                "/TN",
+                &task_path_for_id(ID),
+                "/XML",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .expect("schtasks is on PATH");
+        let raw = decode_output(&raw.stdout);
+        assert!(
+            raw.contains("wscript.exe"),
+            "the task's /TR is not a launcher, so nothing starts the subsystem:\n{raw}"
+        );
+
+        // The reader's own words come back out of the launcher, exactly.
+        let created = list_tasks()
+            .expect("the store reads back")
+            .into_iter()
+            .find(|task| task.task_id == ID)
+            .expect("the task is in the store");
+        assert_eq!(created.command, "cmd.exe");
+        assert_eq!(created.arguments, params.arguments);
+
+        run_task(ID, false).expect("Run Now");
+
+        // The launcher may first wait out the subsystem's cold start, and on a
+        // machine where WSA is wedged that wait is the whole timeout. Polling
+        // rather than sleeping once, so a fast machine is not punished for a
+        // slow one.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        let mut appeared = false;
+        while std::time::Instant::now() < deadline {
+            if proof.is_dir() {
+                appeared = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+
+        // Clean up before asserting, so a failure does not leave the proof on
+        // disk for the next run to trip over.
+        let _ = std::fs::remove_dir_all(&proof);
+        delete_task(ID, false).expect("delete");
+
+        assert!(
+            appeared,
+            "the task ran but {} never appeared: the command did not execute",
+            proof.display()
+        );
+    }
+
+    /// The real task store takes a task and gives it back, with the cron and the
+    /// command both coming out of the task's own record of itself.
     #[test]
     #[ignore = "writes to the real task store; Q8 keeps machine-dependent work out of the suite"]
     fn the_real_task_store_takes_a_task_and_gives_it_back() {

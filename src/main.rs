@@ -37,6 +37,14 @@ pub use app::state::AppState;
 
 #[tokio::main]
 async fn main() {
+    // `/scheduler` first, and before anything else: this is the line every
+    // scheduled task's launcher runs before it runs the task's own command
+    // (`app::immediate`), and it must not reach Slint, the tray, the logs or the
+    // single-instance handshake.
+    if app::immediate::requested(std::env::args().skip(1)) {
+        std::process::exit(app::immediate::run().await);
+    }
+
     let state = app::launcher::bootstrap().await;
     app::runner::run_app(state).await;
 }

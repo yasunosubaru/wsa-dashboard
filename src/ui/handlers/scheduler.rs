@@ -311,14 +311,18 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, _app_state: Arc<AppSt
                 &handle,
                 target.clone(),
                 move || match schtasks::list_tasks() {
-                    Ok(tasks) => {
-                        if tasks.iter().any(|task| task.task_id == target) {
-                            schtasks::delete_task(&target, true)
-                        } else {
+                    Ok(tasks) => match tasks.iter().find(|task| task.task_id == target) {
+                        // Elevation is asked for only when the task itself runs
+                        // elevated. `/RL HIGHEST` cannot be created without it
+                        // (measured: `ERROR: Access is denied.` unelevated), and
+                        // nothing else this page does needs it -- which is why an
+                        // ordinary task no longer raises a UAC prompt at all.
+                        Some(task) => schtasks::delete_task(&target, task.admin_mode),
+                        None => {
                             schtasks::cleanup_vbs_launcher(&target);
                             Ok(())
                         }
-                    }
+                    },
                     Err(message) => Err(message),
                 },
                 "scheduler.task_deleted",
@@ -338,7 +342,7 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, _app_state: Arc<AppSt
                 target.clone(),
                 move || match schtasks::list_tasks() {
                     Ok(tasks) => match tasks.iter().find(|task| task.task_id == target) {
-                        Some(task) => schtasks::toggle_task(&target, !task.enabled, true),
+                        Some(task) => schtasks::toggle_task(&target, !task.enabled, task.admin_mode),
                         None => Err("no such task".to_string()),
                     },
                     Err(message) => Err(message),
@@ -359,13 +363,10 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, _app_state: Arc<AppSt
                 &handle,
                 target.clone(),
                 move || match schtasks::list_tasks() {
-                    Ok(tasks) => {
-                        if tasks.iter().any(|task| task.task_id == target) {
-                            schtasks::run_task(&target, true)
-                        } else {
-                            Err("no such task".to_string())
-                        }
-                    }
+                    Ok(tasks) => match tasks.iter().find(|task| task.task_id == target) {
+                        Some(task) => schtasks::run_task(&target, task.admin_mode),
+                        None => Err("no such task".to_string()),
+                    },
                     Err(message) => Err(message),
                 },
                 "scheduler.task_started",
@@ -423,7 +424,12 @@ pub fn setup(app: &AppWindow, app_handle: Weak<AppWindow>, _app_state: Arc<AppSt
                 } else {
                     None
                 };
-                let result = schtasks::create_task(&params, true, old_task);
+                // The checkbox decides, and it is the only thing that does: a
+                // task that does not run elevated needs no administrator, and
+                // asking for one turns a two-click action into a UAC prompt for
+                // no reason. Measured before this line was written.
+                let requires_elevation = params.admin_mode;
+                let result = schtasks::create_task(&params, requires_elevation, old_task);
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(app) = moved.upgrade() else { return };
                     match result {

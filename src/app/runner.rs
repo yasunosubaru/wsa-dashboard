@@ -149,6 +149,28 @@ pub async fn run_app(state: AppState) {
     let _ = crate::app::autostart::apply_tray_autostart(tray.autostart, tray.start_minimized).await;
     let _ = tokio::spawn(crate::app::startup_info::log_startup_system_info());
 
+    // Per-two-second UI counters (CPU investigation). Inside the process, so the
+    // answer cannot be moved by what else the machine is doing -- which is what
+    // made the external sampling useless: the same binary read 86.6% and 0.0%
+    // twenty minutes apart.
+    tokio::spawn(async move {
+        let mut last = [0u64; 11];
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let now = crate::ui::data::counters::snapshot();
+            let d: Vec<u64> = now
+                .iter()
+                .zip(last.iter())
+                .map(|(now, then)| now.saturating_sub(*then))
+                .collect();
+            tracing::info!(
+                "ui/2s refresh={} probe={}({}ms) list={}({}ms) running={}({}ms) build={}({}ms) apply={}({}ms)",
+                d[0], d[1], d[6], d[2], d[7], d[3], d[8], d[4], d[9], d[5], d[10]
+            );
+            last = now;
+        }
+    });
+
     // -- the tray, and the window's first appearance (P7) ---------------------
     // `initially_visible` is the state the window will actually be in, so that a
     // later rebuild (a language change) cannot make a hidden window visible.

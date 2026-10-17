@@ -2002,3 +2002,39 @@ new console hosts, worst run: 5  → 判 FAIL 的那一条是假的
 
 实验已撤回（`main_view.slint` 与 HEAD 一致）。**v0.1.0 的 Release 与 tag 已删除**（它本来就标着"不要
 使用"），仓库现在没有可用二进制，只有一个源码仓库和一份写清楚了"哪里还不知道"的记录。
+### 20.11 进程内计数已装进二进制，但**没有输出**；同时确认程序本身稳定在 ~83%
+
+先说测量：之前那三次 `0.0%` 是**我自己的脚本问题**，不是程序修好了。用"重定向 + 线程差分 + 明确的
+`HasExited` 检查"重测：
+
+```
+alive after 12s: True   exited: False   threads: 38
+cpu over 6s: 83.1%
+```
+
+程序稳定在 ~83% 单核。`0.0%` 那几次是快速脚本里拿到空的 `Threads`（进程句柄/时序问题）后算出的 0，
+也就是说 §20.10 里"86.6% → 0.0% 说明尺子坏了"这个判断本身也要修正：**尺子确实会坏，但坏的是我那几段
+临时脚本，不是程序。**
+
+**进程内计数（按要求加的）**：
+
+- `src/ui/data.rs` 新增 `counters` 模块：`REFRESH/PROBE/LIST_APPS/RUNNING/BUILD/APPLY` 六个计数
+  加五个阶段毫秒累计，`snapshot()` 一次读出。
+- `refresh_home_with` 在每个阶段前后打点（`probe`、`list_apps`、`running_apps`、`build`、`apply`）。
+- `runner.rs` 起一个 tokio 任务，每 2 秒把**增量**写成一行
+  `ui/2s refresh=N probe=N(Nms) list=N(Nms) running=N(Nms) build=N(Nms) apply=N(Nms)`。
+
+**状态：编译进去了，但一行都没输出。**
+
+```
+build log: 9m27s, 0 errors, 0 warnings
+exe:       2026/10/17 23:48
+"ui/2s" in the binary: 1     (source: 1)
+ui/2s lines in the log: 0
+```
+
+所以下一步不是继续量 CPU，而是**查这个任务为什么没跑**：`tokio::spawn` 的落点是否在
+`run_app` 真正执行到的路径上，以及 `app.run()` 阻塞主线程时这个 runtime 是否还在驱动其它 worker。
+这一条查清楚，计数器一出来，"是不是每帧重排"当场就能回答；在那之前继续做外部采样没有意义。
+
+无新包（`v0.1.0` 的 Release 与 tag 已删）。

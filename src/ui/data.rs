@@ -123,11 +123,24 @@ pub async fn refresh_home_with(reason: &'static str, weak: Weak<AppWindow>, stat
     }
     *lock(&LAST_REFRESH) = Some(Instant::now());
 
+    counters::REFRESH.fetch_add(1, Ordering::Relaxed);
+
+    let mark = Instant::now();
     let status = probe(&state).await;
+    counters::PROBE.fetch_add(1, Ordering::Relaxed);
+    counters::PROBE_MS.fetch_add(mark.elapsed().as_millis() as u64, Ordering::Relaxed);
     let fresh = if status.is_ready() {
-        match state.wsa_dashboard.list_apps(false).await {
+        let mark = Instant::now();
+        let listed = state.wsa_dashboard.list_apps(false).await;
+        counters::LIST_APPS.fetch_add(1, Ordering::Relaxed);
+        counters::LIST_APPS_MS.fetch_add(mark.elapsed().as_millis() as u64, Ordering::Relaxed);
+        match listed {
             Ok(apps) => {
+                let mark = Instant::now();
                 let running = state.wsa_dashboard.running_apps().await;
+                counters::RUNNING.fetch_add(1, Ordering::Relaxed);
+                counters::RUNNING_MS
+                    .fetch_add(mark.elapsed().as_millis() as u64, Ordering::Relaxed);
                 Some(HomeSnapshot { apps, running })
             }
             Err(error) => {
@@ -156,6 +169,7 @@ pub async fn refresh_home_with(reason: &'static str, weak: Weak<AppWindow>, stat
         // Reading the query has to happen here: the LineEdit owns the string
         // and lives on the window's thread.
         let query = app.get_search_query().to_string();
+        let mark = Instant::now();
         let model = build(&HomeInputs {
             status: &status,
             fresh: fresh.as_ref(),
@@ -163,8 +177,56 @@ pub async fn refresh_home_with(reason: &'static str, weak: Weak<AppWindow>, stat
             active_op: state.wsa_dashboard.get_active_op(),
             query: &query,
         });
+        counters::BUILD.fetch_add(1, Ordering::Relaxed);
+        counters::BUILD_MS.fetch_add(mark.elapsed().as_millis() as u64, Ordering::Relaxed);
+        let mark = Instant::now();
         apply(&app, &model, source.as_ref(), &query);
+        counters::APPLY.fetch_add(1, Ordering::Relaxed);
+        counters::APPLY_MS.fetch_add(mark.elapsed().as_millis() as u64, Ordering::Relaxed);
     });
+}
+
+/// Per-refresh counters, for the CPU investigation.
+///
+/// The external sampling could not answer "is the UI thread re-laying-out every
+/// frame or once every five seconds": process-level CPU deltas drifted by up to
+/// nineteen points between runs of the same binary, so the difference being
+/// hunted was smaller than the ruler. These numbers are taken *inside* the
+/// process, need no sampling window, and cannot be moved by what else the machine
+/// is doing. `runner` logs them every two seconds.
+pub mod counters {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub static REFRESH: AtomicU64 = AtomicU64::new(0);
+    pub static PROBE: AtomicU64 = AtomicU64::new(0);
+    pub static LIST_APPS: AtomicU64 = AtomicU64::new(0);
+    pub static RUNNING: AtomicU64 = AtomicU64::new(0);
+    pub static BUILD: AtomicU64 = AtomicU64::new(0);
+    pub static APPLY: AtomicU64 = AtomicU64::new(0);
+
+    /// Milliseconds spent in each stage, accumulated.
+    pub static PROBE_MS: AtomicU64 = AtomicU64::new(0);
+    pub static LIST_APPS_MS: AtomicU64 = AtomicU64::new(0);
+    pub static RUNNING_MS: AtomicU64 = AtomicU64::new(0);
+    pub static BUILD_MS: AtomicU64 = AtomicU64::new(0);
+    pub static APPLY_MS: AtomicU64 = AtomicU64::new(0);
+
+    /// One snapshot, in the order the stages run.
+    pub fn snapshot() -> [u64; 11] {
+        [
+            REFRESH.load(Ordering::Relaxed),
+            PROBE.load(Ordering::Relaxed),
+            LIST_APPS.load(Ordering::Relaxed),
+            RUNNING.load(Ordering::Relaxed),
+            BUILD.load(Ordering::Relaxed),
+            APPLY.load(Ordering::Relaxed),
+            PROBE_MS.load(Ordering::Relaxed),
+            LIST_APPS_MS.load(Ordering::Relaxed),
+            RUNNING_MS.load(Ordering::Relaxed),
+            BUILD_MS.load(Ordering::Relaxed),
+            APPLY_MS.load(Ordering::Relaxed),
+        ]
+    }
 }
 
 /// An `Err` here has no better answer than "we could not ask".

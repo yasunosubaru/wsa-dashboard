@@ -1773,3 +1773,41 @@ Rectangle {                       // tooltip
 重绘"的，而最小化这一条已经说明重绘不是主因。
 
 门禁仍红，无新包。
+### 20.4 tooltip 排除；两条改变结论的新事实
+
+**tooltip 排除**：把卡片里那个 tooltip 整个 `if (false)` 掉（`distro_card.slint:97-121`），重建后
+81.1 / 27.6 / 73.6，与动手前 85.6 / 29.4 / 84.3 同量级 ⇒ 不是它。改动已撤回。
+
+**新事实 1：它本来就在全速渲染，没有被限速遮住。**
+
+```
+baseline (4 cards)                                  79.8%
+SLINT_DEBUG_PERFORMANCE=refresh_full_speed          79.9%
+SLINT_DEBUG_PERFORMANCE=refresh_full_speed,overlay  77.8%
+```
+
+`refresh_full_speed` 是"关掉限速、能多快画多快"。数字**完全不动** ⇒ 它一直就在全速跑帧。所以
+"限速掉了"这类可能不存在，问题是**谁让它每帧都脏**。
+
+**新事实 2：这台机器上的 "skia" 是软件光栅。**
+
+`SLINT_DEBUG_PERFORMANCE` 的 stderr 里写得很清楚：
+
+```
+Slint: Build config: release; Backend: Skia renderer (skia backend software; surface: 24 bpp)
+```
+
+这条把 §20 里几个数字重新解释了：`SLINT_BACKEND=software` 与默认同值，因为**默认就是软件**；
+`femtovg` 减半是因为它走 GPU。所以"与渲染器无关"这个措辞不对，正确说法是**"软件光栅下每帧成本 = 内容
+面积 × 帧率"**，而帧率是全速。
+
+**方法论修正（我自己踩的）**：滚动条那次用的是 `visible: false`，那只停绘制——**不可见元素在 Slint 里
+仍然参与布局、仍然求值绑定**（这句就写在我给 tooltip 加的注释里）。所以那次并没有真正移除滚动条，
+它仍然是候选。要测就得用 `if (false): CustomScrollbar { ... }` 把它从元素树里拿掉。
+
+**下一个实验（一次构建，两件事一起）**：
+1. `if (false)` 移除首页 `CustomScrollbar`——它的 §20.2 版本只是隐藏，不算数；
+2. 若仍烧，用同一个构建量一次 `SLINT_BACKEND=femtovg` 下的 4 卡数字（现在知道差值来自软件光栅，
+   用来判断"全速软件合成"占多少、`谁让它脏`占多少）。
+
+门禁仍红，无新包。

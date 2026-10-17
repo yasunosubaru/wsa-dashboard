@@ -1730,3 +1730,46 @@ adb spawn 风暴（15 秒 1 个进程）、"隐藏后仍在烧"（误读）。
 3. 这两个都要一次构建（约 11 分钟）+ 一次门禁，按 §20 的口径记录。
 
 门禁仍红，无新包。
+### 20.3 最小化仍在烧：不是绘制，是"持续触发布局"
+
+同一个进程，只改窗口状态（`ShowWindow`，`IsIconic` 用来确认状态真的变了）：
+
+```
+visible   : visible=True  iconic=False   CPU 65.6%
+minimised : visible=True  iconic=True    CPU 55.6%
+restored  : visible=True  iconic=False   CPU 66.2%
+```
+
+**最小化的窗口不绘制。** 55.6% 说明 §20.2 的推断（"可见窗口 → 每帧重绘"）方向错了：烧的是 UI 线程上
+被反复触发的**布局**，而布局成本 ∝ 卡片数（0 卡 30% / 4 卡 85%）。所以不是"画得贵"，是"一直在重新算
+尺寸"。
+
+这条改变了下一步：不该去查渲染（渲染器、滚动条那两个实验的结果现在也解释得通——它们本来就不是原
+因），该查**谁在反复让布局失效**。
+
+**卡片内唯一还没排掉的自引用形状**（`distro_card.slint:97-118`）：
+
+```
+Rectangle {                       // tooltip
+    visible: touch.has-hover && distro.distro_display_name != "";
+    width: tt_text.width + 12px;
+    height: tt_text.height + 6px;
+    x: (parent.width - self.width) / 2;    // 位置取决于自身宽度
+    y: -4px;
+    z: 100;
+    tt_text := Text { text: ...; }
+}
+```
+
+`x` 依赖 `self.width`，`self.width`/`height` 依赖 `tt_text` 的测量，而 `tt_text` 的宽度又由布局给出。
+平时 `visible: false`，但**不可见元素在 Slint 里仍然参与布局**。这正好是"每张卡多一份持续测量"的形状，
+与"成本 ∝ 卡数"一致。
+
+**下一实验（一次构建）**：把这个 tooltip 的 `width/height/x` 换成不依赖自身测量的定值（例如
+`width: tt_text.width + 12px` 保留、但 `x: 0`；或干脆先用 `if (false): Rectangle { ... }` 整个移除），
+再跑 `cards-or-not` 三条件。若 4 卡从 85% 掉到接近 0 卡的 30%，就是它。
+
+**另：** `SLINT_DEBUG_PERFORMANCE=refresh_full_speed` 现在优先级降低——它是用来分辨"是否已经在全速
+重绘"的，而最小化这一条已经说明重绘不是主因。
+
+门禁仍红，无新包。

@@ -2038,3 +2038,48 @@ ui/2s lines in the log: 0
 这一条查清楚，计数器一出来，"是不是每帧重排"当场就能回答；在那之前继续做外部采样没有意义。
 
 无新包（`v0.1.0` 的 Release 与 tag 已删）。
+### 20.12 破案:烧核 = 挂在 Slint 本地执行器上的刷新 future;修法 = 管线搬进 tokio 运行时
+
+进程内计数(20.11)落地后的第一份完整读数,把案子锁死了:
+
+```
+refresh=1 probe=1(116ms) list=1(202ms) running=1(51ms) build=1(0ms) apply=1   <- 首刷,完整,369ms
+refresh=0 ...
+refresh=1 probe=1(132ms) list=0(0ms) ...                                     <- 第二刷:probe 回来了,
+                                                                               list 永不返回
+refresh=0 ... (此后永远 refresh=0)
+```
+
+**两条真相,写成一段话**:第一次刷新退出后约五秒,第二次刷新进入 `list_apps(false).await` 再没有回来
+——注意 `list` 计数**不是慢**,是 increment 从未发生,连它自己的**十秒读超时**都没有响。从那一拍起
+`IS_REFRESHING` 被粘死,后面每一次 poll 在门口被拒(`refresh=0`),而 UI 线程以 61–98% 的单核满速自旋。
+
+**机制**:`tasks/home.rs` 的 tick 用 `slint::spawn_local` 跑 `refresh_home`,整条 future(probe /
+list_apps / running_apps → 一路的 `tokio::time::timeout` 和 process wait)都活在 **Slint 的本地执行
+器**上。本地执行器对 tokio 的时间驱动器没有责任:第一次成功只是侥幸(runtime 恰好还够得着),第二次
+的 timeout 唤醒**没有落地的路径**。一个停在本地执行器里、既不完成也醒不来的 future,把事件循环拖成
+ spinning——这就是**烧核的全部**:shell-empty(整窗没有 .slint 内容)依旧烧 97.7% 证明内容无关,
+femtovg 只把同样的代价砍了一半,**修好后 base 只有 ~1.4% 证明因果**。
+
+**修法**(`src/ui/data.rs`):
+* `refresh_home_with` 只在 Slint 线程做判定:取 `Handle::current()`(**先于**单飞标志位——拿不到
+  runtime 上下文时让它在这里响亮地炸,而不是先置位再死,那会粘死后面所有 poll)、单飞 CAS、
+  `should_refresh` 门;然后 `handle.spawn(refresh_pipeline(weak, state))` ——全管线跑在 tokio 上,
+  timeout 有自己的驱动器,超时会真的发生。
+* `RefreshGuard` 移进 pipeline;最终推送仍走 `invoke_from_event_loop`(它本来就是跨线程桥)。
+* 门禁计数补全:`try / stuck / guard / gv / gb / stage(0-4)`,每行首烙实验旗标,防止"数字没了出处"。
+
+**修好后的三档读数**(8 秒窗口,线程差分,同尺子):
+```
+base              热线程 109ms  ~= 1.4%
+no-tray           热线程  47ms  ~= 0.6%
+no-tray + no-poll 热线程  16ms  ~= 0.2%
+```
+托盘 100ms tick 和 5 秒 poll 的实际成本合计 <1%,**不值得动**(20.10 曾把"托盘定时器"列为可疑,
+连同其它外部采样时代的排除清单一并作废)。实验开关(no-list / no-sched / shell-empty / no-tray /
+no-poll,全部 env 门控、文档在 theme.slint 的 `Exp` 全局)保留在二进制里:关掉时零成本,排查同类
+问题可以再当刀用。
+
+**旧判词的修正**:"同一 exe 一会儿 86.6% 一会儿 0.0%"的解释现在完整了——烧与不烧取决于**那一次冷启
+动有没有触发挂死**(首刷/二刷的竞争有随机性),不是尺子漂移,也不是机器负载。20.10 的外部采样不可信
+结论保留;但其中"由漂移引起的矛盾"应改写为"由**挂死的发生与否**引起的双态"。

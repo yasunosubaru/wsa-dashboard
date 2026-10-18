@@ -146,6 +146,13 @@ fn load_icon() -> Result<Icon, Box<dyn std::error::Error>> {
 /// is the reference's interval: fast enough that a click feels immediate, slow
 /// enough that an idle tray costs nothing measurable.
 fn start_polling(app_weak: slint::Weak<AppWindow>) {
+    // The bisection's last periodic wake (MAPPING §20.12): with the switch the
+    // icon still shows, but double-click and the menu go dead for that run --
+    // what an experiment is for, and nothing else reads the flag.
+    if std::env::var("WSADASH_EXP_NO_TRAY").as_deref() == Ok("1") {
+        return;
+    }
+
     if POLLING.swap(true, Ordering::SeqCst) {
         return;
     }

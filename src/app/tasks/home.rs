@@ -39,13 +39,22 @@ use crate::app::runner::AppWindow;
 /// `slint::Timer` stops when it is dropped, and this one is meant to live as long
 /// as the process. One timer, once.
 pub fn spawn_home_monitor(weak: Weak<AppWindow>, state: Arc<AppState>) {
-    // The first poll happens *now*: a window that takes five seconds to say
-    // anything looks broken.
+    // Was the FIRST poll: a window that takes five seconds to say
+    // anything looks broke
     let _ = slint::spawn_local({
         let weak = weak.clone();
         let state = state.clone();
         async move { crate::ui::data::refresh_home(weak, state).await }
     });
+
+    // The bisection's second periodic wake (MAPPING §20.12): the poll's own
+    // timer, off for the run that needs an event loop where only the tray
+    // ticks. The first poll above still runs, so every variant still boots
+    // with a populated page; only the five-second rhythm is gone for that
+    // run, and with it the only other thing the Slint timers do.
+    if std::env::var("WSADASH_EXP_NO_POLL").as_deref() == Ok("1") {
+        return;
+    }
 
     let timer = slint::Timer::default();
     timer.start(

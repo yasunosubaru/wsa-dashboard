@@ -95,13 +95,56 @@ pub async fn refresh_home(weak: Weak<AppWindow>, state: Arc<AppState>) {
 /// giving it a second entry point that skips the single-flight guard would be
 /// two truths about the same invariant.
 pub async fn refresh_home_with(reason: &'static str, weak: Weak<AppWindow>, state: Arc<AppState>) {
+    counters::ATTEMPT.fetch_add(1, Ordering::Relaxed);
+
+    // The data phase belongs to the tokio runtime -- see refresh_pipeline for
+    // why. Asking for the Handle here makes a missing runtime context fail
+    // loudly *before* the single-flight flag is raised: a panic at this point
+    // leaves every future poll free to run, where one after the flag would
+    // block them all forever — the failure the counters file showed us.
+    let handle = tokio::runtime::Handle::current();
+
     if IS_REFRESHING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
+        counters::STUCK.fetch_add(1, Ordering::Relaxed);
         return;
     }
-    // Puts the flag back whatever happens below. A refresh that leaves it set
+
+    // One place decides whether an operation is running: the dashboard's own
+    // single slot. Reading it here rather than keeping a second flag is what
+    // keeps the two from disagreeing.
+    let busy = state.wsa_dashboard.get_active_op().is_some();
+    let visible = state.is_visible.load(Ordering::SeqCst);
+    let elapsed = lock(&LAST_REFRESH).map(|at| at.elapsed());
+    if !should_refresh(reason, visible, busy, elapsed) {
+        counters::GUARD.fetch_add(1, Ordering::Relaxed);
+        counters::GUARD_INVISIBLE.fetch_add(visible as u64, Ordering::Relaxed);
+        counters::GUARD_BUSY.fetch_add(busy as u64, Ordering::Relaxed);
+        IS_REFRESHING.store(false, Ordering::SeqCst);
+        return;
+    }
+    *lock(&LAST_REFRESH) = Some(Instant::now());
+    counters::REFRESH.fetch_add(1, Ordering::Relaxed);
+
+    // The pipeline no longer runs inside this local-executor future.
+    handle.spawn(async move { refresh_pipeline(weak, state).await });
+}
+
+/// The refresh's data phases, on the tokio runtime.
+///
+/// `refresh_home_with` stays on the Slint thread and only decides; everything
+/// *awaited* there was the bug: the local executor has no driver for tokio's
+/// timers, semaphores or process waits. The first refresh answered only
+/// because the runtime was still reachable from the polling thread; the
+/// second hung in `list_apps` and **its own ten-second timeout never fired**,
+/// leaving the single-flight flag set — which is why the counters then
+/// answered `attempt>0, refresh=0` forever while the UI thread burned.
+/// Only the final UI push crosses back, through `invoke_from_event_loop`,
+/// which is how it already had to travel.
+async fn refresh_pipeline(weak: Weak<AppWindow>, state: Arc<AppState>) {
+    // Puts the flag back whatever happens. A refresh that leaves it set
     // would stop every future one, which is a worse failure than any it can
     // cause here.
     struct RefreshGuard;
@@ -112,30 +155,20 @@ pub async fn refresh_home_with(reason: &'static str, weak: Weak<AppWindow>, stat
     }
     let _guard = RefreshGuard;
 
-    // One place decides whether an operation is running: the dashboard's own
-    // single slot. Reading it here rather than keeping a second flag is what
-    // keeps the two from disagreeing.
-    let busy = state.wsa_dashboard.get_active_op().is_some();
-    let visible = state.is_visible.load(Ordering::SeqCst);
-    let elapsed = lock(&LAST_REFRESH).map(|at| at.elapsed());
-    if !should_refresh(reason, visible, busy, elapsed) {
-        return;
-    }
-    *lock(&LAST_REFRESH) = Some(Instant::now());
-
-    counters::REFRESH.fetch_add(1, Ordering::Relaxed);
-
+    counters::IN_FLIGHT.store(1, Ordering::Relaxed);
     let mark = Instant::now();
     let status = probe(&state).await;
     counters::PROBE.fetch_add(1, Ordering::Relaxed);
     counters::PROBE_MS.fetch_add(mark.elapsed().as_millis() as u64, Ordering::Relaxed);
     let fresh = if status.is_ready() {
         let mark = Instant::now();
+        counters::IN_FLIGHT.store(2, Ordering::Relaxed);
         let listed = state.wsa_dashboard.list_apps(false).await;
         counters::LIST_APPS.fetch_add(1, Ordering::Relaxed);
         counters::LIST_APPS_MS.fetch_add(mark.elapsed().as_millis() as u64, Ordering::Relaxed);
         match listed {
             Ok(apps) => {
+                counters::IN_FLIGHT.store(3, Ordering::Relaxed);
                 let mark = Instant::now();
                 let running = state.wsa_dashboard.running_apps().await;
                 counters::RUNNING.fetch_add(1, Ordering::Relaxed);
@@ -164,6 +197,7 @@ pub async fn refresh_home_with(reason: &'static str, weak: Weak<AppWindow>, stat
     // be saying anything new.
     let source = fresh.as_ref().or(cached.as_ref()).cloned();
 
+    counters::IN_FLIGHT.store(4, Ordering::Relaxed);
     let _ = slint::invoke_from_event_loop(move || {
         let Some(app) = weak.upgrade() else { return };
         // Reading the query has to happen here: the LineEdit owns the string
@@ -184,6 +218,9 @@ pub async fn refresh_home_with(reason: &'static str, weak: Weak<AppWindow>, stat
         counters::APPLY.fetch_add(1, Ordering::Relaxed);
         counters::APPLY_MS.fetch_add(mark.elapsed().as_millis() as u64, Ordering::Relaxed);
     });
+    // The pipeline is done once the UI push has been handed over; the push
+    // itself completes on the window thread.
+    counters::IN_FLIGHT.store(0, Ordering::Relaxed);
 }
 
 /// Per-refresh counters, for the CPU investigation.
@@ -211,8 +248,30 @@ pub mod counters {
     pub static BUILD_MS: AtomicU64 = AtomicU64::new(0);
     pub static APPLY_MS: AtomicU64 = AtomicU64::new(0);
 
-    /// One snapshot, in the order the stages run.
-    pub fn snapshot() -> [u64; 11] {
+    /// Gate accounting. `ATTEMPT` counts every entry into
+    /// [`refresh_home_with`]; `STUCK` counts calls rejected by the
+    /// single-flight gate — a nonzero trend that never falls means some
+    /// earlier refresh never returned; `GUARD` counts calls rejected by
+    /// `should_refresh`, with how many of the rejections had the window
+    /// invisible (`GUARD_INVISIBLE`) and how many had an operation in flight
+    /// (`GUARD_BUSY`), so "the timer never fired", "the window was never
+    /// visible" and "the refresh was stuck" answer as three different
+    /// triples instead of one shared zero.
+    pub static ATTEMPT: AtomicU64 = AtomicU64::new(0);
+    pub static STUCK: AtomicU64 = AtomicU64::new(0);
+    pub static GUARD: AtomicU64 = AtomicU64::new(0);
+    pub static GUARD_INVISIBLE: AtomicU64 = AtomicU64::new(0);
+    pub static GUARD_BUSY: AtomicU64 = AtomicU64::new(0);
+
+    /// Which stage the pipeline is parked in, 0 when idle: 1 probing, 2
+    /// listing, 3 reading running apps, 4 building and applying, back to 0
+    /// only when the whole refresh has finished. A completion counter cannot
+    /// say *where* a refresh stopped; this one can, because it is read while
+    /// still in flight.
+    pub static IN_FLIGHT: AtomicU64 = AtomicU64::new(0);
+
+    /// One snapshot, in the order the stages run, then the gate accounting.
+    pub fn snapshot() -> [u64; 17] {
         [
             REFRESH.load(Ordering::Relaxed),
             PROBE.load(Ordering::Relaxed),
@@ -225,6 +284,12 @@ pub mod counters {
             RUNNING_MS.load(Ordering::Relaxed),
             BUILD_MS.load(Ordering::Relaxed),
             APPLY_MS.load(Ordering::Relaxed),
+            ATTEMPT.load(Ordering::Relaxed),
+            STUCK.load(Ordering::Relaxed),
+            GUARD.load(Ordering::Relaxed),
+            GUARD_INVISIBLE.load(Ordering::Relaxed),
+            GUARD_BUSY.load(Ordering::Relaxed),
+            IN_FLIGHT.load(Ordering::Relaxed),
         ]
     }
 }

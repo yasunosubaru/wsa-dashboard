@@ -341,6 +341,17 @@ export global Theme {
     ];
 }
 
+export global Exp {
+    // The CPU-bisection switches (MAPPING §20.12). `runner` reads three env
+    // vars once at startup and sets these; the .slint gates on them wherever
+    // an experiment needs a subtree out of the way. Absent env leaves every
+    // flag false and the bindings unguarded, so no reader of the normal build
+    // pays for the switches' existence.
+    in-out property <bool> no-list: false;
+    in-out property <bool> no-sched: false;
+    in-out property <bool> shell-empty: false;
+}
+
 export global AppInfo {
     in property <string> version: "0.0.0";
     // Display suffix for the runtime architecture, e.g. ".x64" or ".arm64"

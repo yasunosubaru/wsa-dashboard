@@ -129,6 +129,16 @@ pub async fn run_app(state: AppState) {
     app.global::<AppInfo>()
         .set_project_repository(PROJECT_REPOSITORY.into());
 
+    // -- the CPU-bisection switches (MAPPING §20.12) ---------------------------
+    // One env read here wires a global the .slint reads wherever it is gated,
+    // so blanking the list, the scheduler page or the whole shell is a *run*
+    // of the same binary, not a ten-minute rebuild. Absent env leaves them all
+    // false, and nothing else in the program knows they exist.
+    let exp_flag = |var: &str| std::env::var(var).as_deref() == Ok("1");
+    app.global::<Exp>().set_no_list(exp_flag("WSADASH_EXP_NO_LIST"));
+    app.global::<Exp>().set_no_sched(exp_flag("WSADASH_EXP_NO_SCHED"));
+    app.global::<Exp>().set_shell_empty(exp_flag("WSADASH_EXP_SHELL"));
+
     let state = Arc::new(state);
 
     ui::handlers::setup(&app, app.as_weak(), state.clone()).await;
@@ -153,20 +163,71 @@ pub async fn run_app(state: AppState) {
     // answer cannot be moved by what else the machine is doing -- which is what
     // made the external sampling useless: the same binary read 86.6% and 0.0%
     // twenty minutes apart.
-    tokio::spawn(async move {
-        let mut last = [0u64; 11];
+    //
+    // **A plain thread, not a tokio task.** The first version of this used
+    // `tokio::spawn` + `tokio::time::sleep` and produced no output at all -- and
+    // "the task was never polled" and "the timer never fired" are two answers a
+    // diagnostic must not have to guess between, when the thing being diagnosed
+    // is a UI thread stuck at 83% of a core. `app.run()` blocks the thread that
+    // `block_on` is on; a thread of its own with `std::thread::sleep` depends on
+    // neither the runtime's scheduling nor its time driver.
+    std::thread::spawn(move || {
+        use std::io::Write as _;
+        let path = std::env::var("USERPROFILE")
+            .map(|home| format!("{home}\\.wsadashboard\\ui-counters.log"))
+            .unwrap_or_else(|_| "ui-counters.log".to_string());
+        // Which experiment flags are on, stamped on every line so each
+        // reading carries its own provenance: two runs of the same build may
+        // differ only by the env, and a number without its flag is worthless.
+        let flags = [
+            ("no-list", "WSADASH_EXP_NO_LIST"),
+            ("no-sched", "WSADASH_EXP_NO_SCHED"),
+            ("shell", "WSADASH_EXP_SHELL"),
+            ("no-tray", "WSADASH_EXP_NO_TRAY"),
+            ("no-poll", "WSADASH_EXP_NO_POLL"),
+        ]
+        .iter()
+        .filter(|(_, var)| std::env::var(var).as_deref() == Ok("1"))
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join("+");
+        let tags = if flags.is_empty() {
+            String::from("base")
+        } else {
+            flags
+        };
+
+        let mut last = [0u64; 17];
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            std::thread::sleep(std::time::Duration::from_secs(2));
             let now = crate::ui::data::counters::snapshot();
-            let d: Vec<u64> = now
+            // The first sixteen slots are cumulative and stay diffs here; the
+            // seventeenth — the in-flight stage, 0 to 4 — is a state and is
+            // read as one.
+            let d: Vec<u64> = now[..16]
                 .iter()
-                .zip(last.iter())
+                .zip(last[..16].iter())
                 .map(|(now, then)| now.saturating_sub(*then))
                 .collect();
-            tracing::info!(
-                "ui/2s refresh={} probe={}({}ms) list={}({}ms) running={}({}ms) build={}({}ms) apply={}({}ms)",
-                d[0], d[1], d[6], d[2], d[7], d[3], d[8], d[4], d[9], d[5], d[10]
+            let line = format!(
+                "refresh={} probe={}({}ms) list={}({}ms) running={}({}ms) build={}({}ms) apply={}({}ms) | try={} stuck={} guard={} gv={} gb={} stage={}",
+                d[0], d[1], d[6], d[2], d[7], d[3], d[8], d[4], d[9], d[5], d[10],
+                d[11], d[12], d[13], d[14], d[15], now[16]
             );
+            // Straight to a file rather than through `tracing`: the first two
+            // versions of this logger produced nothing at all -- first as a tokio
+            // task, then as a thread -- and the log file grew by zero bytes while
+            // the process ran at 76% of a core. Writing it here answers the only
+            // question that matters (does the counter thread run at all?) without
+            // also betting on the logging stack.
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                let _ = writeln!(file, "{tags} {line}");
+            }
+            tracing::info!("ui/2s {line}");
             last = now;
         }
     });

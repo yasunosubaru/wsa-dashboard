@@ -28,13 +28,13 @@
 // string still answers a second instance asking who is already open -- which is
 // why `runner` keeps overriding it with the application name.
 
-import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Information, StorageImageUI, PortProxyRuleUI, SettingsStrings, AboutStrings, SchedulerTaskUI } from "theme.slint";
+import { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Information, StorageImageUI, PortProxyRuleUI, SettingsStrings, AboutStrings, SchedulerTaskUI, Exp } from "theme.slint";
 // ★ The reference re-exports its globals from the root (reference
 //    `src/ui/app.slint:43`) -- that is what puts `AppI18n` / `AppInfo` in the
 //    generated Rust re-export list, and therefore what makes
 //    `app.global::<AppI18n>()` in `app::runner` resolve. The structs are here
 //    for the same reason: `handlers/device.rs` has to build them.
-export { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp }
+export { Theme, Distro, AppInfo, AppI18n, AppApi, DeviceTarget, DeviceProp, Exp }
 import { MainView } from "views/main_view.slint";
 import { AddInstanceView } from "views/add_view.slint";
 import { DeviceView } from "views/device_view.slint";
@@ -473,7 +473,11 @@ export component AppWindow inherits Window {
         clip: true;
         border-width: 1px;
         border-color: Theme.main_color;
-        VerticalLayout {
+        // §20.12: the whole-shell cut. With `WSADASH_EXP_SHELL=1` the window
+        // has nothing but its background — no TitleBar, no sidebar, no tabs,
+        // no toast. If the burn survives *this*, it was never in the .slint
+        // tree at all; that negative is the experiment's most valuable result.
+        if (!Exp.shell-empty): VerticalLayout {
             TitleBar {
                 title: AppI18n.t("common.app_name", [AppI18n.version]);
                 is_maximized: root.is_maximized;
@@ -561,7 +565,14 @@ export component AppWindow inherits Window {
                                 z: 3;
                                 opacity: selected_tab == 0 ? 1 : 0;
                                 x: selected_tab == 0 ? 0px : 10000px;
-                                distros: root.distros;
+                                // §20.12: the list bisection. An empty model
+                                // un-instantiates every Repeaterelement without
+                                // touching the structure around it, which is
+                                // exactly what an experiment needs: the hard
+                                // reset far from the answer, keeping the
+                                // scrollbar, the search box and the chrome left
+                                // alive.
+                                distros: Exp.no-list ? [] : root.distros;
                                 wsl_loading: root.home_loading;
                                 distro_not_found: root.home_not_found_text;
                                 distro_not_found_text: root.home_not_found_text;
@@ -748,7 +759,7 @@ export component AppWindow inherits Window {
                                 z: 7;
                                 opacity: selected_tab == 4 ? 1 : 0;
                                 x: selected_tab == 4 ? 0px : 10000px;
-                                tasks: root.scheduler_tasks;
+                                tasks: Exp.no-sched ? [] : root.scheduler_tasks;
                                 is_loading: root.scheduler_loading;
                                 busy_task_id: root.scheduler_busy_task_id;
                                 add_task_clicked => {

@@ -2117,3 +2117,94 @@ no-poll,全部 env 门控、文档在 theme.slint 的 `Exp` 全局)保留在二�
 CREATE_NO_WINDOW 之前的历史,executor.rs 注释为证)。于是 §20.9"尺子怎么修"第 1 条落地
 (提交 1f3d808):0.5s 帧采样 + 两级祖先归因 + **可见性条件**(MainWindowHandle≠0 才计入)——比
 原文的两分支(纯归因或纯信息)更准,因为"无头"不是缺陷、"可见"才是。烧核断言一字未动。
+
+### 20.14 修复与发布记录:v0.1.2 —— 托盘链路、隐藏后轮询(2026-10-19)
+
+v0.1.1 发布后用户反馈"仍有卡顿"且"托盘模式没法用"。两个缺陷都定位到具体机制并修复,发布 v0.1.2。
+修复提交:9706cd8(单实例唤回)、5bebf99(隐藏停止轮询+退避)、e5a7267(托盘单击)、
+33d3a01(门禁容错)、b57c490(版本号)。
+
+**缺陷一:托盘模式没法用 —— 三个缺陷叠加**
+
+1. **再启动 exe 窗口不回来(单实例唤回只写了一半)**。表现:应用收在托盘时再启动 exe,进程静默
+   退出、窗口不回来,日志一句 `the mutex is owned but nothing answered; exiting`(2026-10-17
+   的日志即此形态;更早的会话说日志里"关窗 → 约 2 秒后新 STARTUP + tray init"反复出现过)。
+   两个原因互为镜像:
+   * `\\.\pipe\wsadashboard_wakeup_pipe` 只有客户端,连接对端从来没有服务端,打开必然失败;
+   * 兜底 `find_main_window()` 按**本进程** pid 枚举窗口——持互斥体的是另一个进程,第二实例自己
+     还没有窗口,枚举永远为空。
+   修法:补 `app/wakeup.rs` 管道服务端线程(连接即向 UI 线程投递"显示窗口",启动日志
+   `wakeup pipe server listening`);`window::find_any_main_window()` 跨进程按握手标题
+   (`WSA_DASHBOARD_WINDOW_UI` / `WSA Dashboard`,标题在创建后才赋值,两个都要认)枚举全部顶层
+   窗口,跳过 owner 窗口与托盘 helper class(`tray_icon_app`/`Target`);`EnumWindows` 覆盖隐藏
+   窗口——托盘里正是隐藏的那个;`single_instance.rs` 把查找提前到管道信号之前,先
+   `AllowSetForegroundWindow(所属实例 pid)` 把启动进程的前台权限转交出去——转交前第一实例自己的
+   `SetForegroundWindow` 被拒,窗口回来但压在别的窗口后面(旧日志的 `SetForegroundWindow
+   refused` 警告)。
+   实测(收托盘后再启动 exe,一次通过):
+   ```
+   another instance owns the mutex; this launch should wake it
+   handed the foreground right to the running instance owner=65524
+   wakeup pipe answered; the running instance has been signalled
+   found the running instance's window; restoring it hwnd=HWND(0x142206)
+   wakeup pipe answered; showing the window
+   showing the window / set_skip_taskbar skip=false
+   another instance is running and has been woken; this one exits
+   ```
+   窗口恢复并置前,第二进程退出,全程只剩一个实例,无 `SetForegroundWindow refused`。
+   **未分离**:管道与兜底两条信号在同一次实测里都触发了,没能互相隔离——"任意一条单独都够用"
+   这个结论没有做实验分离。
+2. **单击无反应**:只接了 `DoubleClick`,第一次使用的人最自然的单击什么都不做——"托盘模式没法
+   用"的字面来源。改为 `Click{Left,Up}` 与 `DoubleClick` 都只唤回。
+3. **双击先显后藏**:原为 toggle;双击序列里先到的单击把窗口唤回,随后的双击事件又把它藏回去,
+   净效果看似没反应。现在唤回是单向的,隐藏交给窗口自己的关闭按钮。**证据边界**:托盘图标在
+   Windows 的"溢出区",点击本身未能脚本化复现——"单击/双击只唤回"依据库事件模型判断;其隐藏侧
+   由同一条窗口消息路径实测独立支撑:SC_CLOSE(Alt+F4/任务栏"关闭"同路径)只收进托盘,进程存活
+   (`close requested; hiding to the tray`),退出在托盘菜单的 Exit 项(菜单只有 Show/Exit 两项,
+   本来就没有 Hide)。
+
+**缺陷二:收进托盘后仍在轮询**
+
+证据:修复前隐藏段每约 4 秒一轮 probe(3 个 adb 进程;子系统未就绪时还含 3.1 秒 connect 超时),
+计数器在隐藏段逐行刷新。两个原因:
+
+* `state.is_visible` 从创建起恒 true、没有任何人写过——可见性门读的是这个死标志;
+* 就绪判定不参与节拍:子系统停着,probe 每次仍花 3.1 秒,按 4 秒节奏永远问下去。
+
+修法:改读 `app.get_is_window_visible()`(hide/show/park 都在维护它,且 `refresh_home_with` 与
+它同在 UI 线程);`refresh::SLOW_DEBOUNCE`(15 秒)+ `LAST_READY`(上次 probe 是否就绪)选择
+节拍,`should_refresh` 的防抖改为第五个参数传入;顺手修 `GUARD_INVISIBLE` 的反向 bug——
+`(visible as u64)` 记的恰好是"不隐藏"的那一半,而区分拒因正是这个计数器存在的理由。
+实测(新构建,收托盘后 38 秒窗口期):`probe=[1-9]` 行 0 条、`refresh=[1-9]` 行 0 条,计数器形如
+`try=1 stuck=0 guard=1 gv=1 gb=0 stage=0`;恢复窗口后 `refresh=1 stage=1`。
+
+**门禁脚本自身的修复(33d3a01)**
+
+预清理对进程表里的死对象(零线程、仍有进程持其句柄)调用 `Stop-Process` 报"拒绝访问",在
+`$ErrorActionPreference='Stop'` 下整脚本退出——v0.1.2 第一次跑门禁时 PASS/FAIL 都没打印,对被测
+二进制什么都没说。改为逐个判断:杀不掉且**仍有线程**才 throw;零线程残留只警告并忽略(实测
+pid 31604 三次运行都在进程表里,0 周期消耗)。线程数读不到按"活着"处理,宁可挡下来。
+
+**产物与发布**
+
+| 项 | 值 |
+|---|---|
+| 版本资源 | 两个 bin 均 **0.1.2.0**(build.rs 的 CARGO_PKG_VERSION 同源) |
+| wsadashboard.exe | 25,498,624 字节,SHA-256 `990efafc668dc8268492da7830556b820c3b61a09316231ec0d561183dbb1094` |
+| wsadash.exe(CLI) | 926,720 字节,SHA-256 `ba0f1f85745463a2bd62b4e26b407286703020ace17145239e5d513dd5dd0e0a` |
+
+**门禁 PASS**(tools/cpu-budget.ps1,3×(20s 预热+12s 测量)):读数 0.2/0.3/0.1,中位 **0.2%**、
+极差 0.2 点、可见控制台 0、冻结 0、自退 0;无头 conhost churn 120 个/3 run(信息行,不判定)。
+**测试**:`cargo test --release --bin wsadash` → **420 passed / 0 failed / 10 ignored**
+(§17 基线 417 + 本次 3 条新测试:握手标题 2 条、未就绪退避 1 条)。
+**发布**:gh release v0.1.2,下载回读 SHA-256 与本地一致(990efafc…1094),大小一致。
+
+**未闭合 / 边界**
+
+* 2026-10-18 16:02 的 Application Hang 1002(0.1.1 版本 0.1.1.0)**根因未坐实**:WER 转储读取
+  需管理员权限(ACL 拒绝),放弃转储分析;"隐藏后停止轮询"作为缓解,是否消除未证实。
+* 托盘溢出区图标的点击未复现(见缺陷一第 3 条);唤回链路三个环节(管道服务端/跨进程窗口查找/
+  前台转交)已实测。
+* network/device/settings 三个页仍是 `slint::spawn_local` + tokio 定时器的同款反模式
+  (§20.12 的挂死类),未修——首页已搬进 tokio 运行时,这三处是同类隐患的存留。
+* 真机 `--ignored` 本轮未跑(WSA 处于 Booting;需 Ready)。

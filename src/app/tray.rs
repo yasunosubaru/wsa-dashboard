@@ -38,9 +38,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
-use slint::ComponentHandle;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tray_icon::{
+    Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
+};
 use tracing::{error, info};
 
 use crate::app::constants::APP_NAME;
@@ -163,8 +164,24 @@ fn start_polling(app_weak: slint::Weak<AppWindow>) {
         Duration::from_millis(100),
         move || {
             while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-                if matches!(event, TrayIconEvent::DoubleClick { .. }) {
-                    toggle_window(&app_weak);
+                // A left click or a double-click brings the window back. Both,
+                // because Windows delivers `Click` twice before `DoubleClick`:
+                // a toggle on double-click would hide a window the reader just
+                // asked to see. Hiding stays on the window's own close button --
+                // a tray icon that hides a window is how the tray gets called
+                // broken, which is exactly what happened when only the
+                // double-click was wired and a single click did nothing.
+                let show = match &event {
+                    TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } => true,
+                    TrayIconEvent::DoubleClick { .. } => true,
+                    _ => false,
+                };
+                if show {
+                    show_window(&app_weak);
                 }
             }
 
@@ -198,21 +215,14 @@ fn start_polling(app_weak: slint::Weak<AppWindow>) {
     std::mem::forget(timer);
 }
 
-/// A double-click on the icon: hide the window if it is up, show it if not.
+/// A click on the icon: bring the window back.
 ///
-/// The "is it up" question is asked of both halves -- the flag and the real
-/// window -- because a window that is minimised to the taskbar is on screen and
-/// the reader's double-click means "bring it back", not "hide it".
-fn toggle_window(app_weak: &slint::Weak<AppWindow>) {
+/// Not a toggle. The reader clicked the icon to get the window; hiding it is
+/// the window's own close button's job. The old handler toggled on
+/// double-click only, so the first gesture most readers try -- a single click
+/// -- did nothing at all.
+fn show_window(app_weak: &slint::Weak<AppWindow>) {
     let Some(app) = app_weak.upgrade() else { return };
-    let visible = app.get_is_window_visible();
-    let minimized = app.window().is_minimized();
-
-    if visible && !minimized {
-        info!("tray double-click: hiding the window");
-        crate::ui::handlers::window::hide_to_tray(&app);
-    } else {
-        info!(minimized, "tray double-click: showing the window");
-        crate::ui::handlers::window::show_and_center(&app);
-    }
+    info!("tray click: showing the window");
+    crate::ui::handlers::window::show_and_center(&app);
 }

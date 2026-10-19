@@ -23,6 +23,10 @@ pub mod autostart;
 pub mod single_instance;
 pub mod startup_info;
 
+/// The server half of the single-instance handshake: a named pipe whose
+/// connection means "show the window". GUI-only (it names `AppWindow`).
+pub mod wakeup;
+
 /// Scheduled tasks (P7). The pure layer only: what a task is, what a cron
 /// means, and what Windows exports. The commands that create and delete tasks
 /// arrive in P7 Task 2.

@@ -23,10 +23,17 @@
 //! of them is a double-click that does nothing with no explanation anywhere.
 //!
 //! Our own `window::find_main_window` enumerates the top-level windows of **this
-//! process id** and picks the visible one. That cannot pick up some other
-//! program's window that happens to share a title, and it cannot fail because a
-//! caption was translated or rewritten. So there is no title list here, and
-//! [`window_titles_for_lookup`] exists only to be asserted absent.
+//! process id**. That is the right tool for "my own window" and the wrong one
+//! for "the *other* instance's window" -- the second launch has no window yet,
+//! so the wake path uses `window::find_any_main_window` instead: every
+//! top-level window, matched by the exact caption handshake. That is not the
+//! reference's three-title guess list; it is one string this program owns, and
+//! [`window_titles_for_lookup`] still exists only to be asserted absent.
+//!
+//! The pipe is the primary signal and now has a server: `app::wakeup` owns the
+//! listening end, and a connection there means "show the window". The window
+//! lookup is the fallback for the case where the pipe is gone but a window is
+//! there.
 //!
 //! The named pipe stays, because it does something the window does not: a window
 //! can be in the tray with its handle already gone from the shell's live list,
@@ -72,6 +79,31 @@ pub fn window_titles_for_lookup() -> Vec<String> {
 /// it is the ordinary state of a first launch. The reference logs the pipe
 /// failure at `warn`, which fills its log with warnings on every normal start.
 pub fn try_activate_existing_instance() -> bool {
+    // The window is looked up *before* the pipe fires, because the pid behind it
+    // is what the foreground hand-off needs and the hand-off must land before
+    // the show it authorises. The reader's double-click gave this process the
+    // right to change the foreground; the instance in the tray did not receive
+    // that input, so on its own its `SetForegroundWindow` is refused and the
+    // window comes back behind whatever is on screen. This is the standard
+    // hand-off for exactly that split.
+    let found_window = super::window::find_any_main_window();
+    #[cfg(target_os = "windows")]
+    if let Some(hwnd) = found_window {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            AllowSetForegroundWindow, GetWindowThreadProcessId,
+        };
+        let mut owner: u32 = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut owner)) };
+        if owner != 0 {
+            match unsafe { AllowSetForegroundWindow(owner) } {
+                Ok(()) => info!(owner, "handed the foreground right to the running instance"),
+                Err(error) => {
+                    warn!(%error, owner, "could not hand over the foreground right")
+                }
+            }
+        }
+    }
+
     let pipe_name = pipe_name();
     let pipe_connected = match std::fs::OpenOptions::new().write(true).open(&pipe_name) {
         Ok(_) => {
@@ -81,7 +113,7 @@ pub fn try_activate_existing_instance() -> bool {
         Err(_) => false,
     };
 
-    let Some(hwnd) = super::window::find_main_window() else {
+    let Some(hwnd) = found_window else {
         if pipe_connected {
             // No top-level window, but the process answered. It is starting or
             // minimised to the tray; the pipe is the part that reaches it.

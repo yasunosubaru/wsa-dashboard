@@ -90,6 +90,83 @@ fn is_main_window(hwnd: HWND) -> bool {
     }
 }
 
+/// Does this caption carry our handshake?
+///
+/// Two strings are ours: the `.slint` default (`WSA_DASHBOARD_WINDOW_UI`, what
+/// the single-instance scan has always looked for) and the live caption
+/// (`APP_NAME`). Either may be what a window reports at any moment -- the
+/// caption is assigned after creation -- so both are matched.
+#[cfg(target_os = "windows")]
+pub fn handshake_title(title: &str) -> bool {
+    title.contains("WINDOW_UI") || title == "WSA Dashboard"
+}
+
+/// The running instance's window, in **another** process.
+///
+/// [`find_main_window`] enumerates windows of *this* process id. A second
+/// launch calls the wake path before it has a window, so that lookup always
+/// answered `None`; the launch then logged "the mutex is owned but nothing
+/// answered" and exited, which is why double-clicking the exe while the app sat
+/// in the tray did nothing at all. This one walks every top-level window and
+/// keeps the one whose caption carries the handshake -- hidden windows
+/// included, which is exactly the tray case (`EnumWindows` enumerates
+/// invisible top-level windows too).
+///
+/// Used as the fallback half of the handshake: the wakeup pipe (served by
+/// `app::wakeup`) is the primary signal, and this is what still works if the
+/// pipe is gone but a window is there.
+#[cfg(target_os = "windows")]
+struct AnyWindowData {
+    found: Option<HWND>,
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn enum_any_main_window_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    unsafe {
+        let data = &mut *(lparam.0 as *mut AnyWindowData);
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == std::process::id() {
+            return BOOL(1);
+        }
+        let mut title_buf: [u16; 512] = [0; 512];
+        let title_len = GetWindowTextW(hwnd, &mut title_buf);
+        let title = String::from_utf16_lossy(&title_buf[..title_len as usize]);
+        if !handshake_title(&title) {
+            return BOOL(1);
+        }
+        let owner = GetWindow(hwnd, GW_OWNER).unwrap_or(HWND(std::ptr::null_mut()));
+        if !owner.0.is_null() {
+            return BOOL(1);
+        }
+        let mut class_buf: [u16; 256] = [0; 256];
+        let class_len = GetClassNameW(hwnd, &mut class_buf);
+        let class_name = String::from_utf16_lossy(&class_buf[..class_len as usize]);
+        if class_name.contains("tray_icon_app") || class_name.contains("Target") {
+            return BOOL(1);
+        }
+        data.found = Some(hwnd);
+        BOOL(0)
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn find_any_main_window() -> Option<HWND> {
+    let mut data = AnyWindowData { found: None };
+    unsafe {
+        let _ = EnumWindows(
+            Some(enum_any_main_window_proc),
+            LPARAM(&mut data as *mut _ as isize),
+        );
+    }
+    data.found
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn find_any_main_window() -> Option<windows::Win32::Foundation::HWND> {
+    None
+}
+
 #[cfg(target_os = "windows")]
 struct EnumWindowData {
     target_pid: u32,
@@ -341,6 +418,32 @@ mod activate_tests {
     #[test]
     fn the_function_exists_for_the_non_windows_build_too() {
         let _ = activate_window_by_hwnd;
+    }
+}
+
+/// The caption handshake, as a predicate a test can hold.
+///
+/// Two strings are ours: the `.slint` default (`WSA_DASHBOARD_WINDOW_UI`, what
+/// the single-instance scan has always looked for) and the live caption
+/// (`APP_NAME`). Either may be what a window reports at any moment -- the
+/// caption is assigned after creation -- so the cross-process lookup matches
+/// both. Everything else is somebody else's window.
+#[cfg(all(target_os = "windows", test))]
+mod handshake_tests {
+    use super::handshake_title;
+
+    #[test]
+    fn both_of_our_captions_are_recognised() {
+        assert!(handshake_title("WSA_DASHBOARD_WINDOW_UI"));
+        assert!(handshake_title("WSA Dashboard"));
+    }
+
+    #[test]
+    fn another_window_is_not_ours() {
+        assert!(!handshake_title(""));
+        assert!(!handshake_title("Slint Demo"));
+        assert!(!handshake_title("WSA Dashboard (preview)"));
+        assert!(!handshake_title("ChatGPT"));
     }
 }
 

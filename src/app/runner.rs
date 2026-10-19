@@ -262,6 +262,13 @@ pub async fn run_app(state: AppState) {
         ui::handlers::window::park_in_tray(&app);
     }
 
+    // The other half of the single-instance handshake: a second launch opens
+    // the wakeup pipe, and this thread turns that connection into "show the
+    // window" on the UI thread. Without it the open always failed, the fallback
+    // lookup searched this (second) process's own windows, and a launch while
+    // the app sat in the tray did nothing at all.
+    crate::app::wakeup::spawn(app.as_weak());
+
     app::tasks::spawn_home_monitor(app.as_weak(), state);
 
     if let Err(error) = app.run() {

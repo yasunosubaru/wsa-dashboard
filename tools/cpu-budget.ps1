@@ -100,7 +100,27 @@ function Sample-Conhosts {
 function Measure-Once {
     param([string] $Label)
 
-    Get-Process wsadashboard -ErrorAction SilentlyContinue | Stop-Process -Force
+    # A terminated process can keep its process-table entry while something
+    # still holds a handle to it; `Stop-Process` then answers "access denied"
+    # and the object has no threads. This cleanup exists to give the
+    # measurement a quiet machine, and because the script runs under
+    # `$ErrorActionPreference='Stop'` such a leftover aborted the whole gate
+    # once -- reporting nothing about the binary. A leftover with zero threads
+    # burns nothing: warn and move on. Only one that still has a thread is a
+    # real blocker. (Threads that cannot be read are treated as alive.)
+    Get-Process wsadashboard -ErrorAction SilentlyContinue | ForEach-Object {
+        $leftover = $_
+        Stop-Process -Id $leftover.Id -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 150
+        $still = Get-Process -Id $leftover.Id -ErrorAction SilentlyContinue
+        if (-not $still) { return }
+        $threads = 1
+        try { $threads = @($still.Threads).Count } catch { $threads = 1 }
+        if ($threads -gt 0) {
+            throw "wsadashboard pid $($leftover.Id) is still running ($threads threads); the gate needs a quiet machine"
+        }
+        Write-Warning "pid $($leftover.Id) stayed in the process table with no threads; it burns nothing and is ignored"
+    }
     Start-Sleep -Milliseconds 500
 
     # The whole-machine net diff this replaces sampled conhost counts at two

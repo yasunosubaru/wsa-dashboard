@@ -1,6 +1,6 @@
 [package]
 name = "wsadashboard"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.92"
 description = "A modern, high-performance dashboard for Windows Subsystem for Android (WSA): launch, install, uninstall and inspect Android apps on Windows."

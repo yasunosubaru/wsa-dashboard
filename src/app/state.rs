@@ -15,8 +15,6 @@
 //! dragging `tracing-appender` into the CLI to satisfy a type would be a
 //! dependency in service of nothing.
 
-use std::sync::atomic::AtomicBool;
-
 use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::wsa::dashboard::WsaDashboard;
@@ -24,12 +22,6 @@ use crate::wsa::dashboard::WsaDashboard;
 pub struct AppState {
     /// The one dashboard. Every read the home page makes goes through it.
     pub wsa_dashboard: WsaDashboard,
-    /// Whether the window is on screen.
-    ///
-    /// The reference sets this from its minimize/restore hooks; P2's tick is
-    /// the only reader, and `should_refresh` is what gives it teeth: a window
-    /// in the tray is not a reason to keep spending adb round trips.
-    pub is_visible: AtomicBool,
     /// Held, not read.
     ///
     /// Dropping this ends the background writer thread and with it every log
@@ -44,7 +36,6 @@ impl AppState {
     pub fn new(wsa_dashboard: WsaDashboard, logging: WorkerGuard) -> Self {
         Self {
             wsa_dashboard,
-            is_visible: AtomicBool::new(true),
             _logging: logging,
         }
     }

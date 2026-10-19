@@ -26,7 +26,7 @@ use slint::{ModelRc, VecModel, Weak};
 
 use crate::i18n;
 use crate::ui::home_model::{build, AppRow, HomeInputs, HomeSnapshot, HomeViewModel};
-use crate::ui::refresh::{repush_needed, should_refresh, PERIODIC_TRIGGER};
+use crate::ui::refresh::{poll_debounce, repush_needed, should_refresh, PERIODIC_TRIGGER};
 use crate::wsa::models::{SubsystemState, SubsystemStatus};
 use crate::{AppWindow, AppState, Distro};
 
@@ -64,6 +64,14 @@ static LAST_GOOD: Mutex<Option<HomeSnapshot>> = Mutex::new(None);
 /// One refresh at a time. A second caller arriving mid-flight is not a second
 /// opinion, it is the same work started twice.
 static IS_REFRESHING: AtomicBool = AtomicBool::new(false);
+
+/// Whether the last probe found the subsystem answerable.
+///
+/// The poll's rhythm depends on it: a stopped subsystem is asked less often,
+/// because the question itself costs three adb spawns and a connect timeout
+/// (`refresh::SLOW_DEBOUNCE`). Starts `false` -- the first launch has no answer
+/// yet, and the first refresh is allowed by its empty `elapsed` either way.
+static LAST_READY: AtomicBool = AtomicBool::new(false);
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     // A poisoned lock means a thread panicked while holding it. What is in
@@ -112,15 +120,26 @@ pub async fn refresh_home_with(reason: &'static str, weak: Weak<AppWindow>, stat
         return;
     }
 
-    // One place decides whether an operation is running: the dashboard's own
-    // single slot. Reading it here rather than keeping a second flag is what
-    // keeps the two from disagreeing.
+    // The window's own property, not a copy of it. `state.is_visible` was
+    // written by nobody: it said `true` forever, so a window parked in the tray
+    // kept being polled -- three adb spawns and a connect timeout every cycle,
+    // measured in the counters file while hidden. The property is the thing the
+    // hide/show/park handlers already maintain, and this runs on the same
+    // thread that owns it.
+    let visible = weak
+        .upgrade()
+        .map(|app| app.get_is_window_visible())
+        .unwrap_or(false);
     let busy = state.wsa_dashboard.get_active_op().is_some();
-    let visible = state.is_visible.load(Ordering::SeqCst);
+    let debounce = poll_debounce(LAST_READY.load(Ordering::Relaxed));
     let elapsed = lock(&LAST_REFRESH).map(|at| at.elapsed());
-    if !should_refresh(reason, visible, busy, elapsed) {
+    if !should_refresh(reason, visible, busy, elapsed, debounce) {
         counters::GUARD.fetch_add(1, Ordering::Relaxed);
-        counters::GUARD_INVISIBLE.fetch_add(visible as u64, Ordering::Relaxed);
+        // The breakdown says *why* the guard refused: invisible, or busy.
+        // `visible as u64` here was inverted -- it counted the refusals that
+        // were NOT about invisibility, which is the one thing the counter was
+        // added to tell apart.
+        counters::GUARD_INVISIBLE.fetch_add((!visible) as u64, Ordering::Relaxed);
         counters::GUARD_BUSY.fetch_add(busy as u64, Ordering::Relaxed);
         IS_REFRESHING.store(false, Ordering::SeqCst);
         return;
@@ -158,6 +177,10 @@ async fn refresh_pipeline(weak: Weak<AppWindow>, state: Arc<AppState>) {
     counters::IN_FLIGHT.store(1, Ordering::Relaxed);
     let mark = Instant::now();
     let status = probe(&state).await;
+    // The rhythm for the *next* tick: a stopped subsystem backs the poll off
+    // (refresh::SLOW_DEBOUNCE) instead of spending the same three adb spawns
+    // every five seconds for a page that already says "stopped".
+    LAST_READY.store(status.is_ready(), Ordering::Relaxed);
     counters::PROBE.fetch_add(1, Ordering::Relaxed);
     counters::PROBE_MS.fetch_add(mark.elapsed().as_millis() as u64, Ordering::Relaxed);
     let fresh = if status.is_ready() {

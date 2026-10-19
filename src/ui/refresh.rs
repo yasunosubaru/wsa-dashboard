@@ -27,6 +27,27 @@ use super::home_model::{snapshot_changed, HomeSnapshot};
 /// the paths that are not the timer -- clicks, restores, reconnects.
 pub const DEBOUNCE: Duration = Duration::from_secs(4);
 
+/// The rhythm a stopped subsystem gets.
+///
+/// The probe is not free when nothing answers: `adb devices`, an `adb connect`
+/// that sits in a connect timeout, and `adb devices` again -- measured at about
+/// 3.1 s and three process spawns per cycle. On the ready rhythm that is a
+/// spawn roughly every two seconds, forever, for a page already saying
+/// "stopped". Fifteen seconds keeps the page honest and the machine quiet.
+pub const SLOW_DEBOUNCE: Duration = Duration::from_secs(15);
+
+/// Which rhythm applies right now: the ready one, or the backoff.
+///
+/// A parameter rather than a global for the same reason the busy flag is: the
+/// caller owns "is the subsystem answerable" -- it is the one that just asked.
+pub fn poll_debounce(subsystem_ready: bool) -> Duration {
+    if subsystem_ready {
+        DEBOUNCE
+    } else {
+        SLOW_DEBOUNCE
+    }
+}
+
 /// The reason spelling that bypasses the debounce and the visibility check.
 ///
 /// The reference's exact words, kept as a constant rather than repeated
@@ -49,15 +70,22 @@ pub const PERIODIC_TRIGGER: &str = "periodic trigger";
 ///    holds the one place that knows whether an operation is running, and a
 ///    second source of that truth here would be a second thing to keep in
 ///    step with it.
-/// 2. **Routine refreshes are spaced out.** Anything under [`DEBOUNCE`] is
-///    dropped unless the user asked for it by name.
+/// 2. **Routine refreshes are spaced out.** Anything under the debounce the
+///    caller passes -- the ready rhythm, or the slower backoff a stopped
+///    subsystem gets -- is dropped unless the user asked for it by name.
 /// 3. **A hidden window is not asked on its behalf.** Minimised to the tray is
 ///    not a reason to keep spending adb round trips; an explicit click is.
 ///
 /// A manual trigger clears rules 2 and 3, but not rule 1: a user clicking
 /// "refresh" while an uninstall is running gets the same answer as the timer
 /// would have given, and is no better informed by being asked twice.
-pub fn should_refresh(reason: &str, is_visible: bool, busy: bool, elapsed: Option<Duration>) -> bool {
+pub fn should_refresh(
+    reason: &str,
+    is_visible: bool,
+    busy: bool,
+    elapsed: Option<Duration>,
+    debounce: Duration,
+) -> bool {
     if busy {
         return false;
     }
@@ -67,7 +95,7 @@ pub fn should_refresh(reason: &str, is_visible: bool, busy: bool, elapsed: Optio
     }
 
     if let Some(elapsed) = elapsed {
-        if elapsed < DEBOUNCE {
+        if elapsed < debounce {
             return false;
         }
     }
@@ -143,7 +171,8 @@ mod tests {
             MANUAL_TRIGGER,
             true,
             false,
-            Some(Duration::from_millis(1))
+            Some(Duration::from_millis(1)),
+            DEBOUNCE
         ));
     }
 
@@ -153,7 +182,8 @@ mod tests {
             PERIODIC_TRIGGER,
             true,
             false,
-            Some(DEBOUNCE - Duration::from_millis(1))
+            Some(DEBOUNCE - Duration::from_millis(1)),
+            DEBOUNCE
         ));
     }
 
@@ -163,31 +193,60 @@ mod tests {
             PERIODIC_TRIGGER,
             true,
             false,
-            Some(DEBOUNCE)
+            Some(DEBOUNCE),
+            DEBOUNCE
         ));
-        assert!(should_refresh(PERIODIC_TRIGGER, true, false, None));
+        assert!(should_refresh(PERIODIC_TRIGGER, true, false, None, DEBOUNCE));
     }
 
     /// Minimised to the tray is not a reason to keep spending adb round trips.
     #[test]
     fn hidden_window_blocks_non_manual() {
-        assert!(!should_refresh(PERIODIC_TRIGGER, false, false, Some(DEBOUNCE)));
+        assert!(!should_refresh(PERIODIC_TRIGGER, false, false, Some(DEBOUNCE), DEBOUNCE));
+    }
+
+    /// A stopped subsystem is expensive to ask about -- the probe is three adb
+    /// spawns and a connect timeout -- so the poll backs off instead of keeping
+    /// the four-second rhythm. The debounce is a parameter for exactly this
+    /// reason: the caller owns "is the subsystem up", and the rule owns "is
+    /// enough time gone".
+    #[test]
+    fn a_stopped_subsystem_backs_the_poll_off() {
+        assert_eq!(poll_debounce(true), DEBOUNCE);
+        assert_eq!(poll_debounce(false), SLOW_DEBOUNCE);
+        assert!(
+            SLOW_DEBOUNCE > DEBOUNCE,
+            "the backoff must actually be slower than the ready rhythm"
+        );
+        // Between the ready rhythm and the backoff: allowed when ready, refused
+        // when stopped.
+        let between = DEBOUNCE + Duration::from_secs(1);
+        assert!(should_refresh(PERIODIC_TRIGGER, true, false, Some(between), poll_debounce(true)));
+        assert!(!should_refresh(PERIODIC_TRIGGER, true, false, Some(between), poll_debounce(false)));
+        // Past the backoff it is allowed again.
+        assert!(should_refresh(
+            PERIODIC_TRIGGER,
+            true,
+            false,
+            Some(SLOW_DEBOUNCE),
+            poll_debounce(false)
+        ));
     }
 
     /// A manual trigger still respects the window state -- no, it does not, and
     /// that is the point of the rule: an explicit click is the user asking.
     #[test]
     fn manual_trigger_is_asked_even_when_the_window_is_hidden() {
-        assert!(should_refresh(MANUAL_TRIGGER, false, false, None));
+        assert!(should_refresh(MANUAL_TRIGGER, false, false, None, DEBOUNCE));
     }
 
     /// An operation in flight owns the adapter, and that outranks both of the
     /// rules a manual trigger is allowed to clear.
     #[test]
     fn busy_blocks_everything() {
-        assert!(!should_refresh(PERIODIC_TRIGGER, true, true, Some(DEBOUNCE)));
-        assert!(!should_refresh(MANUAL_TRIGGER, true, true, None));
-        assert!(!should_refresh(MANUAL_TRIGGER, false, true, None));
+        assert!(!should_refresh(PERIODIC_TRIGGER, true, true, Some(DEBOUNCE), DEBOUNCE));
+        assert!(!should_refresh(MANUAL_TRIGGER, true, true, None, DEBOUNCE));
+        assert!(!should_refresh(MANUAL_TRIGGER, false, true, None, DEBOUNCE));
     }
 
     /// The bypass is decided by comparing the reason, so the spelling has to
@@ -200,18 +259,20 @@ mod tests {
             "manual trigger please",
             true,
             false,
-            Some(Duration::from_millis(1))
+            Some(Duration::from_millis(1)),
+            DEBOUNCE
         ));
         assert!(!should_refresh(
             "Manual Trigger",
             true,
             false,
-            Some(Duration::from_millis(1))
+            Some(Duration::from_millis(1)),
+            DEBOUNCE
         ));
 
         // With no debounce left to bypass and a visible window, a routine
         // refresh is allowed -- the spelling only decides *which rules apply*.
-        assert!(should_refresh("Manual Trigger", true, false, None));
+        assert!(should_refresh("Manual Trigger", true, false, None, DEBOUNCE));
     }
 
     // -- repush_needed ------------------------------------------------------

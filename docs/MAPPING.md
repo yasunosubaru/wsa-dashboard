@@ -2208,3 +2208,33 @@ pid 31604 三次运行都在进程表里,0 周期消耗)。线程数读不到按
 * network/device/settings 三个页仍是 `slint::spawn_local` + tokio 定时器的同款反模式
   (§20.12 的挂死类),未修——首页已搬进 tokio 运行时,这三处是同类隐患的存留。
 * 真机 `--ignored` 本轮未跑(WSA 处于 Booting;需 Ready)。
+
+### 20.15 实机验收:所谓"空白"不是渲染问题 —— WSA 卡在 Booting;托盘单击实机确认(2026-10-19)
+
+v0.1.2 发布后用户反馈"启动 WSA 相关软件后界面是空白,什么都没有"。实机排查结论:**仪表盘正常,
+子系统卡死在 Booting**。
+
+**证据链**:
+
+* `WsaClient` 自 2026-10-18 14:57 起就在运行,但 58526 端口从未监听、`adb devices` 为空、
+  `wsadash probe` 返回 `state=Booting`(此时首刷 probe 要 3.3–3.4 秒,就是 `adb connect` 的超时);
+* 该状态下首页没有可列出的包,列表为空是三级降级的正确行为,不是渲染失败;
+* `wsadash stop` + `wsadash start` 冷启动后 `state=Booting → Ready`(90 秒预算内),同一 v0.1.2
+  构建立刻列出 **Magisk 30.6 / Ham 1.7.6 / Launcher 6.260402**,刷新耗时 probe 136–191ms、
+  list 241–343ms、running 57–92ms;
+* 停掉子系统后首页保留上次快照并变灰,底部 toast `Connection lost` —— 降级态有内容,也不是空白。
+
+**托盘单击在真实使用中确认**:验收期间点击托盘图标唤回窗口,日志 `tray click: showing the
+window`(10:14:19)与 `tray menu: exit`(10:14:21)——此前只有脚本化的管道/窗口查找验证,这次是
+真实点击路径。
+
+**两处 UI 边角(已知,未修)**:
+
+1. **首帧空白**:`home_loading` 在 `app.slint` 默认 `false`,首刷落地前列表区是空的;WSA 未就绪时
+   首刷要 ~3.4 秒(connect 超时)。候选修法:默认 `true`,第一帧就显示加载态。
+2. **深色模式不持久**:标题栏开关只翻转 `Theme.dark_mode`,没有 Rust 回调;`handlers/mod.rs:26`
+   已注明持久化属于 P6 的 `settings.rs`。重启后回到 `settings.toml` 的值。
+
+**`wsadash stop` 的 30 秒判定偏紧**:两次 stop 都报 `the subsystem did not stop within 30s`
+(`STOP_WAIT = 30s`,`ops.rs:65`),而紧接着的 probe 已是 `Stopped` / `Offline` —— 子系统确实停了,
+只是比预算晚一点。候选修法:放宽到 60 秒,或改成"WsaClient 已退出 + 设备端点消失"的双条件。
